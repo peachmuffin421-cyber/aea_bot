@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.00 (Heroku Production)
+Version: 4.02 (Heroku Production - MQL4 Compatible Reset)
 """
 
 import asyncio
@@ -472,6 +472,99 @@ class AEEA_Engine:
         self._last_signal_time: Optional[datetime] = None
         self._signal_cooldown: int = 60  # Seconds between signals
 
+    def initialize_engine(self) -> None:
+        """Initialize engine state with current data."""
+        state = self.state
+        
+        # Get initial price data if available
+        if self.ohlcv_history:
+            latest = self.ohlcv_history[-1]
+            state.price = latest["close"]
+            state.Price = latest["close"]
+            state.iH = latest["high"]
+            state.iL = latest["low"]
+            state.t = datetime.now()
+        else:
+            # Try to get price from feed
+            bid, ask = self.feed.get_current_price()
+            if bid > 0:
+                state.price = bid
+                state.Price = bid
+        
+        # Set up arrays with proper size
+        if state.X <= state.y:
+            state.X = state.y + MAX_PERIOD
+        
+        size = state.X - state.y
+        if size <= 0:
+            size = MAX_PERIOD
+            state.X = state.y + size
+        
+        # Initialize all arrays
+        state.k = [False] * size
+        state.l = [False] * size
+        state.HH = [0.0] * size
+        state.LL = [0.0] * size
+        state.Premium = [0.0] * size
+        state.Discount = [0.0] * size
+        state.Regime = [""] * size
+        state.U = []
+        
+        # Initialize 13-dimensional indicator arrays
+        for i in range(13):
+            if i < len(state.cA):
+                state.cA[i] = [0.0] * size
+                state.iA[i] = [0.0] * size
+                state.kA[i] = [0.0] * size
+                state.lA[i] = [0.0] * size
+        
+        # Set initial tracking variables
+        state.D = 0.0  # MQL4 style - starts at 0
+        state.E = 0.0  # MQL4 style - starts at 0
+        state.Z = state.y + 1
+        state.z = state.y + 1
+        state.O = state.y + 1
+        state.o = state.y + 1
+        state.W = state.y + 1
+        state.w = state.y + 1
+        state.iZ = state.y + 1
+        state.iz = state.y + 1
+        state.iW = state.y + 1
+        state.iw = state.y + 1
+        state.iO = state.y + 1
+        state.io = state.y + 1
+        state.S = state.X
+        state.T = state.X
+        state.X = state.y
+        state.Y = state.y
+        
+        # Initialize F for each j if we have historical data (MQL4 style)
+        if len(self.ohlcv_history) >= 2:
+            state.iH = self.ohlcv_history[-2]["high"]
+            state.iL = self.ohlcv_history[-2]["low"]
+            for j in range(state.y + 1, state.X + 1):
+                self._F(j, state.iH, state.iL)
+        
+        state.FG = True
+        state.tick = 0
+        state.R = True
+        state.signature = False
+        state.signal = 0.0
+        
+        # Initialize indicator values
+        if len(self.ohlcv_history) >= state.y + 1:
+            norm_vals = self._normalize(state.y)
+            for i in range(min(13, len(norm_vals))):
+                if i < len(state.iA) and len(state.iA[i]) > 0:
+                    state.iA[i][0] = norm_vals[i]
+                    state.cA[i][0] = norm_vals[i]
+        
+        # Update volatility metrics
+        if len(self.ohlcv_history) >= state.y + 1:
+            state.iATR, state.iStdDev = self._unify_volatility(state.y)
+        
+        logger.info("✅ Engine initialized successfully")
+
     def update_price_from_feed(self) -> None:
         """Update price from Yahoo Finance."""
         data = self.feed.get_intraday()
@@ -528,31 +621,7 @@ class AEEA_Engine:
             self._on_bar()
 
         self._on_tick(price_data)
-def _on_tick(self, price_data: PriceData) -> None:
-    """Orchestrates all operational layers."""
-    state = self.state
-    
-    # Initialize if needed
-    if not state.FG and len(self.ohlcv_history) >= state.y + 1:
-        state.FG = True
-        state.D = state.price
-        state.E = state.price
-        size = state.X - state.y
-        if size > 0 and not state.k:
-            state.k = [False] * size
-            state.l = [False] * size
-            state.HH = [0.0] * size
-            state.LL = [0.0] * size
-            state.Premium = [0.0] * size
-            state.Discount = [0.0] * size
-            state.Regime = [""] * size
-            for j in range(state.y + 1, state.X):
-                self._F(j, state.iH, state.iL)
-    
-    # Only proceed if FG is True
-    if not state.FG:
-        return
-    
+
     def _normalize(self, j: int) -> Tuple[float, ...]:
         """Elevates 13 classical indicators to orthogonal basis vectors in H_13."""
         if len(self.ohlcv_history) < j + 1:
@@ -941,8 +1010,55 @@ def _on_tick(self, price_data: PriceData) -> None:
     def _on_tick(self, price_data: PriceData) -> None:
         """Orchestrates all operational layers: Validation, State Update, Regime Classification."""
         state = self.state
+        
+        # Update price first
         state.price = price_data.bid
         state.Price = price_data.close
+        
+        # Auto-initialize if needed (MQL4 style - only once)
+        if not state.FG and len(self.ohlcv_history) >= state.y + 1:
+            # MQL4 style: initialize F() for each period
+            if len(self.ohlcv_history) >= 2:
+                iH = self.ohlcv_history[-2]["high"]
+                iL = self.ohlcv_history[-2]["low"]
+                # Ensure arrays are sized properly
+                if state.X <= state.y:
+                    state.X = state.y + MAX_PERIOD
+                size = state.X - state.y
+                if size <= 0:
+                    size = MAX_PERIOD
+                    state.X = state.y + size
+                
+                # Resize arrays if needed
+                if len(state.k) != size:
+                    state.k = [False] * size
+                    state.l = [False] * size
+                    state.HH = [0.0] * size
+                    state.LL = [0.0] * size
+                    state.Premium = [0.0] * size
+                    state.Discount = [0.0] * size
+                    state.Regime = [""] * size
+                
+                # Initialize F for each j (MQL4 style)
+                for j in range(state.y + 1, state.X + 1):
+                    idx = j - state.y - 1
+                    if 0 <= idx < len(state.k):
+                        state.k[idx] = False
+                        state.l[idx] = False
+                        state.HH[idx] = iH
+                        state.LL[idx] = iL
+                        state.Premium[idx] = iH
+                        state.Discount[idx] = iL
+                        # Copy indicator values if available
+                        for i in range(13):
+                            if idx < len(state.kA[i]) and idx < len(state.cA[i]):
+                                state.kA[i][idx] = state.cA[i][idx]
+                                state.lA[i][idx] = state.cA[i][idx]
+            
+            state.FG = True
+            state.tick = 0
+            logger.info("✅ Engine auto-initialized (MQL4 style)")
+        
         state.tick += 1
 
         if len(self.ohlcv_history) >= 2:
@@ -959,20 +1075,6 @@ def _on_tick(self, price_data: PriceData) -> None:
         # Update volatility metrics
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(state.y)
-
-        if not state.FG:
-            state.D = state.price
-            state.E = state.price
-            state.k = [False] * (state.X - state.y)
-            state.l = [False] * (state.X - state.y)
-            state.HH = [0.0] * (state.X - state.y)
-            state.LL = [0.0] * (state.X - state.y)
-            state.Premium = [0.0] * (state.X - state.y)
-            state.Discount = [0.0] * (state.X - state.y)
-            state.Regime = [""] * (state.X - state.y)
-            for j in range(state.y + 1, state.X):
-                self._F(j, state.iH, state.iL)
-            state.FG = True
 
         self._on_point()
         self._O(state.iO, state.O, state.J)
@@ -1390,32 +1492,42 @@ def _on_tick(self, price_data: PriceData) -> None:
             if state.signature and inp != -1:
                 state.dime = 0
             return True
-        else:
-            if state.signature and inp != -1:
-                state.dime = 1
-            return False
-
-        if state.price < state.D and state.D != 0:
+        elif state.price < state.D and state.D != 0:
             if state.signature and inp != -1:
                 state.dime = 1
             return True
         else:
             if state.signature and inp != -1:
-                state.dime = 0
+                state.dime = 1
             return False
 
     def _on_reinit(self) -> None:
-        """Resets global state arrays to ensure coherent Hilbert space projection."""
+        """Resets global state arrays to ensure coherent Hilbert space projection (MQL4 OnReInit() compatible)."""
         state = self.state
+        
+        # Save historical data (MQL4 preserves OHLCV history)
+        saved_ohlcv = self.ohlcv_history.copy()
+        saved_price = state.price
+        saved_Price = state.Price
+        
         state.KC = state.invert
+
+        # Reset arrays with proper size
+        if state.X <= state.y:
+            state.X = state.y + MAX_PERIOD
+        size = state.X - state.y
+        if size <= 0:
+            size = MAX_PERIOD
+            state.X = state.y + size
 
         for i in range(13):
             if i < len(state.cA):
-                state.cA[i] = [0.0] * ((state.X + 1) - state.Y)
-                state.iA[i] = [0.0] * ((state.X + 1) - state.Y)
-                state.kA[i] = [0.0] * ((state.X + 1) - state.Y)
-                state.lA[i] = [0.0] * ((state.X + 1) - state.Y)
+                state.cA[i] = [0.0] * size
+                state.iA[i] = [0.0] * size
+                state.kA[i] = [0.0] * size
+                state.lA[i] = [0.0] * size
 
+        # Clear all indicator lists
         state.IHKk = []
         state.IHKt = []
         state.RSI = []
@@ -1432,18 +1544,18 @@ def _on_tick(self, price_data: PriceData) -> None:
         state.ATR = []
         state.ADX = []
 
-        state.Regime = [""] * (state.X - state.y)
-        state.Premium = [0.0] * (state.X - state.y)
-        state.Discount = [0.0] * (state.X - state.y)
-        state.HH = [0.0] * (state.X - state.y)
-        state.LL = [0.0] * (state.X - state.y)
-        state.k = [False] * (state.X - state.y)
-        state.l = [False] * (state.X - state.y)
+        state.Regime = [""] * size
+        state.Premium = [0.0] * size
+        state.Discount = [0.0] * size
+        state.HH = [0.0] * size
+        state.LL = [0.0] * size
+        state.k = [False] * size
+        state.l = [False] * size
         state.U = []
 
         state.R = True
-        state.D = 0
-        state.E = 0
+        state.D = 0.0  # MQL4 sets to 0
+        state.E = 0.0  # MQL4 sets to 0
         state.K = False
         state.Z = state.y + 1
         state.z = state.y + 1
@@ -1471,7 +1583,7 @@ def _on_tick(self, price_data: PriceData) -> None:
         state.T = state.X
         state.X = state.y
         state.Y = state.y
-        state.FG = False
+        state.FG = False  # MQL4 sets to false to trigger F() initialization
         state.signature = False
         state.signal = 0.0
 
@@ -1479,6 +1591,13 @@ def _on_tick(self, price_data: PriceData) -> None:
         state.BL = []
         state.bottomLine = "   "
         state.bL = "   "
+
+        # Restore historical data (MQL4 preserves price history)
+        self.ohlcv_history = saved_ohlcv
+        state.price = saved_price
+        state.Price = saved_Price
+
+        logger.info("🔄 OnReInit() completed (MQL4 compatible)")
 
     def _send_signal_alert(self) -> None:
         """Send signal alert to registered chat with cooldown."""
@@ -1534,6 +1653,8 @@ def _on_tick(self, price_data: PriceData) -> None:
     def _check_coherence(self) -> str:
         """Check arc-length coherence (s=r)."""
         state = self.state
+        if state.tick < 0:
+            return "⏳ CALIBRATING"
         arc_sq = state.tick % 1000
         radius_sq = 1000
         diff = abs(arc_sq - radius_sq)
@@ -1624,7 +1745,7 @@ class AEI_Bot:
             "`/signal` - Current trading signal\n"
             "`/indicators` - 13D Hilbert Space projection\n"
             "`/fvg` - Fair Value Gap tracking\n"
-            "`/reset` - Reset topological branch\n"
+            "`/reset` - Reset topological branch (MQL4 compatible)\n"
             "`/start_feed` - Start Yahoo Finance price feed\n"
             "`/stop_feed` - Stop Yahoo Finance price feed\n"
             "`/symbol <PAIR>` - Change trading symbol\n"
@@ -1648,6 +1769,15 @@ class AEI_Bot:
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display current market state."""
+        # Ensure engine is initialized
+        if not self.engine.state.FG:
+            await update.message.reply_text(
+                "⏳ *Engine not initialized*\n\n"
+                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                parse_mode="Markdown"
+            )
+            return
+
         state = self.engine.state
         idx = state.Z - state.y - 1
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
@@ -1684,6 +1814,15 @@ class AEI_Bot:
 
     async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display detailed regime classification."""
+        # Ensure engine is initialized
+        if not self.engine.state.FG:
+            await update.message.reply_text(
+                "⏳ *Engine not initialized*\n\n"
+                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                parse_mode="Markdown"
+            )
+            return
+
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
@@ -1726,6 +1865,15 @@ class AEI_Bot:
 
     async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display current trading signal."""
+        # Ensure engine is initialized
+        if not self.engine.state.FG:
+            await update.message.reply_text(
+                "⏳ *Engine not initialized*\n\n"
+                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                parse_mode="Markdown"
+            )
+            return
+
         state = self.engine.state
 
         if state.signal == 0:
@@ -1767,6 +1915,15 @@ class AEI_Bot:
 
     async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display 13D Hilbert Space projection."""
+        # Ensure engine is initialized
+        if not self.engine.state.FG:
+            await update.message.reply_text(
+                "⏳ *Engine not initialized*\n\n"
+                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                parse_mode="Markdown"
+            )
+            return
+
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
@@ -1804,6 +1961,15 @@ class AEI_Bot:
 
     async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display Fair Value Gap tracking."""
+        # Ensure engine is initialized
+        if not self.engine.state.FG:
+            await update.message.reply_text(
+                "⏳ *Engine not initialized*\n\n"
+                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                parse_mode="Markdown"
+            )
+            return
+
         state = self.engine.state
         idx = state.Z - state.y - 1
 
@@ -1821,30 +1987,157 @@ class AEI_Bot:
         await update.message.reply_text(response, parse_mode="Markdown")
 
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Reset topological branch."""
-        self.engine._on_reinit()
+        """Reset topological branch - matches MQL4 OnReInit() behavior with historical preservation."""
+        state = self.engine.state
+        
+        # Save historical data (MQL4 preserves OHLCV history)
+        saved_ohlcv = self.engine.ohlcv_history.copy()
+        saved_price = state.price
+        saved_Price = state.Price
+        saved_iH = state.iH
+        saved_iL = state.iL
+        
+        # Size calculation (MQL4 style)
+        if state.X <= state.y:
+            state.X = state.y + MAX_PERIOD
+        size = state.X - state.y
+        if size <= 0:
+            size = MAX_PERIOD
+            state.X = state.y + size
+        
+        # Reset indicator arrays (MQL4 OnReInit() style)
+        for i in range(13):
+            if i < len(state.cA):
+                state.cA[i] = [0.0] * size
+                state.iA[i] = [0.0] * size
+                state.kA[i] = [0.0] * size
+                state.lA[i] = [0.0] * size
+        
+        # Clear all indicator lists
+        state.IHKk = []
+        state.IHKt = []
+        state.RSI = []
+        state.CCI = []
+        state.MOM = []
+        state.AD = []
+        state.OBV = []
+        state.Force = []
+        state.MFI = []
+        state.DeM = []
+        state.RVIm = []
+        state.AC = []
+        state.StdDev = []
+        state.ATR = []
+        state.ADX = []
+        
+        # Reset arrays (MQL4 style - completely fresh)
+        state.Regime = [""] * size
+        state.Premium = [0.0] * size
+        state.Discount = [0.0] * size
+        state.HH = [0.0] * size
+        state.LL = [0.0] * size
+        state.k = [False] * size
+        state.l = [False] * size
+        
+        state.U = []
+        state.R = True
+        
+        # Reset tracking variables (MQL4 OnReInit() style)
+        state.D = 0.0  # MQL4 sets to 0
+        state.E = 0.0  # MQL4 sets to 0
+        state.K = False
+        state.Z = state.y + 1
+        state.z = state.y + 1
+        state.O = state.y + 1
+        state.o = state.y + 1
+        state.r = 0
+        state.W = state.y + 1
+        state.w = state.y + 1
+        state.I = 0
+        state.iI = 0
+        state.J = 0
+        state.iJ = 0
+        state.ij = 0
+        state.toll = 0
+        state.tally = "   "
+        state.tick_tock = False
+        state.iZ = state.y + 1
+        state.iz = state.y + 1
+        state.iW = state.y + 1
+        state.iw = state.y + 1
+        state.iO = state.y + 1
+        state.io = state.y + 1
+        state.ir = 0
+        state.S = state.X
+        state.T = state.X
+        state.X = state.y
+        state.Y = state.y
+        state.FG = False  # MQL4 sets to false to trigger F() initialization
+        state.signature = False
+        state.signal = 0.0
+        
+        state.FVG = -1
+        state.BL = []
+        state.bottomLine = "   "
+        state.bL = "   "
+        
+        # Restore historical data (MQL4 preserves price history)
+        self.engine.ohlcv_history = saved_ohlcv
+        state.price = saved_price
+        state.Price = saved_Price
+        state.iH = saved_iH
+        state.iL = saved_iL
+        
+        # MQL4 STYLE: Initialize F() for each period with current bar data
+        if len(self.engine.ohlcv_history) >= 2:
+            iH = self.engine.ohlcv_history[-2]["high"]
+            iL = self.engine.ohlcv_history[-2]["low"]
+            for j in range(state.y + 1, state.X + 1):
+                idx = j - state.y - 1
+                if 0 <= idx < len(state.k):
+                    state.k[idx] = False
+                    state.l[idx] = False
+                    state.HH[idx] = iH
+                    state.LL[idx] = iL
+                    state.Premium[idx] = iH
+                    state.Discount[idx] = iL
+                    # Copy current indicator values to kA/lA if available
+                    for i in range(13):
+                        if idx < len(state.kA[i]) and idx < len(state.cA[i]):
+                            state.kA[i][idx] = state.cA[i][idx]
+                            state.lA[i][idx] = state.cA[i][idx]
+        
+        # Set FG to true (MQL4 behavior - after F() initialization)
+        state.FG = True
+        
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 "🔄 *TOPOLOGICAL BRANCH RESET*\n\n"
                 "The Hilbert space projection has been re-anchored to the current\n"
-                "topological branch. Historical drift has been cleared.\n\n"
+                "topological branch with historical preservation (MQL4 OnReInit() compatible).\n\n"
                 "🧠 *State Reset:*\n"
-                "• Premium/Discount re-anchored\n"
-                "• kA/lA indicator states cleared\n"
-                "• Regime classification reset\n"
-                "• FVG tracking reset",
+                "• All 13 indicator arrays reset\n"
+                "• Regime classification cleared\n"
+                "• Premium/Discount/HH/LL reset to current bar data\n"
+                "• k/l signal flags cleared\n"
+                "• Tracking variables reset to initial state\n"
+                "• ✨ *Historical price data preserved via F() initialization*\n\n"
+                "📊 *Ready for new regime classification...*",
                 parse_mode="Markdown"
             )
         else:
             await update.message.reply_text(
                 "🔄 *TOPOLOGICAL BRANCH RESET*\n\n"
                 "The Hilbert space projection has been re-anchored to the current\n"
-                "topological branch. Historical drift has been cleared.\n\n"
+                "topological branch with historical preservation (MQL4 OnReInit() compatible).\n\n"
                 "🧠 *State Reset:*\n"
-                "• Premium/Discount re-anchored\n"
-                "• kA/lA indicator states cleared\n"
-                "• Regime classification reset\n"
-                "• FVG tracking reset",
+                "• All 13 indicator arrays reset\n"
+                "• Regime classification cleared\n"
+                "• Premium/Discount/HH/LL reset to current bar data\n"
+                "• k/l signal flags cleared\n"
+                "• Tracking variables reset to initial state\n"
+                "• ✨ *Historical price data preserved via F() initialization*\n\n"
+                "📊 *Ready for new regime classification...*",
                 parse_mode="Markdown"
             )
 
@@ -1853,181 +2146,177 @@ class AEI_Bot:
         if self._running:
             await update.message.reply_text("⚠️ Price feed is already running.")
             return
-    
+
         self._running = True
         self.engine._running = True
-    
+
         # Load historical data
         historical = self.engine.feed.get_historical_klines(limit=200)
         if historical:
             self.engine.ohlcv_history = historical
             logger.info(f"✅ Loaded {len(historical)} historical bars")
+            # Initialize engine with historical data
+            self.engine.initialize_engine()
+            logger.info("✅ Engine initialized with historical data")
         else:
-            logger.warning("⚠️ No historical data loaded")
-    
-        # DON'T call _on_reinit() here - it resets everything
-        # Instead, manually initialize the state
-        state = self.engine.state
-        state.FG = True  # Mark as running
-        state.tick = 0   # Reset tick counter
-        
-        # Make sure y is set correctly
-        state.y = MIN_PERIOD - 2  # This should be 1
-        
-        # Initialize arrays with proper size
-        size = state.X - state.y
-        if size > 0:
-            state.k = [False] * size
-            state.l = [False] * size
-            state.HH = [0.0] * size
-            state.LL = [0.0] * size
-            state.Premium = [0.0] * size
-            state.Discount = [0.0] * size
-            state.Regime = [""] * size
-    
+            logger.warning("⚠️ No historical data loaded - will initialize on first tick")
+
+        # Get initial price - this will trigger _on_tick which will auto-initialize if needed
+        self.engine.update_price_from_feed()
+
         # Start price feed loop
         if self._price_task is None or self._price_task.done():
             self._price_task = asyncio.create_task(self.price_feed_loop())
-    
+
         await update.message.reply_text(
             f"✅ *Price feed started*\n\n"
             f"📈 *Symbol:* {SYMBOL}\n"
             f"🔄 *Update Interval:* {UPDATE_INTERVAL}s\n"
             f"📊 *Historical Data:* {len(self.engine.ohlcv_history)} bars loaded\n"
             f"📡 *Data Source:* Yahoo Finance (Free, No KYC)\n"
-            f"🔮 *Status:* Monitoring for signals...",
+            f"🔮 *Status:* Monitoring for signals...\n"
+            f"🧠 *Engine State:* {'✅ Initialized' if self.engine.state.FG else '⏳ Waiting for data'}",
             parse_mode="Markdown"
         )
-        async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            """Stop the Yahoo Finance price feed."""
-            self._running = False
-            self.engine._running = False
-            if self._price_task and not self._price_task.done():
-                self._price_task.cancel()
-            await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
-    
-        async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            """Change trading symbol."""
-            global SYMBOL
-            args = context.args
-            if not args:
+
+    async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Stop the Yahoo Finance price feed."""
+        self._running = False
+        self.engine._running = False
+        if self._price_task and not self._price_task.done():
+            self._price_task.cancel()
+        await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+
+    async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Change trading symbol."""
+        global SYMBOL
+        args = context.args
+        if not args:
+            await update.message.reply_text(
+                f"📈 *Current Symbol:* `{SYMBOL}`\n\n"
+                "Use `/symbol <PAIR>` to change.\n"
+                "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n\n"
+                f"*Supported Symbols:*\n"
+                f"{', '.join(list(SYMBOL_MAP.keys())[:10])}\n"
+                f"(and {len(SYMBOL_MAP) - 10} more)",
+                parse_mode="Markdown"
+            )
+            return
+
+        new_symbol = args[0].upper()
+        if new_symbol in SYMBOL_MAP:
+            yahoo_symbol = SYMBOL_MAP[new_symbol]
+        else:
+            yahoo_symbol = new_symbol
+
+        try:
+            ticker = yf.Ticker(yahoo_symbol)
+            info = ticker.info
+            if info.get("regularMarketPrice"):
+                SYMBOL = yahoo_symbol
+                # Update feed
+                self.engine.feed = YahooFinanceFeed(yahoo_symbol)
+                # Reset engine state
+                self.engine.state.y = MIN_PERIOD - 2
+                self.engine.state.X = MIN_PERIOD - 1
+                self.engine._on_reinit()
+                # Try to load historical data for new symbol
+                historical = self.engine.feed.get_historical_klines(limit=200)
+                if historical:
+                    self.engine.ohlcv_history = historical
+                    self.engine.initialize_engine()
                 await update.message.reply_text(
-                    f"📈 *Current Symbol:* `{SYMBOL}`\n\n"
-                    "Use `/symbol <PAIR>` to change.\n"
-                    "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n\n"
-                    f"*Supported Symbols:*\n"
-                    f"{', '.join(list(SYMBOL_MAP.keys())[:10])}\n"
-                    f"(and {len(SYMBOL_MAP) - 10} more)",
+                    f"✅ *Symbol changed*\n\n"
+                    f"📈 *New Symbol:* `{yahoo_symbol}`\n"
+                    f"💰 *Current Price:* {info.get('regularMarketPrice', 'N/A')}\n"
+                    f"📊 *Name:* {info.get('longName', 'Unknown')}\n"
+                    f"🧠 *Engine State:* {'✅ Initialized' if self.engine.state.FG else '⏳ Waiting for data'}",
                     parse_mode="Markdown"
                 )
-                return
-    
-            new_symbol = args[0].upper()
-            if new_symbol in SYMBOL_MAP:
-                yahoo_symbol = SYMBOL_MAP[new_symbol]
             else:
-                yahoo_symbol = new_symbol
-    
-            try:
-                ticker = yf.Ticker(yahoo_symbol)
-                info = ticker.info
-                if info.get("regularMarketPrice"):
-                    SYMBOL = yahoo_symbol
-                    self.engine.feed = YahooFinanceFeed(yahoo_symbol)
-                    self.engine.state.y = MIN_PERIOD - 2
-                    self.engine.state.X = MIN_PERIOD - 1
-                    self.engine._on_reinit()
-                    await update.message.reply_text(
-                        f"✅ *Symbol changed*\n\n"
-                        f"📈 *New Symbol:* `{yahoo_symbol}`\n"
-                        f"💰 *Current Price:* {info.get('regularMarketPrice', 'N/A')}\n"
-                        f"📊 *Name:* {info.get('longName', 'Unknown')}",
-                        parse_mode="Markdown"
-                    )
-                else:
-                    await update.message.reply_text(f"❌ Invalid symbol: {yahoo_symbol}")
-            except Exception as e:
-                await update.message.reply_text(f"❌ Error: {e}")
-    
-        async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            """Display ticker information."""
-            info = self.engine.feed.get_info()
-            response = (
-                "📊 *TICKER INFORMATION*\n\n"
-                f"📈 *Symbol:* {SYMBOL}\n"
-                f"📛 *Name:* {info.get('name', 'Unknown')}\n"
-                f"🏭 *Sector:* {info.get('sector', 'Unknown')}\n"
-                f"💵 *Currency:* {info.get('currency', 'USD')}\n"
-                f"💰 *Previous Close:* {info.get('previous_close', 'N/A')}\n"
-                f"📊 *Market Cap:* {info.get('market_cap', 'N/A')}\n\n"
-                f"📡 *Data Source:* Yahoo Finance (Free, No KYC)"
-            )
-            if update.callback_query:
-                await update.callback_query.edit_message_text(response, parse_mode="Markdown")
-            else:
-                await update.message.reply_text(response, parse_mode="Markdown")
-    
-        async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            """Handle inline button callbacks."""
-            query = update.callback_query
-            await query.answer()
-    
-            action = query.data
-            if action == "status":
-                await self.status(update, context)
-            elif action == "regime":
-                await self.regime(update, context)
-            elif action == "signal":
-                await self.signal(update, context)
-            elif action == "indicators":
-                await self.indicators(update, context)
-            elif action == "start_feed":
-                await self.start_feed(update, context)
-            elif action == "stop_feed":
-                await self.stop_feed(update, context)
-            elif action == "info":
-                await self.info(update, context)
-            elif action == "reset":
-                await self.reset(update, context)
-    
-        async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            """Log errors."""
-            logger.error(f"Update {update} caused error {context.error}")
-            if update and update.message:
-                await update.message.reply_text("❌ An error occurred. Please try again.")
-    
-        def run(self) -> None:
-            """Start the bot."""
-            self.application = Application.builder().token(self.token).build()
-    
-            # Add command handlers
-            self.application.add_handler(CommandHandler("start", self.start))
-            self.application.add_handler(CommandHandler("help", self.help))
-            self.application.add_handler(CommandHandler("status", self.status))
-            self.application.add_handler(CommandHandler("regime", self.regime))
-            self.application.add_handler(CommandHandler("signal", self.signal))
-            self.application.add_handler(CommandHandler("indicators", self.indicators))
-            self.application.add_handler(CommandHandler("fvg", self.fvg))
-            self.application.add_handler(CommandHandler("reset", self.reset))
-            self.application.add_handler(CommandHandler("start_feed", self.start_feed))
-            self.application.add_handler(CommandHandler("stop_feed", self.stop_feed))
-            self.application.add_handler(CommandHandler("symbol", self.symbol))
-            self.application.add_handler(CommandHandler("info", self.info))
-    
-            # Add callback query handler
-            self.application.add_handler(CallbackQueryHandler(self.button_handler))
-    
-            # Add error handler
-            self.application.add_error_handler(self.error_handler)
-    
-            logger.info(f"🤖 {self.bot_name} starting...")
-            logger.info(f"📊 Quantum-Financial Topology Engine initialized.")
-            logger.info(f"🧠 Arc-Length Axiom (s=r) enforced.")
-            logger.info(f"🔄 Non-Hermitian Lindblad Dynamics active.")
-            logger.info(f"📡 Data Source: Yahoo Finance (Free, No KYC)")
-            logger.info(f"💎 Ready. Use /start to begin.")
-    
-            self.application.run_polling()
+                await update.message.reply_text(f"❌ Invalid symbol: {yahoo_symbol}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+
+    async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Display ticker information."""
+        info = self.engine.feed.get_info()
+        response = (
+            "📊 *TICKER INFORMATION*\n\n"
+            f"📈 *Symbol:* {SYMBOL}\n"
+            f"📛 *Name:* {info.get('name', 'Unknown')}\n"
+            f"🏭 *Sector:* {info.get('sector', 'Unknown')}\n"
+            f"💵 *Currency:* {info.get('currency', 'USD')}\n"
+            f"💰 *Previous Close:* {info.get('previous_close', 'N/A')}\n"
+            f"📊 *Market Cap:* {info.get('market_cap', 'N/A')}\n\n"
+            f"📡 *Data Source:* Yahoo Finance (Free, No KYC)"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown")
+
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle inline button callbacks."""
+        query = update.callback_query
+        await query.answer()
+
+        action = query.data
+        if action == "status":
+            await self.status(update, context)
+        elif action == "regime":
+            await self.regime(update, context)
+        elif action == "signal":
+            await self.signal(update, context)
+        elif action == "indicators":
+            await self.indicators(update, context)
+        elif action == "start_feed":
+            await self.start_feed(update, context)
+        elif action == "stop_feed":
+            await self.stop_feed(update, context)
+        elif action == "info":
+            await self.info(update, context)
+        elif action == "reset":
+            await self.reset(update, context)
+
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log errors."""
+        logger.error(f"Update {update} caused error {context.error}")
+        if update and update.message:
+            await update.message.reply_text("❌ An error occurred. Please try again.")
+
+    def run(self) -> None:
+        """Start the bot."""
+        self.application = Application.builder().token(self.token).build()
+
+        # Add command handlers
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("help", self.help))
+        self.application.add_handler(CommandHandler("status", self.status))
+        self.application.add_handler(CommandHandler("regime", self.regime))
+        self.application.add_handler(CommandHandler("signal", self.signal))
+        self.application.add_handler(CommandHandler("indicators", self.indicators))
+        self.application.add_handler(CommandHandler("fvg", self.fvg))
+        self.application.add_handler(CommandHandler("reset", self.reset))
+        self.application.add_handler(CommandHandler("start_feed", self.start_feed))
+        self.application.add_handler(CommandHandler("stop_feed", self.stop_feed))
+        self.application.add_handler(CommandHandler("symbol", self.symbol))
+        self.application.add_handler(CommandHandler("info", self.info))
+
+        # Add callback query handler
+        self.application.add_handler(CallbackQueryHandler(self.button_handler))
+
+        # Add error handler
+        self.application.add_error_handler(self.error_handler)
+
+        logger.info(f"🤖 {self.bot_name} starting...")
+        logger.info(f"📊 Quantum-Financial Topology Engine initialized.")
+        logger.info(f"🧠 Arc-Length Axiom (s=r) enforced.")
+        logger.info(f"🔄 Non-Hermitian Lindblad Dynamics active.")
+        logger.info(f"📡 Data Source: Yahoo Finance (Free, No KYC)")
+        logger.info(f"💎 Ready. Use /start to begin.")
+
+        self.application.run_polling()
 
 # ============================================================================
 # MAIN ENTRY POINT
