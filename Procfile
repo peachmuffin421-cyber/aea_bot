@@ -1,1 +1,1 @@
-worker: python aea_bot.py
+worker: python app.py
