@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.02 (Heroku Production - MQL4 Compatible Reset)
+Version: 4.03 (Heroku Production - MQL4 Compatible Reset - Fixed Initialization)
 """
 
 import asyncio
@@ -545,7 +545,7 @@ class AEEA_Engine:
             for j in range(state.y + 1, state.X + 1):
                 self._F(j, state.iH, state.iL)
         
-        state.FG = True
+        state.FG = False  # MQL4: FG=false until OnTick() initializes
         state.tick = 0
         state.R = True
         state.signature = False
@@ -563,7 +563,7 @@ class AEEA_Engine:
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(state.y)
         
-        logger.info("✅ Engine initialized successfully")
+        logger.info("✅ Engine state prepared (FG=false - waiting for OnTick initialization)")
 
     def update_price_from_feed(self) -> None:
         """Update price from Yahoo Finance."""
@@ -1015,49 +1015,67 @@ class AEEA_Engine:
         state.price = price_data.bid
         state.Price = price_data.close
         
-        # Auto-initialize if needed (MQL4 style - only once)
-        if not state.FG and len(self.ohlcv_history) >= state.y + 1:
-            # MQL4 style: initialize F() for each period
+        # [INITIALIZATION PHASE: UNIT PHASE MANIFOLD RESET ON FIRST EXECUTION]
+        # MQL4 compatible: if FG == false, initialize F() for each period
+        if not state.FG:
+            # Ensure arrays are properly sized (MQL4 style)
+            if state.X <= state.y:
+                state.X = state.y + MAX_PERIOD
+            
+            size = state.X - state.y
+            if size <= 0:
+                size = MAX_PERIOD
+                state.X = state.y + size
+            
+            # Resize arrays if needed
+            if len(state.k) != size:
+                state.k = [False] * size
+                state.l = [False] * size
+                state.HH = [0.0] * size
+                state.LL = [0.0] * size
+                state.Premium = [0.0] * size
+                state.Discount = [0.0] * size
+                state.Regime = [""] * size
+            
+            # Get current bar data for F() initialization
             if len(self.ohlcv_history) >= 2:
                 iH = self.ohlcv_history[-2]["high"]
                 iL = self.ohlcv_history[-2]["low"]
-                # Ensure arrays are sized properly
-                if state.X <= state.y:
-                    state.X = state.y + MAX_PERIOD
-                size = state.X - state.y
-                if size <= 0:
-                    size = MAX_PERIOD
-                    state.X = state.y + size
-                
-                # Resize arrays if needed
-                if len(state.k) != size:
-                    state.k = [False] * size
-                    state.l = [False] * size
-                    state.HH = [0.0] * size
-                    state.LL = [0.0] * size
-                    state.Premium = [0.0] * size
-                    state.Discount = [0.0] * size
-                    state.Regime = [""] * size
-                
-                # Initialize F for each j (MQL4 style)
-                for j in range(state.y + 1, state.X + 1):
-                    idx = j - state.y - 1
-                    if 0 <= idx < len(state.k):
-                        state.k[idx] = False
-                        state.l[idx] = False
-                        state.HH[idx] = iH
-                        state.LL[idx] = iL
-                        state.Premium[idx] = iH
-                        state.Discount[idx] = iL
-                        # Copy indicator values if available
-                        for i in range(13):
-                            if idx < len(state.kA[i]) and idx < len(state.cA[i]):
-                                state.kA[i][idx] = state.cA[i][idx]
-                                state.lA[i][idx] = state.cA[i][idx]
+            else:
+                iH = price_data.high
+                iL = price_data.low
+            
+            # MQL4 style: Initialize F() for each j from y+1 to X
+            # This matches the MQL4 OnTick() initialization:
+            # for(j = y + 1; j < x; j++){ F(); }
+            for j in range(state.y + 1, state.X + 1):
+                idx = j - state.y - 1
+                if 0 <= idx < len(state.k):
+                    # F() implementation
+                    norm_vals = self._normalize(j)
+                    for i in range(min(13, len(norm_vals))):
+                        if i < len(state.cA) and idx < len(state.cA[i]):
+                            state.cA[i][idx] = norm_vals[i] if i < len(norm_vals) else 50.0
+                    
+                    state.k[idx] = False
+                    state.l[idx] = False
+                    state.HH[idx] = iH
+                    state.LL[idx] = iL
+                    state.Premium[idx] = iH
+                    state.Discount[idx] = iL
+                    
+                    for i in range(13):
+                        if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
+                            state.kA[i][idx] = state.cA[i][idx]
+                            state.lA[i][idx] = state.cA[i][idx]
+                    
+                    if state.R and state.FG:
+                        state.U.append(True)
+                        if all(state.U):
+                            state.R = False
             
             state.FG = True
-            state.tick = 0
-            logger.info("✅ Engine auto-initialized (MQL4 style)")
+            logger.info("✅ Engine initialized on first tick (MQL4 style)")
         
         state.tick += 1
 
@@ -1769,11 +1787,12 @@ class AEI_Bot:
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display current market state."""
-        # Ensure engine is initialized
+        # Check if engine is initialized
         if not self.engine.state.FG:
             await update.message.reply_text(
                 "⏳ *Engine not initialized*\n\n"
-                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                "The engine will initialize on the first price tick after starting the feed.\n"
+                "Please use `/start_feed` to start the price feed.",
                 parse_mode="Markdown"
             )
             return
@@ -1814,11 +1833,12 @@ class AEI_Bot:
 
     async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display detailed regime classification."""
-        # Ensure engine is initialized
+        # Check if engine is initialized
         if not self.engine.state.FG:
             await update.message.reply_text(
                 "⏳ *Engine not initialized*\n\n"
-                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                "The engine will initialize on the first price tick after starting the feed.\n"
+                "Please use `/start_feed` to start the price feed.",
                 parse_mode="Markdown"
             )
             return
@@ -1865,11 +1885,12 @@ class AEI_Bot:
 
     async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display current trading signal."""
-        # Ensure engine is initialized
+        # Check if engine is initialized
         if not self.engine.state.FG:
             await update.message.reply_text(
                 "⏳ *Engine not initialized*\n\n"
-                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                "The engine will initialize on the first price tick after starting the feed.\n"
+                "Please use `/start_feed` to start the price feed.",
                 parse_mode="Markdown"
             )
             return
@@ -1915,11 +1936,12 @@ class AEI_Bot:
 
     async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display 13D Hilbert Space projection."""
-        # Ensure engine is initialized
+        # Check if engine is initialized
         if not self.engine.state.FG:
             await update.message.reply_text(
                 "⏳ *Engine not initialized*\n\n"
-                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                "The engine will initialize on the first price tick after starting the feed.\n"
+                "Please use `/start_feed` to start the price feed.",
                 parse_mode="Markdown"
             )
             return
@@ -1961,11 +1983,12 @@ class AEI_Bot:
 
     async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display Fair Value Gap tracking."""
-        # Ensure engine is initialized
+        # Check if engine is initialized
         if not self.engine.state.FG:
             await update.message.reply_text(
                 "⏳ *Engine not initialized*\n\n"
-                "Please use `/start_feed` to start the price feed and initialize the engine.",
+                "The engine will initialize on the first price tick after starting the feed.\n"
+                "Please use `/start_feed` to start the price feed.",
                 parse_mode="Markdown"
             )
             return
@@ -2155,13 +2178,13 @@ class AEI_Bot:
         if historical:
             self.engine.ohlcv_history = historical
             logger.info(f"✅ Loaded {len(historical)} historical bars")
-            # Initialize engine with historical data
+            # Prepare engine state - FG will be set to True on first tick (MQL4 compatible)
             self.engine.initialize_engine()
-            logger.info("✅ Engine initialized with historical data")
+            logger.info("✅ Engine state prepared - will initialize on first tick")
         else:
             logger.warning("⚠️ No historical data loaded - will initialize on first tick")
 
-        # Get initial price - this will trigger _on_tick which will auto-initialize if needed
+        # Get initial price - this will trigger _on_tick() which will auto-initialize
         self.engine.update_price_from_feed()
 
         # Start price feed loop
@@ -2175,7 +2198,7 @@ class AEI_Bot:
             f"📊 *Historical Data:* {len(self.engine.ohlcv_history)} bars loaded\n"
             f"📡 *Data Source:* Yahoo Finance (Free, No KYC)\n"
             f"🔮 *Status:* Monitoring for signals...\n"
-            f"🧠 *Engine State:* {'✅ Initialized' if self.engine.state.FG else '⏳ Waiting for data'}",
+            f"🧠 *Engine State:* ⏳ Initializing on first tick (MQL4 compatible)",
             parse_mode="Markdown"
         )
 
