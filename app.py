@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.04 (ARC-LENGTH COHERENCE PATCH - FIXED TICK & INITIALIZATION)
+Version: 4.05 (ARC-LENGTH COHERENCE PATCH - FIXED F-STRING & MQL4 PARITY)
 """
 
 import asyncio
@@ -1999,7 +1999,7 @@ class AEI_Bot:
         response = (
             "📐 *FAIR VALUE GAP TRACKING*\n\n"
             f"📊 *FVG Count:* {state.FVG + 1}\n"
-            f"📈 *Current Price:* {state.price:.5f}\n
+            f"📈 *Current Price:* {state.price:.5f}\n"
             f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n\n"
             "*Topological Anchors:*\n"
             f"  🔷 *Premium:* {state.Premium[idx] if 0 <= idx < len(state.Premium) else 0.0:.5f}\n"
