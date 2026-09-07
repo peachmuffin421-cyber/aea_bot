@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.06 (ARC-LENGTH COHERENCE PATCH - FIXED PRICE FEED & TICK)
+Version: 4.07 (ARC-LENGTH COHERENCE PATCH - FIXED ENGINE INITIALIZATION)
 """
 
 import asyncio
@@ -19,7 +19,12 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Any
-from fractions import Fraction
+from decimal import Decimal, getcontext
+
+# ============================================================================
+# EXACT ARITHMETIC: Decimal precision for financial calculations
+# ============================================================================
+getcontext().prec = 28
 
 # ============================================================================
 # TELEGRAM BOT IMPORTS
@@ -52,20 +57,20 @@ logger = logging.getLogger(__name__)
 # CONSTANTS & CONFIGURATION
 # ============================================================================
 
-# --- AETHERIC INPUT PARAMETERS ---
-COMMISSION: float = 0.0
-STOP_LOSS: float = 0.0
-TAKE_PROFIT: float = 0.0
-LOT_SIZE: float = 0.01
+# --- AETHERIC INPUT PARAMETERS (Exact Decimal Representation) ---
+COMMISSION: Decimal = Decimal('0.0')
+STOP_LOSS: Decimal = Decimal('0.0')
+TAKE_PROFIT: Decimal = Decimal('0.0')
+LOT_SIZE: Decimal = Decimal('0.01')
 SLIPPAGE: int = 100
 MAX_PERIOD: int = 60
 MIN_PERIOD: int = 3
 X_PERIOD: int = MAX_PERIOD + 2
 
-# --- IMBALANCE OPERATOR THRESHOLDS (Exact Rational Representation) ---
-F_THRESHOLD: float = float(Fraction(200, 3))   # 66.666...
-G_THRESHOLD: float = float(Fraction(100, 3))   # 33.333...
-GF_TOLERANCE: float = float(Fraction(8, 3))     # 2.666...
+# --- IMBALANCE OPERATOR THRESHOLDS (Exact Decimal) ---
+F_THRESHOLD: Decimal = Decimal('66.6666666666666667')
+G_THRESHOLD: Decimal = Decimal('33.3333333333333333')
+GF_TOLERANCE: Decimal = Decimal('2.6666666666666667')
 
 # --- THEORETICAL CONSTANTS ---
 PHI_SYMBOLIC = "(1 + sqrt(5)) / 2"
@@ -93,7 +98,17 @@ SYMBOL_MAP = {
     "ICPUSDT": "ICP-USD",
     "XLMUSDT": "XLM-USD",
     "HBARUSDT": "HBAR-USD",
-    "QNTUSDT": "QNT-USD"
+    "QNTUSDT": "QNT-USD",
+    "GC=F": "GC=F",
+    "SI=F": "SI=F",
+    "CL=F": "CL=F",
+    "NG=F": "NG=F",
+    "ZB=F": "ZB=F",
+    "ZN=F": "ZN=F",
+    "ZS=F": "ZS=F",
+    "ZM=F": "ZM=F",
+    "ZW=F": "ZW=F",
+    "KE=F": "KE=F"
 }
 
 SYMBOL: str = "BTC-USD"
@@ -106,38 +121,38 @@ UPDATE_INTERVAL: int = 30
 
 @dataclass
 class PriceData:
-    """Container for current price data."""
-    bid: float = 0.0
-    ask: float = 0.0
-    close: float = 0.0
-    open: float = 0.0
-    high: float = 0.0
-    low: float = 0.0
-    volume: float = 0.0
+    """Container for current price data using Decimal for exactness."""
+    bid: Decimal = Decimal('0.0')
+    ask: Decimal = Decimal('0.0')
+    close: Decimal = Decimal('0.0')
+    open: Decimal = Decimal('0.0')
+    high: Decimal = Decimal('0.0')
+    low: Decimal = Decimal('0.0')
+    volume: Decimal = Decimal('0.0')
     timestamp: datetime = field(default_factory=datetime.now)
 
     @property
-    def spread(self) -> float:
+    def spread(self) -> Decimal:
         return self.ask - self.bid
 
 @dataclass
 class IndicatorState:
     """13-Dimensional Hilbert Space Projection State."""
-    adx: float = 50.0
-    stochastic: float = 50.0
-    rvi: float = 50.0
-    ac: float = 50.0
-    force: float = 50.0
-    obv: float = 50.0
-    ad: float = 50.0
-    mfi: float = 50.0
-    momentum: float = 50.0
-    dem: float = 50.0
-    wpr: float = 50.0
-    cci: float = 50.0
-    rsi: float = 50.0
-    ihk_kijun: float = 50.0
-    ihk_tenkan: float = 50.0
+    adx: Decimal = Decimal('50.0')
+    stochastic: Decimal = Decimal('50.0')
+    rvi: Decimal = Decimal('50.0')
+    ac: Decimal = Decimal('50.0')
+    force: Decimal = Decimal('50.0')
+    obv: Decimal = Decimal('50.0')
+    ad: Decimal = Decimal('50.0')
+    mfi: Decimal = Decimal('50.0')
+    momentum: Decimal = Decimal('50.0')
+    dem: Decimal = Decimal('50.0')
+    wpr: Decimal = Decimal('50.0')
+    cci: Decimal = Decimal('50.0')
+    rsi: Decimal = Decimal('50.0')
+    ihk_kijun: Decimal = Decimal('50.0')
+    ihk_tenkan: Decimal = Decimal('50.0')
 
 @dataclass
 class AEI_CoreState:
@@ -151,7 +166,7 @@ class AEI_CoreState:
     tick: int = -1
     y: int = MIN_PERIOD - 2
 
-    signal: float = 0.0
+    signal: Decimal = Decimal('0.0')
     signature: bool = False
     tick_tock: bool = False
     FG: bool = False
@@ -173,10 +188,10 @@ class AEI_CoreState:
     Buy_ticket: int = -1
     Sell_ticket: int = -1
 
-    D: float = 0.0
-    E: float = 0.0
-    p: float = 0.0
-    q: float = 0.0
+    D: Decimal = Decimal('0.0')
+    E: Decimal = Decimal('0.0')
+    p: Decimal = Decimal('0.0')
+    q: Decimal = Decimal('0.0')
     K: bool = False
 
     C: bool = True
@@ -211,52 +226,52 @@ class AEI_CoreState:
     toll: int = 0
     tally: str = "   "
 
-    Premium: List[float] = field(default_factory=lambda: [0.0] * (X_PERIOD - (MIN_PERIOD - 1)))
-    Discount: List[float] = field(default_factory=lambda: [0.0] * (X_PERIOD - (MIN_PERIOD - 1)))
-    HH: List[float] = field(default_factory=lambda: [0.0] * (X_PERIOD - (MIN_PERIOD - 1)))
-    LL: List[float] = field(default_factory=lambda: [0.0] * (X_PERIOD - (MIN_PERIOD - 1)))
+    Premium: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - (MIN_PERIOD - 1)))
+    Discount: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - (MIN_PERIOD - 1)))
+    HH: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - (MIN_PERIOD - 1)))
+    LL: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - (MIN_PERIOD - 1)))
     k: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - (MIN_PERIOD - 1)))
     l: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - (MIN_PERIOD - 1)))
-    U: List[bool] = field(default_factory=lambda: [])
+    U: List[bool] = field(default_factory=list)
     R: bool = True
 
-    iA: List[List[float]] = field(default_factory=lambda: [[0.0] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
-    cA: List[List[float]] = field(default_factory=lambda: [[0.0] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
-    kA: List[List[float]] = field(default_factory=lambda: [[0.0] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
-    lA: List[List[float]] = field(default_factory=lambda: [[0.0] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
+    iA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('0.0')] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
+    cA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('0.0')] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
+    kA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('0.0')] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
+    lA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('0.0')] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
 
     Regime: List[str] = field(default_factory=lambda: [""] * (X_PERIOD - (MIN_PERIOD - 1)))
 
-    IHKk: List[float] = field(default_factory=list)
-    IHKt: List[float] = field(default_factory=list)
-    RSI: List[float] = field(default_factory=list)
-    CCI: List[float] = field(default_factory=list)
-    MOM: List[float] = field(default_factory=list)
-    AD: List[float] = field(default_factory=list)
-    OBV: List[float] = field(default_factory=list)
-    Force: List[float] = field(default_factory=list)
-    MFI: List[float] = field(default_factory=list)
-    DeM: List[float] = field(default_factory=list)
-    RVIm: List[float] = field(default_factory=list)
-    AC: List[float] = field(default_factory=list)
-    StdDev: List[float] = field(default_factory=list)
-    ATR: List[float] = field(default_factory=list)
-    ADX: List[float] = field(default_factory=list)
+    IHKk: List[Decimal] = field(default_factory=list)
+    IHKt: List[Decimal] = field(default_factory=list)
+    RSI: List[Decimal] = field(default_factory=list)
+    CCI: List[Decimal] = field(default_factory=list)
+    MOM: List[Decimal] = field(default_factory=list)
+    AD: List[Decimal] = field(default_factory=list)
+    OBV: List[Decimal] = field(default_factory=list)
+    Force: List[Decimal] = field(default_factory=list)
+    MFI: List[Decimal] = field(default_factory=list)
+    DeM: List[Decimal] = field(default_factory=list)
+    RVIm: List[Decimal] = field(default_factory=list)
+    AC: List[Decimal] = field(default_factory=list)
+    StdDev: List[Decimal] = field(default_factory=list)
+    ATR: List[Decimal] = field(default_factory=list)
+    ADX: List[Decimal] = field(default_factory=list)
 
-    Suply: float = 0.0
-    iSuply: float = 0.0
-    Demand: float = 0.0
-    iDemand: float = 0.0
-    Sale: float = 0.0
-    iSale: float = 0.0
-    Stock: float = 0.0
-    iStock: float = 0.0
+    Suply: Decimal = Decimal('0.0')
+    iSuply: Decimal = Decimal('0.0')
+    Demand: Decimal = Decimal('0.0')
+    iDemand: Decimal = Decimal('0.0')
+    Sale: Decimal = Decimal('0.0')
+    iSale: Decimal = Decimal('0.0')
+    Stock: Decimal = Decimal('0.0')
+    iStock: Decimal = Decimal('0.0')
 
-    iStdDev: float = 0.0
-    iATR: float = 0.0
+    iStdDev: Decimal = Decimal('0.0')
+    iATR: Decimal = Decimal('0.0')
 
     FVG: int = -1
-    BL: List[float] = field(default_factory=list)
+    BL: List[Decimal] = field(default_factory=list)
     bottomLine: str = "   "
     bL: str = "   "
 
@@ -266,137 +281,147 @@ class AEI_CoreState:
     Y: int = MIN_PERIOD - 1
 
     t: Optional[datetime] = None
-    iopen: float = 0.0
-    iPrice: float = 0.0
-    iH: float = 0.0
-    iL: float = 0.0
-    price: float = 0.0
-    Price: float = 0.0
-    open: float = 0.0
+    iopen: Decimal = Decimal('0.0')
+    iPrice: Decimal = Decimal('0.0')
+    iH: Decimal = Decimal('0.0')
+    iL: Decimal = Decimal('0.0')
+    price: Decimal = Decimal('0.0')
+    Price: Decimal = Decimal('0.0')
+    open: Decimal = Decimal('0.0')
 
     chat_id: Optional[int] = None
+    _initialized: bool = False
 
 # ============================================================================
-# INDICATOR CALCULATIONS
+# INDICATOR CALCULATIONS (Decimal Precision)
 # ============================================================================
 
-def sma(data: List[float], period: int) -> float:
-    """Simple Moving Average."""
+def sma(data: List[Decimal], period: int) -> Decimal:
+    """Simple Moving Average with Decimal precision."""
     if len(data) < period:
-        return 0.0
-    return sum(data[-period:]) / period
+        return Decimal('0.0')
+    total = sum(data[-period:], Decimal('0.0'))
+    return total / Decimal(period)
 
-def ema(data: List[float], period: int) -> float:
-    """Exponential Moving Average."""
+def ema(data: List[Decimal], period: int) -> Decimal:
+    """Exponential Moving Average with Decimal precision."""
     if len(data) < period:
         return sma(data, period)
-    alpha = 2.0 / (period + 1)
+    alpha = Decimal('2.0') / Decimal(period + 1)
     if len(data) > 1:
-        return alpha * data[-1] + (1 - alpha) * ema(data[:-1], period)
+        return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
     return data[-1]
 
-def rsi(data: List[float], period: int = 14) -> float:
-    """Relative Strength Index."""
+def rsi(data: List[Decimal], period: int = 14) -> Decimal:
+    """Relative Strength Index with Decimal precision."""
     if len(data) < period + 1:
-        return 50.0
-    gains = []
-    losses = []
+        return Decimal('50.0')
+    gains = Decimal('0.0')
+    losses = Decimal('0.0')
     for i in range(1, period + 1):
         diff = data[-i] - data[-i-1]
-        if diff >= 0:
-            gains.append(diff)
-            losses.append(0.0)
+        if diff >= Decimal('0.0'):
+            gains += diff
         else:
-            gains.append(0.0)
-            losses.append(-diff)
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
-    if avg_loss == 0:
-        return 100.0
+            losses -= diff
+    avg_gain = gains / Decimal(period) if period > 0 else Decimal('0.0')
+    avg_loss = losses / Decimal(period) if period > 0 else Decimal('0.0')
+    if avg_loss == Decimal('0.0'):
+        return Decimal('100.0')
     rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
+    return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
 
-def stochastic(high: List[float], low: List[float], close: List[float], k_period: int = 14, d_period: int = 3) -> Tuple[float, float]:
-    """Stochastic Oscillator %K and %D."""
+def stochastic(high: List[Decimal], low: List[Decimal], close: List[Decimal], k_period: int = 14, d_period: int = 3) -> Tuple[Decimal, Decimal]:
+    """Stochastic Oscillator %K and %D with Decimal precision."""
     if len(close) < k_period:
-        return 50.0, 50.0
+        return Decimal('50.0'), Decimal('50.0')
     highest = max(high[-k_period:])
     lowest = min(low[-k_period:])
     range_val = highest - lowest
-    if range_val == 0:
-        return 50.0, 50.0
-    k = 100.0 * (close[-1] - lowest) / range_val
-    d = k
-    return k, d
+    if range_val == Decimal('0.0'):
+        return Decimal('50.0'), Decimal('50.0')
+    k = Decimal('100.0') * (close[-1] - lowest) / range_val
+    return k, k
 
-def bollinger_bands(close: List[float], period: int = 20, dev: float = 2.0) -> Tuple[float, float, float]:
-    """Bollinger Bands: Upper, Middle, Lower."""
+def bollinger_bands(close: List[Decimal], period: int = 20, dev: Decimal = Decimal('2.0')) -> Tuple[Decimal, Decimal, Decimal]:
+    """Bollinger Bands: Upper, Middle, Lower with Decimal precision."""
     if len(close) < period:
-        return 0.0, 0.0, 0.0
+        return Decimal('0.0'), Decimal('0.0'), Decimal('0.0')
     mid = sma(close, period)
-    std = math.sqrt(sum((x - mid) ** 2 for x in close[-period:]) / period)
+    variance = sum((x - mid) ** 2 for x in close[-period:]) / Decimal(period)
+    std = Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
     upper = mid + dev * std
     lower = mid - dev * std
     return upper, mid, lower
 
-def atr(high: List[float], low: List[float], close: List[float], period: int = 14) -> float:
-    """Average True Range."""
+def atr(high: List[Decimal], low: List[Decimal], close: List[Decimal], period: int = 14) -> Decimal:
+    """Average True Range with Decimal precision."""
     if len(close) < period + 1:
-        return 0.0
+        return Decimal('0.0')
     tr_values = []
     for i in range(1, period + 1):
         tr1 = high[-i] - low[-i]
         tr2 = abs(high[-i] - close[-i-1])
         tr3 = abs(low[-i] - close[-i-1])
         tr_values.append(max(tr1, tr2, tr3))
-    return sum(tr_values) / period
+    return sum(tr_values) / Decimal(period)
 
-def stddev(data: List[float], period: int) -> float:
-    """Standard Deviation."""
+def stddev(data: List[Decimal], period: int) -> Decimal:
+    """Standard Deviation with Decimal precision."""
     if len(data) < period:
-        return 0.0
-    mean = sum(data[-period:]) / period
-    return math.sqrt(sum((x - mean) ** 2 for x in data[-period:]) / period)
+        return Decimal('0.0')
+    mean = sum(data[-period:]) / Decimal(period)
+    variance = sum((x - mean) ** 2 for x in data[-period:]) / Decimal(period)
+    return Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
 
-def ichimoku(high: List[float], low: List[float], close: List[float]) -> Dict[str, float]:
-    """Ichimoku Kinko Hyo (Simplified)."""
+def ichimoku(high: List[Decimal], low: List[Decimal], close: List[Decimal]) -> Dict[str, Decimal]:
+    """Ichimoku Kinko Hyo (Simplified) with Decimal precision."""
     n1, n2, n3 = 9, 26, 52
     if len(close) < n3:
-        return {"tenkan": 50.0, "kijun": 50.0, "senkou_a": 50.0, "senkou_b": 50.0}
-    tenkan = (max(high[-n1:]) + min(low[-n1:])) / 2
-    kijun = (max(high[-n2:]) + min(low[-n2:])) / 2
-    senkou_a = (tenkan + kijun) / 2
-    senkou_b = (max(high[-n3:]) + min(low[-n3:])) / 2
+        return {"tenkan": Decimal('50.0'), "kijun": Decimal('50.0'), "senkou_a": Decimal('50.0'), "senkou_b": Decimal('50.0')}
+    tenkan = (max(high[-n1:]) + min(low[-n1:])) / Decimal('2.0')
+    kijun = (max(high[-n2:]) + min(low[-n2:])) / Decimal('2.0')
+    senkou_a = (tenkan + kijun) / Decimal('2.0')
+    senkou_b = (max(high[-n3:]) + min(low[-n3:])) / Decimal('2.0')
     return {"tenkan": tenkan, "kijun": kijun, "senkou_a": senkou_a, "senkou_b": senkou_b}
+
+def to_decimal(value: Any) -> Decimal:
+    """Convert value to Decimal with error handling."""
+    try:
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+    except:
+        return Decimal('0.0')
 
 # ============================================================================
 # YAHOO FINANCE FEED
 # ============================================================================
 
 class YahooFinanceFeed:
-    """Free, no-KYC price feed for ÆEA bot."""
-    
+    """Free, no-KYC price feed for ÆEA bot with Decimal precision."""
+
     def __init__(self, symbol: str = "BTC-USD"):
         self.symbol = symbol
         self.ticker = yf.Ticker(symbol)
         self._last_update: Optional[datetime] = None
-        self._cached_price: float = 0.0
+        self._cached_price: Decimal = Decimal('0.0')
 
-    def get_current_price(self) -> Tuple[float, float]:
-        """Get latest bid/ask."""
+    def get_current_price(self) -> Tuple[Decimal, Decimal]:
+        """Get latest bid/ask as Decimal."""
         try:
             data = self.ticker.history(period="1d", interval="1m")
             if data.empty:
-                return 0.0, 0.0
+                return Decimal('0.0'), Decimal('0.0')
             latest = data.iloc[-1]
-            close = float(latest["Close"])
+            close = Decimal(str(latest["Close"]))
             return close, close
         except Exception as e:
             logger.error(f"❌ Yahoo Finance error: {e}")
-            return 0.0, 0.0
+            return Decimal('0.0'), Decimal('0.0')
 
-    def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, float]]:
-        """Get historical OHLCV data."""
+    def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, Any]]:
+        """Get historical OHLCV data with Decimal conversion."""
         try:
             period = f"{limit}min"
             data = self.ticker.history(period=period, interval=interval)
@@ -406,11 +431,11 @@ class YahooFinanceFeed:
             ohlcv_data = []
             for idx, row in data.iterrows():
                 ohlcv_data.append({
-                    "open": float(row["Open"]),
-                    "high": float(row["High"]),
-                    "low": float(row["Low"]),
-                    "close": float(row["Close"]),
-                    "volume": float(row["Volume"]),
+                    "open": Decimal(str(row["Open"])),
+                    "high": Decimal(str(row["High"])),
+                    "low": Decimal(str(row["Low"])),
+                    "close": Decimal(str(row["Close"])),
+                    "volume": Decimal(str(row["Volume"])),
                     "timestamp": idx.to_pydatetime()
                 })
             return ohlcv_data
@@ -418,19 +443,20 @@ class YahooFinanceFeed:
             logger.error(f"❌ Yahoo Finance historical error: {e}")
             return []
 
-    def get_intraday(self, interval: str = "1m") -> Dict[str, float]:
-        """Get latest intraday data."""
+    def get_intraday(self, interval: str = "1m") -> Dict[str, Any]:
+        """Get latest intraday data with Decimal conversion."""
         try:
             data = self.ticker.history(period="2d", interval=interval)
             if data.empty:
                 return {}
             latest = data.iloc[-1]
             return {
-                "open": float(latest["Open"]),
-                "high": float(latest["High"]),
-                "low": float(latest["Low"]),
-                "close": float(latest["Close"]),
-                "volume": float(latest["Volume"])
+                "open": Decimal(str(latest["Open"])),
+                "high": Decimal(str(latest["High"])),
+                "low": Decimal(str(latest["Low"])),
+                "close": Decimal(str(latest["Close"])),
+                "volume": Decimal(str(latest["Volume"])),
+                "timestamp": datetime.now()
             }
         except Exception as e:
             logger.error(f"❌ Yahoo Finance intraday error: {e}")
@@ -461,7 +487,7 @@ class AEEA_Engine:
     def __init__(self):
         self.state = AEI_CoreState()
         self.price_history: List[PriceData] = []
-        self.ohlcv_history: List[Dict[str, float]] = []
+        self.ohlcv_history: List[Dict[str, Any]] = []
         self.feed = YahooFinanceFeed(SYMBOL)
         self._last_price_update: Optional[datetime] = None
         self._bar_open: bool = True
@@ -471,10 +497,46 @@ class AEEA_Engine:
         self.application = None
         self._last_signal_time: Optional[datetime] = None
         self._signal_cooldown: int = 60  # Seconds between signals
+        self._initialization_attempted: bool = False
+        self._arc_length_verified: bool = False
+
+    def _verify_arc_length_coherence(self, price: Decimal, signal: Decimal) -> Dict[str, Any]:
+        """
+        Verify Arc-Length Axiom (s² = r²) on current state.
+        Returns coherence status and deviation.
+        """
+        state = self.state
+        
+        # s = arc length (tick count as proxy for path length)
+        arc_sq = Decimal(str(state.tick if state.tick > 0 else 0))
+        
+        # r = radial distance (difference between price and signal)
+        if signal != Decimal('0.0'):
+            radius_sq = abs(price - signal) * Decimal('1000')
+        else:
+            radius_sq = arc_sq
+        
+        diff = abs(arc_sq - radius_sq)
+        coherent = diff < Decimal('0.01')
+        
+        return {
+            "coherent": coherent,
+            "arc_sq": arc_sq,
+            "radius_sq": radius_sq,
+            "deviation": diff
+        }
 
     def initialize_engine(self) -> None:
-        """Initialize engine state with current data."""
+        """Initialize engine state with current data - MQL4 compatible."""
         state = self.state
+        
+        # Prevent multiple initializations
+        if state._initialized and state.FG:
+            logger.info("⏳ Engine already initialized, skipping...")
+            return
+        
+        state._initialized = True
+        logger.info("🚀 Engine initialization started (MQL4 style)...")
         
         # Get initial price data if available
         if self.ohlcv_history:
@@ -487,9 +549,10 @@ class AEEA_Engine:
         else:
             # Try to get price from feed
             bid, ask = self.feed.get_current_price()
-            if bid > 0:
+            if bid > Decimal('0.0'):
                 state.price = bid
                 state.Price = bid
+                state.t = datetime.now()
         
         # Set up arrays with proper size
         if state.X <= state.y:
@@ -503,24 +566,24 @@ class AEEA_Engine:
         # Initialize all arrays
         state.k = [False] * size
         state.l = [False] * size
-        state.HH = [0.0] * size
-        state.LL = [0.0] * size
-        state.Premium = [0.0] * size
-        state.Discount = [0.0] * size
+        state.HH = [Decimal('0.0')] * size
+        state.LL = [Decimal('0.0')] * size
+        state.Premium = [Decimal('0.0')] * size
+        state.Discount = [Decimal('0.0')] * size
         state.Regime = [""] * size
         state.U = []
         
         # Initialize 13-dimensional indicator arrays
         for i in range(13):
             if i < len(state.cA):
-                state.cA[i] = [0.0] * size
-                state.iA[i] = [0.0] * size
-                state.kA[i] = [0.0] * size
-                state.lA[i] = [0.0] * size
+                state.cA[i] = [Decimal('0.0')] * size
+                state.iA[i] = [Decimal('0.0')] * size
+                state.kA[i] = [Decimal('0.0')] * size
+                state.lA[i] = [Decimal('0.0')] * size
         
         # Set initial tracking variables
-        state.D = 0.0  # MQL4 style - starts at 0
-        state.E = 0.0  # MQL4 style - starts at 0
+        state.D = Decimal('0.0')
+        state.E = Decimal('0.0')
         state.Z = state.y + 1
         state.z = state.y + 1
         state.O = state.y + 1
@@ -549,7 +612,7 @@ class AEEA_Engine:
         state.tick = 0
         state.R = True
         state.signature = False
-        state.signal = 0.0
+        state.signal = Decimal('0.0')
         
         # Initialize indicator values
         if len(self.ohlcv_history) >= state.y + 1:
@@ -563,41 +626,120 @@ class AEEA_Engine:
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(state.y)
         
+        # Verify Arc-Length Axiom on initialization
+        arc_check = self._verify_arc_length_coherence(state.price, state.signal)
+        self._arc_length_verified = arc_check["coherent"]
+        logger.info(f"✅ Arc-Length Axiom verification: {'COHERENT' if arc_check['coherent'] else 'DEVIATION'} (deviation={arc_check['deviation']:.6f})")
+        
         logger.info("✅ Engine state prepared (FG=false - waiting for OnTick initialization)")
+
+    def _force_initialization(self) -> None:
+        """Force engine initialization on first tick - MQL4 compatible."""
+        state = self.state
+        
+        if state.FG:
+            return
+        
+        logger.info("🚀 First tick detected. Forcing engine initialization (MQL4 style)...")
+        
+        # Ensure arrays are properly sized
+        if state.X <= state.y:
+            state.X = state.y + MAX_PERIOD
+        
+        size = state.X - state.y
+        if size <= 0:
+            size = MAX_PERIOD
+            state.X = state.y + size
+        
+        # Resize arrays if needed
+        if len(state.k) != size:
+            state.k = [False] * size
+            state.l = [False] * size
+            state.HH = [Decimal('0.0')] * size
+            state.LL = [Decimal('0.0')] * size
+            state.Premium = [Decimal('0.0')] * size
+            state.Discount = [Decimal('0.0')] * size
+            state.Regime = [""] * size
+        
+        # Get current bar data for F() initialization
+        if len(self.ohlcv_history) >= 2:
+            iH = self.ohlcv_history[-2]["high"]
+            iL = self.ohlcv_history[-2]["low"]
+        else:
+            # Use current price as fallback
+            iH = state.price
+            iL = state.price
+        
+        # MQL4 style: Initialize F() for each j from y+1 to X
+        for j in range(state.y + 1, state.X + 1):
+            idx = j - state.y - 1
+            if 0 <= idx < len(state.k):
+                # F() implementation
+                norm_vals = self._normalize(j)
+                for i in range(min(13, len(norm_vals))):
+                    if i < len(state.cA) and idx < len(state.cA[i]):
+                        state.cA[i][idx] = norm_vals[i] if i < len(norm_vals) else Decimal('50.0')
+                
+                state.k[idx] = False
+                state.l[idx] = False
+                state.HH[idx] = iH
+                state.LL[idx] = iL
+                state.Premium[idx] = iH
+                state.Discount[idx] = iL
+                
+                for i in range(13):
+                    if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
+                        state.kA[i][idx] = state.cA[i][idx]
+                        state.lA[i][idx] = state.cA[i][idx]
+                
+                if state.R and state.FG:
+                    state.U.append(True)
+                    if all(state.U):
+                        state.R = False
+        
+        state.FG = True
+        state._initialized = True
+        logger.info("✅ Engine initialized on first tick (MQL4 style)")
 
     def update_price_from_feed(self) -> None:
         """Update price from Yahoo Finance."""
         data = self.feed.get_intraday()
         if not data:
+            logger.warning("⚠️ No data from Yahoo Finance feed")
             return
 
         bid = data["close"]
         ask = data["close"]
-        volume = data["volume"]
+        volume = data.get("volume", Decimal('0.0'))
+        timestamp = data.get("timestamp", datetime.now())
 
-        self.update_price(bid, ask, volume)
+        self.update_price(bid, ask, volume, timestamp)
 
-    def update_price(self, bid: float, ask: float, volume: float = 0.0) -> None:
+    def update_price(self, bid: Decimal, ask: Decimal, volume: Decimal = Decimal('0.0'), 
+                     timestamp: Optional[datetime] = None) -> None:
         """Update current price state."""
-        now = datetime.now()
+        if timestamp is None:
+            timestamp = datetime.now()
+            
         price_data = PriceData(
             bid=bid,
             ask=ask,
-            close=(bid + ask) / 2,
+            close=(bid + ask) / Decimal('2.0'),
             open=bid,
             high=max(bid, ask),
             low=min(bid, ask),
             volume=volume,
-            timestamp=now
+            timestamp=timestamp
         )
         self.price_history.append(price_data)
 
         if len(self.price_history) > 1000:
             self.price_history = self.price_history[-1000:]
 
-        if self._last_price_update is None or (now - self._last_price_update).seconds >= 60:
+        # Detect new bar
+        if self._last_price_update is None or (timestamp - self._last_price_update).seconds >= 60:
             self._bar_open = True
-            self._last_price_update = now
+            self._last_price_update = timestamp
             self._bar_index += 1
             self.ohlcv_history.append({
                 "open": price_data.open,
@@ -605,7 +747,7 @@ class AEEA_Engine:
                 "low": price_data.low,
                 "close": price_data.close,
                 "volume": price_data.volume,
-                "timestamp": now
+                "timestamp": timestamp
             })
             if len(self.ohlcv_history) > 200:
                 self.ohlcv_history = self.ohlcv_history[-200:]
@@ -617,34 +759,36 @@ class AEEA_Engine:
                 self.ohlcv_history[-1]["close"] = price_data.close
                 self.ohlcv_history[-1]["volume"] += price_data.volume
 
+        # Process bar close
         if self._bar_open and len(self.ohlcv_history) >= 2:
             self._on_bar()
 
+        # Process tick
         self._on_tick(price_data)
 
-    def _normalize(self, j: int) -> Tuple[float, ...]:
+    def _normalize(self, j: int) -> Tuple[Decimal, ...]:
         """Elevates 13 classical indicators to orthogonal basis vectors in H_13."""
         if len(self.ohlcv_history) < j + 1:
-            return (50.0,) * 13
+            return (Decimal('50.0'),) * 13
 
         close_prices = [d["close"] for d in self.ohlcv_history]
         high_prices = [d["high"] for d in self.ohlcv_history]
         low_prices = [d["low"] for d in self.ohlcv_history]
 
         k, d = stochastic(high_prices, low_prices, close_prices)
-        stoch_val = (k + d) / 2
+        stoch_val = (k + d) / Decimal('2.0')
         rsi_val = rsi(close_prices, 14)
 
         return (
-            50.0, stoch_val, 50.0, 50.0, 50.0,
-            50.0, 50.0, 50.0, 50.0, 50.0,
-            50.0, 50.0, rsi_val
+            Decimal('50.0'), stoch_val, Decimal('50.0'), Decimal('50.0'), Decimal('50.0'),
+            Decimal('50.0'), Decimal('50.0'), Decimal('50.0'), Decimal('50.0'), Decimal('50.0'),
+            Decimal('50.0'), Decimal('50.0'), rsi_val
         )
 
-    def _unify_volatility(self, j: int) -> Tuple[float, float]:
+    def _unify_volatility(self, j: int) -> Tuple[Decimal, Decimal]:
         """Projects ATR and StdDev onto the unit phase manifold."""
         if len(self.ohlcv_history) < j + 1:
-            return 50.0, 50.0
+            return Decimal('50.0'), Decimal('50.0')
 
         close_prices = [d["close"] for d in self.ohlcv_history]
         high_prices = [d["high"] for d in self.ohlcv_history]
@@ -664,22 +808,22 @@ class AEEA_Engine:
                     atr_list.append(atr(sub_high, sub_low, sub_close, j))
                     std_list.append(stddev(sub_close, j))
 
-        atr_norm = 50.0
-        std_norm = 50.0
+        atr_norm = Decimal('50.0')
+        std_norm = Decimal('50.0')
 
         if atr_list:
             min_atr, max_atr = min(atr_list), max(atr_list)
-            if max_atr - min_atr > 0:
-                atr_norm = 100.0 * (atr_val - min_atr) / (max_atr - min_atr)
+            if max_atr - min_atr > Decimal('0.0'):
+                atr_norm = Decimal('100.0') * (atr_val - min_atr) / (max_atr - min_atr)
 
         if std_list:
             min_std, max_std = min(std_list), max(std_list)
-            if max_std - min_std > 0:
-                std_norm = 100.0 * (std_val - min_std) / (max_std - min_std)
+            if max_std - min_std > Decimal('0.0'):
+                std_norm = Decimal('100.0') * (std_val - min_std) / (max_std - min_std)
 
         return atr_norm, std_norm
 
-    def _M(self, j: int, price: float, Price: float, iA: List[float], cA: List[float], kA: List[float], HH: List[float]) -> int:
+    def _M(self, j: int, price: Decimal, Price: Decimal, iA: List[Decimal], cA: List[Decimal], kA: List[Decimal], HH: List[Decimal]) -> int:
         """Computes projection operator Pi^{>theta}, tallying m (bullish/overbought count)."""
         m = 0
         y = self.state.y
@@ -708,7 +852,7 @@ class AEEA_Engine:
 
         return m
 
-    def _N(self, j: int, price: float, Price: float, iA: List[float], cA: List[float], lA: List[float], LL: List[float]) -> int:
+    def _N(self, j: int, price: Decimal, Price: Decimal, iA: List[Decimal], cA: List[Decimal], lA: List[Decimal], LL: List[Decimal]) -> int:
         """Computes projection operator Pi^{<theta}, tallying n (bearish/oversold count)."""
         n = 0
         y = self.state.y
@@ -737,11 +881,11 @@ class AEEA_Engine:
 
         return n
 
-    def _classify_regime(self, iStdDev: float, iATR: float) -> str:
+    def _classify_regime(self, iStdDev: Decimal, iATR: Decimal) -> str:
         """Classify market regime based on normalized ATR and StdDev."""
-        if iStdDev < 50.0 and iATR > 50.0:
+        if iStdDev < Decimal('50.0') and iATR > Decimal('50.0'):
             return "sVolatile"
-        elif iStdDev < 50.0 and iATR < 50.0:
+        elif iStdDev < Decimal('50.0') and iATR < Decimal('50.0'):
             return "sRange"
         else:
             return "sTrend"
@@ -762,7 +906,7 @@ class AEEA_Engine:
             return False
         return state.Regime[idx] != inp0 and state.Regime[idx] != inp1
 
-    def _F(self, j: int, iH: float, iL: float) -> None:
+    def _F(self, j: int, iH: Decimal, iL: Decimal) -> None:
         """Restarts recording, resetting vars to retain only most recent relevant price action data."""
         state = self.state
         y = state.y
@@ -857,9 +1001,9 @@ class AEEA_Engine:
     def _KC(self) -> None:
         """Implements 'Only Constant is Change' principle via binary Change Constants."""
         state = self.state
-        if state.E != 0 and not state.A and not state.B and state.v and state.signal < state.E:
+        if state.E != Decimal('0.0') and not state.A and not state.B and state.v and state.signal < state.E:
             state.invert = not state.KC
-        if state.D != 0 and not state.B and not state.A and state.u and state.signal > state.D:
+        if state.D != Decimal('0.0') and not state.B and not state.A and state.u and state.signal > state.D:
             state.invert = not state.KC
 
     def _on_call(self) -> None:
@@ -930,7 +1074,7 @@ class AEEA_Engine:
 
             iATR_norm, iStdDev_norm = self._unify_volatility(j)
 
-            if iStdDev_norm < 50.0 and iATR_norm > 50.0:
+            if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                     n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
@@ -940,7 +1084,7 @@ class AEEA_Engine:
                     if self._on_fire(j, "sVolatile", "tVolatile"):
                         state.Regime[idx] = "sVolatile"
 
-            elif iStdDev_norm < 50.0 and iATR_norm < 50.0:
+            elif iStdDev_norm < Decimal('50.0') and iATR_norm < Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     self._R(j)
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
@@ -966,7 +1110,7 @@ class AEEA_Engine:
 
             iATR_norm, iStdDev_norm = self._unify_volatility(j)
 
-            if iStdDev_norm < 50.0 and iATR_norm > 50.0:
+            if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     if state.Regime[idx] != "tVolatile":
                         self._F(j, self.ohlcv_history[-1]["high"], self.ohlcv_history[-1]["low"])
@@ -977,7 +1121,7 @@ class AEEA_Engine:
                             state.l[idx] = n >= 12
                         state.Regime[idx] = "tVolatile"
 
-            elif iStdDev_norm < 50.0 and iATR_norm < 50.0:
+            elif iStdDev_norm < Decimal('50.0') and iATR_norm < Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     self._R(j)
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
@@ -1005,7 +1149,7 @@ class AEEA_Engine:
         if len(self.ohlcv_history) >= y + 1:
             close_prices = [d["close"] for d in self.ohlcv_history[-y-1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
-            state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (0, 0, 0)
+            state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
 
     def _on_tick(self, price_data: PriceData) -> None:
         """Orchestrates all operational layers: Validation, State Update, Regime Classification."""
@@ -1015,67 +1159,28 @@ class AEEA_Engine:
         state.tick += 1
         state.price = price_data.bid
         state.Price = price_data.close
-        logger.info(f"⚡ Tick: {state.tick} | Price: {state.price:.2f}")
         
-        # If FG is false, this is the first tick. We MUST initialize now.
+        # Log first tick for debugging
+        if state.tick == 1:
+            logger.info(f"⚡ First tick: Price={state.price:.5f}, Tick={state.tick}")
+        
+        # ARC-LENGTH PRIORITY: Verify coherence on every tick
+        arc_check = self._verify_arc_length_coherence(state.price, state.signal)
+        if not arc_check["coherent"] and state.tick > 1:
+            logger.warning(f"⚠️ Arc-Length Deviation detected: {arc_check['deviation']:.6f}")
+            # Force stabilization if deviation exceeds threshold
+            if arc_check['deviation'] > Decimal('1.0'):
+                logger.info("🔧 Large deviation detected - forcing stabilization")
+                self._on_reinit()
+                return
+        
+        # CRITICAL FIX: If FG is false, this is the first tick. We MUST initialize now.
         if not state.FG:
-            logger.info("🚀 First tick detected. Initializing engine (MQL4 style)...")
-            # Ensure arrays are properly sized
-            if state.X <= state.y:
-                state.X = state.y + MAX_PERIOD
-            
-            size = state.X - state.y
-            if size <= 0:
-                size = MAX_PERIOD
-                state.X = state.y + size
-            
-            # Resize arrays if needed
-            if len(state.k) != size:
-                state.k = [False] * size
-                state.l = [False] * size
-                state.HH = [0.0] * size
-                state.LL = [0.0] * size
-                state.Premium = [0.0] * size
-                state.Discount = [0.0] * size
-                state.Regime = [""] * size
-            
-            # Get current bar data for F() initialization
-            if len(self.ohlcv_history) >= 2:
-                iH = self.ohlcv_history[-2]["high"]
-                iL = self.ohlcv_history[-2]["low"]
-            else:
-                iH = price_data.high
-                iL = price_data.low
-            
-            # MQL4 style: Initialize F() for each j from y+1 to X
-            for j in range(state.y + 1, state.X + 1):
-                idx = j - state.y - 1
-                if 0 <= idx < len(state.k):
-                    # F() implementation
-                    norm_vals = self._normalize(j)
-                    for i in range(min(13, len(norm_vals))):
-                        if i < len(state.cA) and idx < len(state.cA[i]):
-                            state.cA[i][idx] = norm_vals[i] if i < len(norm_vals) else 50.0
-                    
-                    state.k[idx] = False
-                    state.l[idx] = False
-                    state.HH[idx] = iH
-                    state.LL[idx] = iL
-                    state.Premium[idx] = iH
-                    state.Discount[idx] = iL
-                    
-                    for i in range(13):
-                        if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
-                            state.kA[i][idx] = state.cA[i][idx]
-                            state.lA[i][idx] = state.cA[i][idx]
-                    
-                    if state.R and state.FG:
-                        state.U.append(True)
-                        if all(state.U):
-                            state.R = False
-            
-            state.FG = True
-            logger.info("✅ Engine initialized on first tick (MQL4 style)")
+            self._force_initialization()
+            # After initialization, continue processing
+            if not state.FG:
+                logger.error("❌ Engine initialization failed!")
+                return
 
         if len(self.ohlcv_history) >= 2:
             state.iopen = self.ohlcv_history[-2]["open"]
@@ -1086,7 +1191,7 @@ class AEEA_Engine:
         if len(self.ohlcv_history) >= state.y + 1:
             close_prices = [d["close"] for d in self.ohlcv_history[-state.y-1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, state.y)
-            state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], state.y) if len(close_prices) > 1 else (0, 0, 0)
+            state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], state.y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
 
         # Update volatility metrics
         if len(self.ohlcv_history) >= state.y + 1:
@@ -1208,14 +1313,14 @@ class AEEA_Engine:
                     state.h = state.I
                 state.jC = not state.C
 
-                if state.iStdDev > 50:
+                if state.iStdDev > Decimal('50.0'):
                     state.S += 1
                     state.iz = s
                     state.iI = state.iw
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                     if idx < len(state.k):
                         state.k[idx] = m >= 12
-                elif state.iATR < 50:
+                elif state.iATR < Decimal('50.0'):
                     state.S += 1
                     state.iO = s
                     state.io = s
@@ -1244,14 +1349,14 @@ class AEEA_Engine:
                     state.h = state.I
                 state.iC = not state.C
 
-                if state.iStdDev > 50:
+                if state.iStdDev > Decimal('50.0'):
                     state.S += 1
                     state.iw = s
                     state.iI = state.iz
                     n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
                     if idx < len(state.l):
                         state.l[idx] = n >= 12
-                elif state.iATR < 50:
+                elif state.iATR < Decimal('50.0'):
                     state.S += 1
                     state.iO = s
                     state.io = s
@@ -1317,7 +1422,7 @@ class AEEA_Engine:
                     state.h = state.I
                 state.jC = not state.C
 
-                if state.X != state.Y and state.iz == 0 and state.iStdDev > 50:
+                if state.X != state.Y and state.iz == 0 and state.iStdDev > Decimal('50.0'):
                     state.ij = s
                     state.iz = s
                     state.iI = state.iw
@@ -1326,7 +1431,7 @@ class AEEA_Engine:
                         state.k[idx] = m >= 12
                     if state.ir == 0 and state.Y != 2:
                         state.Y -= 1
-                elif state.X != state.Y and state.iO == 0 and state.iATR < 50:
+                elif state.X != state.Y and state.iO == 0 and state.iATR < Decimal('50.0'):
                     state.iO = s
                     state.ir = s
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
@@ -1358,7 +1463,7 @@ class AEEA_Engine:
                     state.h = state.I
                 state.iC = not state.C
 
-                if state.X != state.Y and state.iw == 0 and state.iStdDev > 50:
+                if state.X != state.Y and state.iw == 0 and state.iStdDev > Decimal('50.0'):
                     state.ij = s
                     state.iw = s
                     state.iI = state.iz
@@ -1367,7 +1472,7 @@ class AEEA_Engine:
                         state.l[idx] = n >= 12
                     if state.ir == 0 and state.Y != 2:
                         state.Y -= 1
-                elif state.X != state.Y and state.iO == 0 and state.iATR < 50:
+                elif state.X != state.Y and state.iO == 0 and state.iATR < Decimal('50.0'):
                     state.iO = s
                     state.io = s
                     state.ir = 0
@@ -1415,7 +1520,7 @@ class AEEA_Engine:
     def _on_goe(self) -> None:
         """Bearish reversal signal generator."""
         state = self.state
-        if state.signal != 0:
+        if state.signal != Decimal('0.0'):
             return
 
         if self._on_gaurd(0) and state.KC:
@@ -1454,7 +1559,7 @@ class AEEA_Engine:
     def _on_toe(self) -> None:
         """Bullish reversal signal generator."""
         state = self.state
-        if state.signal != 0:
+        if state.signal != Decimal('0.0'):
             return
 
         if self._on_gaurd(0) and state.KC:
@@ -1481,8 +1586,7 @@ class AEEA_Engine:
                 state.prime = 0
                 self._signal()
                 state.tick_tock = True
-                state.tag = 0
-            elif ((state.h == state.io) or (state.h == state.iW) or
+                state.tag = 0            elif ((state.h == state.io) or (state.h == state.iW) or
                   (state.h == state.iw) or (state.h == state.iO)):
                 state.prime = 0
                 self._signal()
@@ -1504,11 +1608,11 @@ class AEEA_Engine:
     def _on_gaurd(self, inp: int) -> bool:
         """Leading but passive inversion of binary logic for signal validation."""
         state = self.state
-        if state.price > state.E and state.E != 0:
+        if state.price > state.E and state.E != Decimal('0.0'):
             if state.signature and inp != -1:
                 state.dime = 0
             return True
-        elif state.price < state.D and state.D != 0:
+        elif state.price < state.D and state.D != Decimal('0.0'):
             if state.signature and inp != -1:
                 state.dime = 1
             return True
@@ -1525,6 +1629,8 @@ class AEEA_Engine:
         saved_ohlcv = self.ohlcv_history.copy()
         saved_price = state.price
         saved_Price = state.Price
+        saved_iH = state.iH
+        saved_iL = state.iL
         
         state.KC = state.invert
 
@@ -1538,10 +1644,10 @@ class AEEA_Engine:
 
         for i in range(13):
             if i < len(state.cA):
-                state.cA[i] = [0.0] * size
-                state.iA[i] = [0.0] * size
-                state.kA[i] = [0.0] * size
-                state.lA[i] = [0.0] * size
+                state.cA[i] = [Decimal('0.0')] * size
+                state.iA[i] = [Decimal('0.0')] * size
+                state.kA[i] = [Decimal('0.0')] * size
+                state.lA[i] = [Decimal('0.0')] * size
 
         # Clear all indicator lists
         state.IHKk = []
@@ -1561,17 +1667,17 @@ class AEEA_Engine:
         state.ADX = []
 
         state.Regime = [""] * size
-        state.Premium = [0.0] * size
-        state.Discount = [0.0] * size
-        state.HH = [0.0] * size
-        state.LL = [0.0] * size
+        state.Premium = [Decimal('0.0')] * size
+        state.Discount = [Decimal('0.0')] * size
+        state.HH = [Decimal('0.0')] * size
+        state.LL = [Decimal('0.0')] * size
         state.k = [False] * size
         state.l = [False] * size
         state.U = []
 
         state.R = True
-        state.D = 0.0  # MQL4 sets to 0
-        state.E = 0.0  # MQL4 sets to 0
+        state.D = Decimal('0.0')
+        state.E = Decimal('0.0')
         state.K = False
         state.Z = state.y + 1
         state.z = state.y + 1
@@ -1599,9 +1705,9 @@ class AEEA_Engine:
         state.T = state.X
         state.X = state.y
         state.Y = state.y
-        state.FG = False  # MQL4 sets to false to trigger F() initialization
+        state.FG = False
         state.signature = False
-        state.signal = 0.0
+        state.signal = Decimal('0.0')
 
         state.FVG = -1
         state.BL = []
@@ -1612,6 +1718,8 @@ class AEEA_Engine:
         self.ohlcv_history = saved_ohlcv
         state.price = saved_price
         state.Price = saved_Price
+        state.iH = saved_iH
+        state.iL = saved_iL
 
         logger.info("🔄 OnReInit() completed (MQL4 compatible)")
 
@@ -1634,11 +1742,15 @@ class AEEA_Engine:
 
         # Get current price from feed
         bid, ask = self.feed.get_current_price()
-        price_str = f"{bid:.5f}" if bid > 0 else f"{state.price:.5f}"
+        price_str = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
 
         # Get regime
         idx = state.Z - state.y - 1
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
+
+        # Get arc-length coherence status
+        arc_check = self._verify_arc_length_coherence(state.price, state.signal)
+        coherence_str = "✅ COHERENT" if arc_check["coherent"] else f"⚠️ DEVIATION: {arc_check['deviation']:.6f}"
 
         msg = (
             f"🚨 *ÆEA SIGNAL ALERT*\n\n"
@@ -1651,7 +1763,7 @@ class AEEA_Engine:
             f"🔢 *Prime:* {state.prime}\n"
             f"📋 *Dime:* {state.dime}\n"
             f"🧠 *KC State:* {state.KC}\n\n"
-            f"🧠 *Arc-Length Coherence:* {self._check_coherence()}\n"
+            f"🧠 *Arc-Length Coherence:* {coherence_str}\n"
             f"💎 Natalia Tanyatia"
         )
 
@@ -1667,24 +1779,24 @@ class AEEA_Engine:
             logger.error(f"❌ Failed to send signal alert: {e}")
 
     def _check_coherence(self) -> str:
-        """Check arc-length coherence (s=r) - FIXED: Exact symbolic arithmetic."""
+        """Check arc-length coherence (s=r) - Decimal precision."""
         state = self.state
         
-        # FIXED: Use exact integer arithmetic from state.tick
-        arc_sq = state.tick if state.tick >= 0 else 0
+        # s = arc length (tick count as proxy for path length)
+        arc_sq = Decimal(str(state.tick if state.tick > 0 else 0))
         
-        # FIXED: Use exact differential from price and signal
-        if state.signal != 0:
-            radius_sq = int(abs(state.price - state.signal) * 1000)
+        # r = radial distance (difference between price and signal)
+        if state.signal != Decimal('0.0'):
+            radius_sq = abs(state.price - state.signal) * Decimal('1000')
         else:
-            radius_sq = arc_sq  # Default to coherent if no signal
+            radius_sq = arc_sq
         
         diff = abs(arc_sq - radius_sq)
         
-        if diff < 0.01:
+        if diff < Decimal('0.01'):
             return "✅ COHERENT"
         else:
-            return f"⚠️ DEVIATION: {diff:.4f}"
+            return f"⚠️ DEVIATION: {diff:.6f}"
 
     def get_signal_status(self) -> Dict[str, Any]:
         """Get current signal status for API."""
@@ -1694,8 +1806,8 @@ class AEEA_Engine:
         condition_met = m_count - n_count > 2
 
         return {
-            "signal": state.signal,
-            "price": state.price,
+            "signal": float(state.signal),
+            "price": float(state.price),
             "signature": state.signature,
             "KC": state.KC,
             "prime": state.prime,
@@ -1706,7 +1818,8 @@ class AEEA_Engine:
             "regime": state.Regime[state.Z - state.y - 1] if 0 <= state.Z - state.y - 1 < len(state.Regime) else "Unknown",
             "coherence": self._check_coherence(),
             "symbol": SYMBOL,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "engine_initialized": state.FG
         }
 
 # ============================================================================
@@ -1761,6 +1874,8 @@ class AEI_Bot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
+
         welcome = (
             "🔷 *ÆEA Quantum-Financial Topology Bot*\n\n"
             "Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
@@ -1779,7 +1894,8 @@ class AEI_Bot:
             "`/help` - Show this message\n\n"
             f"📈 *Current Symbol:* `{SYMBOL}`\n"
             f"🔄 *Feed Status:* {'Active' if self._running else 'Inactive'}\n"
-            f"📊 *Data Source:* Yahoo Finance (Free, No KYC)\n\n"
+            f"📊 *Data Source:* Yahoo Finance (Free, No KYC)\n"
+            f"🧠 *Engine Status:* {engine_status}\n\n"
             "🧠 *Theoretical Foundation:*\n"
             "• Arc-Length Coherence (s = r)\n"
             "• Kronecker-Delta Execution: δ(m-n-2)=1\n"
@@ -1797,13 +1913,18 @@ class AEI_Bot:
         """Display current market state."""
         # Check if engine is initialized
         if not self.engine.state.FG:
-            await update.message.reply_text(
-                "⏳ *Engine not initialized*\n\n"
-                "The engine will initialize on the first price tick after starting the feed.\n"
-                "Please use `/start_feed` to start the price feed.",
-                parse_mode="Markdown"
-            )
-            return
+            # Try to force initialization
+            logger.info("⚠️ Engine not initialized, attempting to force...")
+            self.engine._force_initialization()
+            if not self.engine.state.FG:
+                await update.message.reply_text(
+                    "⏳ *Engine not initialized*\n\n"
+                    "The engine will initialize on the first price tick after starting the feed.\n"
+                    "Please use `/start_feed` to start the price feed.\n\n"
+                    "If the feed is already running, try `/reset` to reinitialize.",
+                    parse_mode="Markdown"
+                )
+                return
 
         state = self.engine.state
         idx = state.Z - state.y - 1
@@ -1811,7 +1932,7 @@ class AEI_Bot:
 
         # Get current price from feed
         bid, ask = self.engine.feed.get_current_price()
-        price_display = f"{bid:.5f}" if bid > 0 else f"{state.price:.5f}"
+        price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
 
         coherence = self.engine._check_coherence()
 
@@ -1831,6 +1952,7 @@ class AEI_Bot:
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🧠 *KC State:* {state.KC}\n"
             f"🔄 *Tick:* {state.tick}\n"
+            f"🧠 *Engine State:* {'✅ Initialized' if state.FG else '⏳ Initializing'}\n"
             f"📅 *Last Update:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             f"📊 *Imbalance:* m={sum(1 for v in state.k if v)}, n={sum(1 for v in state.l if v)}\n"
             f"📡 *Feed Active:* {'✅' if self._running else '❌'}"
@@ -1844,13 +1966,15 @@ class AEI_Bot:
         """Display detailed regime classification."""
         # Check if engine is initialized
         if not self.engine.state.FG:
-            await update.message.reply_text(
-                "⏳ *Engine not initialized*\n\n"
-                "The engine will initialize on the first price tick after starting the feed.\n"
-                "Please use `/start_feed` to start the price feed.",
-                parse_mode="Markdown"
-            )
-            return
+            self.engine._force_initialization()
+            if not self.engine.state.FG:
+                await update.message.reply_text(
+                    "⏳ *Engine not initialized*\n\n"
+                    "The engine will initialize on the first price tick after starting the feed.\n"
+                    "Please use `/start_feed` to start the price feed.",
+                    parse_mode="Markdown"
+                )
+                return
 
         state = self.engine.state
         y = state.y
@@ -1861,10 +1985,10 @@ class AEI_Bot:
         else:
             current = "Unknown"
 
-        premium = state.Premium[idx] if 0 <= idx < len(state.Premium) else 0.0
-        discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else 0.0
-        hh = state.HH[idx] if 0 <= idx < len(state.HH) else 0.0
-        ll = state.LL[idx] if 0 <= idx < len(state.LL) else 0.0
+        premium = state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0')
+        discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
+        hh = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
+        ll = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
 
         k_count = sum(1 for v in state.k if v)
         l_count = sum(1 for v in state.l if v)
@@ -1896,25 +2020,27 @@ class AEI_Bot:
         """Display current trading signal."""
         # Check if engine is initialized
         if not self.engine.state.FG:
-            await update.message.reply_text(
-                "⏳ *Engine not initialized*\n\n"
-                "The engine will initialize on the first price tick after starting the feed.\n"
-                "Please use `/start_feed` to start the price feed.",
-                parse_mode="Markdown"
-            )
-            return
+            self.engine._force_initialization()
+            if not self.engine.state.FG:
+                await update.message.reply_text(
+                    "⏳ *Engine not initialized*\n\n"
+                    "The engine will initialize on the first price tick after starting the feed.\n"
+                    "Please use `/start_feed` to start the price feed.",
+                    parse_mode="Markdown"
+                )
+                return
 
         state = self.engine.state
 
-        if state.signal == 0:
+        if state.signal == Decimal('0.0'):
             direction = "🟡 NEUTRAL"
             confidence = "N/A"
         elif state.price > state.signal:
             direction = "🟢 BUY"
-            confidence = f"{(state.price - state.signal) / state.signal * 100:.2f}%" if state.signal != 0 else "0%"
+            confidence = f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
         else:
             direction = "🔴 SELL"
-            confidence = f"{(state.signal - state.price) / state.signal * 100:.2f}%" if state.signal != 0 else "0%"
+            confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
 
         m_count = sum(1 for v in state.k if v)
         n_count = sum(1 for v in state.l if v)
@@ -1947,13 +2073,15 @@ class AEI_Bot:
         """Display 13D Hilbert Space projection."""
         # Check if engine is initialized
         if not self.engine.state.FG:
-            await update.message.reply_text(
-                "⏳ *Engine not initialized*\n\n"
-                "The engine will initialize on the first price tick after starting the feed.\n"
-                "Please use `/start_feed` to start the price feed.",
-                parse_mode="Markdown"
-            )
-            return
+            self.engine._force_initialization()
+            if not self.engine.state.FG:
+                await update.message.reply_text(
+                    "⏳ *Engine not initialized*\n\n"
+                    "The engine will initialize on the first price tick after starting the feed.\n"
+                    "Please use `/start_feed` to start the price feed.",
+                    parse_mode="Markdown"
+                )
+                return
 
         state = self.engine.state
         y = state.y
@@ -1963,7 +2091,7 @@ class AEI_Bot:
             await update.message.reply_text("❌ Insufficient data for indicator projection.")
             return
 
-        i_values = [state.iA[i][idx] if idx < len(state.iA[i]) else 50.0 for i in range(13)]
+        i_values = [state.iA[i][idx] if idx < len(state.iA[i]) else Decimal('50.0') for i in range(13)]
 
         names = [
             "ADX", "Stochastic", "RVI", "AC", "Force", "OBV",
@@ -1972,7 +2100,8 @@ class AEI_Bot:
 
         indicator_str = "📊 *13D HILBERT SPACE PROJECTION*\n\n"
         for i, (name, val) in enumerate(zip(names, i_values)):
-            bar = "█" * int(val / 10) + "░" * (10 - int(val / 10))
+            val_int = int(float(val))
+            bar = "█" * min(max(val_int // 10, 0), 10) + "░" * (10 - min(max(val_int // 10, 0), 10))
             indicator_str += f"`{name:8}` {val:6.1f} [{bar}]\n"
 
         indicator_str += "\n*Thresholds:*\n"
@@ -2011,10 +2140,10 @@ class AEI_Bot:
             f"📈 *Current Price:* {state.price:.5f}\n"
             f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n\n"
             "*Topological Anchors:*\n"
-            f"  🔷 *Premium:* {state.Premium[idx] if 0 <= idx < len(state.Premium) else 0.0:.5f}\n"
-            f"  🔶 *Discount:* {state.Discount[idx] if 0 <= idx < len(state.Discount) else 0.0:.5f}\n"
-            f"  📈 *HH:* {state.HH[idx] if 0 <= idx < len(state.HH) else 0.0:.5f}\n"
-            f"  📉 *LL:* {state.LL[idx] if 0 <= idx < len(state.LL) else 0.0:.5f}"
+            f"  🔷 *Premium:* {state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0'):.5f}\n"
+            f"  🔶 *Discount:* {state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0'):.5f}\n"
+            f"  📈 *HH:* {state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0'):.5f}\n"
+            f"  📉 *LL:* {state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0'):.5f}"
         )
         await update.message.reply_text(response, parse_mode="Markdown")
 
@@ -2040,10 +2169,10 @@ class AEI_Bot:
         # Reset indicator arrays (MQL4 OnReInit() style)
         for i in range(13):
             if i < len(state.cA):
-                state.cA[i] = [0.0] * size
-                state.iA[i] = [0.0] * size
-                state.kA[i] = [0.0] * size
-                state.lA[i] = [0.0] * size
+                state.cA[i] = [Decimal('0.0')] * size
+                state.iA[i] = [Decimal('0.0')] * size
+                state.kA[i] = [Decimal('0.0')] * size
+                state.lA[i] = [Decimal('0.0')] * size
         
         # Clear all indicator lists
         state.IHKk = []
@@ -2064,10 +2193,10 @@ class AEI_Bot:
         
         # Reset arrays (MQL4 style - completely fresh)
         state.Regime = [""] * size
-        state.Premium = [0.0] * size
-        state.Discount = [0.0] * size
-        state.HH = [0.0] * size
-        state.LL = [0.0] * size
+        state.Premium = [Decimal('0.0')] * size
+        state.Discount = [Decimal('0.0')] * size
+        state.HH = [Decimal('0.0')] * size
+        state.LL = [Decimal('0.0')] * size
         state.k = [False] * size
         state.l = [False] * size
         
@@ -2075,8 +2204,8 @@ class AEI_Bot:
         state.R = True
         
         # Reset tracking variables (MQL4 OnReInit() style)
-        state.D = 0.0  # MQL4 sets to 0
-        state.E = 0.0  # MQL4 sets to 0
+        state.D = Decimal('0.0')
+        state.E = Decimal('0.0')
         state.K = False
         state.Z = state.y + 1
         state.z = state.y + 1
@@ -2104,9 +2233,9 @@ class AEI_Bot:
         state.T = state.X
         state.X = state.y
         state.Y = state.y
-        state.FG = False  # MQL4 sets to false to trigger F() initialization
+        state.FG = False
         state.signature = False
-        state.signal = 0.0
+        state.signal = Decimal('0.0')
         
         state.FVG = -1
         state.BL = []
