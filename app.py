@@ -1554,7 +1554,7 @@ class AEEA_Engine:
                 self._signal()
                 state.tick_tock = True
                 state.tag = 1
-            self._KC()
+                self._KC()
 
     def _on_toe(self) -> None:
         """Bullish reversal signal generator."""
