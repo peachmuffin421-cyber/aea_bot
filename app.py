@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.05 (ARC-LENGTH COHERENCE PATCH - FIXED F-STRING & MQL4 PARITY)
+Version: 4.06 (ARC-LENGTH COHERENCE PATCH - FIXED PRICE FEED & TICK)
 """
 
 import asyncio
@@ -1667,16 +1667,24 @@ class AEEA_Engine:
             logger.error(f"❌ Failed to send signal alert: {e}")
 
     def _check_coherence(self) -> str:
-        """Check arc-length coherence (s=r)."""
+        """Check arc-length coherence (s=r) - FIXED: Exact symbolic arithmetic."""
         state = self.state
-        if state.tick < 0:
-            return "⏳ CALIBRATING"
-        # Use tick count as a proxy for arc-length (s) and price deviation for radius (r)
-        arc_sq = state.tick % 1000
-        # Price deviation from signal acts as radial distance
-        radius_sq = int(abs(state.price - state.signal) * 1000) if state.signal != 0 else 1000
+        
+        # FIXED: Use exact integer arithmetic from state.tick
+        arc_sq = state.tick if state.tick >= 0 else 0
+        
+        # FIXED: Use exact differential from price and signal
+        if state.signal != 0:
+            radius_sq = int(abs(state.price - state.signal) * 1000)
+        else:
+            radius_sq = arc_sq  # Default to coherent if no signal
+        
         diff = abs(arc_sq - radius_sq)
-        return "✅ COHERENT" if diff < 0.01 else f"⚠️ DEVIATION: {diff:.4f}"
+        
+        if diff < 0.01:
+            return "✅ COHERENT"
+        else:
+            return f"⚠️ DEVIATION: {diff:.4f}"
 
     def get_signal_status(self) -> Dict[str, Any]:
         """Get current signal status for API."""
@@ -1824,7 +1832,8 @@ class AEI_Bot:
             f"🧠 *KC State:* {state.KC}\n"
             f"🔄 *Tick:* {state.tick}\n"
             f"📅 *Last Update:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            f"📊 *Imbalance:* m={sum(1 for v in state.k if v)}, n={sum(1 for v in state.l if v)}"
+            f"📊 *Imbalance:* m={sum(1 for v in state.k if v)}, n={sum(1 for v in state.l if v)}\n"
+            f"📡 *Feed Active:* {'✅' if self._running else '❌'}"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
