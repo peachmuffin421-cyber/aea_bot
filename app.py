@@ -1554,7 +1554,7 @@ class AEEA_Engine:
                 self._signal()
                 state.tick_tock = True
                 state.tag = 1
-                self._KC()
+            self._KC()
 
     def _on_toe(self) -> None:
         """Bullish reversal signal generator."""
@@ -1586,7 +1586,8 @@ class AEEA_Engine:
                 state.prime = 0
                 self._signal()
                 state.tick_tock = True
-                state.tag = 0            elif ((state.h == state.io) or (state.h == state.iW) or
+                state.tag = 0
+            elif ((state.h == state.io) or (state.h == state.iW) or
                   (state.h == state.iw) or (state.h == state.iO)):
                 state.prime = 0
                 self._signal()
