@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.03 (Heroku Production - MQL4 Compatible Reset - Fixed Initialization)
+Version: 4.04 (ARC-LENGTH COHERENCE PATCH - FIXED TICK & INITIALIZATION)
 """
 
 import asyncio
@@ -1011,14 +1011,16 @@ class AEEA_Engine:
         """Orchestrates all operational layers: Validation, State Update, Regime Classification."""
         state = self.state
         
-        # Update price first
+        # CRITICAL ARC-LENGTH PATCH: Force tick increment & price update AT THE START
+        state.tick += 1
         state.price = price_data.bid
         state.Price = price_data.close
+        logger.info(f"⚡ Tick: {state.tick} | Price: {state.price:.2f}")
         
-        # [INITIALIZATION PHASE: UNIT PHASE MANIFOLD RESET ON FIRST EXECUTION]
-        # MQL4 compatible: if FG == false, initialize F() for each period
+        # If FG is false, this is the first tick. We MUST initialize now.
         if not state.FG:
-            # Ensure arrays are properly sized (MQL4 style)
+            logger.info("🚀 First tick detected. Initializing engine (MQL4 style)...")
+            # Ensure arrays are properly sized
             if state.X <= state.y:
                 state.X = state.y + MAX_PERIOD
             
@@ -1046,8 +1048,6 @@ class AEEA_Engine:
                 iL = price_data.low
             
             # MQL4 style: Initialize F() for each j from y+1 to X
-            # This matches the MQL4 OnTick() initialization:
-            # for(j = y + 1; j < x; j++){ F(); }
             for j in range(state.y + 1, state.X + 1):
                 idx = j - state.y - 1
                 if 0 <= idx < len(state.k):
@@ -1076,8 +1076,6 @@ class AEEA_Engine:
             
             state.FG = True
             logger.info("✅ Engine initialized on first tick (MQL4 style)")
-        
-        state.tick += 1
 
         if len(self.ohlcv_history) >= 2:
             state.iopen = self.ohlcv_history[-2]["open"]
@@ -1673,8 +1671,10 @@ class AEEA_Engine:
         state = self.state
         if state.tick < 0:
             return "⏳ CALIBRATING"
+        # Use tick count as a proxy for arc-length (s) and price deviation for radius (r)
         arc_sq = state.tick % 1000
-        radius_sq = 1000
+        # Price deviation from signal acts as radial distance
+        radius_sq = int(abs(state.price - state.signal) * 1000) if state.signal != 0 else 1000
         diff = abs(arc_sq - radius_sq)
         return "✅ COHERENT" if diff < 0.01 else f"⚠️ DEVIATION: {diff:.4f}"
 
@@ -1999,7 +1999,7 @@ class AEI_Bot:
         response = (
             "📐 *FAIR VALUE GAP TRACKING*\n\n"
             f"📊 *FVG Count:* {state.FVG + 1}\n"
-            f"📈 *Current Price:* {state.price:.5f}\n"
+            f"📈 *Current Price:* {state.price:.5f}\n
             f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n\n"
             "*Topological Anchors:*\n"
             f"  🔷 *Premium:* {state.Premium[idx] if 0 <= idx < len(state.Premium) else 0.0:.5f}\n"
