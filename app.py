@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.08 (ARC-LENGTH COHERENCE PATCH - FIXED TICK INCREMENT & PRICE UPDATE)
+Version: 4.09 (ARC-LENGTH COHERENCE PATCH - FIXED TICK INCREMENT & PRICE UPDATE)
 """
 
 import asyncio
@@ -500,6 +500,7 @@ class AEEA_Engine:
         self._initialization_attempted: bool = False
         self._arc_length_verified: bool = False
         self._tick_log_counter: int = 0  # For periodic logging
+        self._price_update_counter: int = 0  # Track price updates
 
     def _verify_arc_length_coherence(self, price: Decimal, signal: Decimal) -> Dict[str, Any]:
         """
@@ -1857,7 +1858,9 @@ class AEI_Bot:
         logger.info("🔄 Starting Yahoo Finance price feed loop...")
         while self._running:
             try:
+                # CRITICAL FIX: Update price directly and log tick increment
                 self.engine.update_price_from_feed()
+                logger.info(f"📊 Price updated: {self.engine.state.price:.5f}, Tick: {self.engine.state.tick}")
                 await asyncio.sleep(UPDATE_INTERVAL)
             except Exception as e:
                 logger.error(f"❌ Price feed error: {e}")
