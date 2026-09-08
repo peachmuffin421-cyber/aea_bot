@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.09 (ARC-LENGTH COHERENCE PATCH - FIXED TICK INCREMENT & PRICE UPDATE)
+Version: 4.10 (ARC-LENGTH COHERENCE PATCH - FIXED TICK INCREMENT & PRICE UPDATE)
 """
 
 import asyncio
@@ -2397,24 +2397,26 @@ class AEI_Bot:
             ticker = yf.Ticker(yahoo_symbol)
             info = ticker.info
             if info.get("regularMarketPrice"):
+                # Update global symbol
                 SYMBOL = yahoo_symbol
-                # Update feed
+                # Reset engine with new symbol
+                self.engine = AEEA_Engine()
                 self.engine.feed = YahooFinanceFeed(yahoo_symbol)
-                # Reset engine state
-                self.engine.state.y = MIN_PERIOD - 2
-                self.engine.state.X = MIN_PERIOD - 1
-                self.engine._on_reinit()
-                # Try to load historical data for new symbol
+                self.engine.state.chat_id = self.engine.state.chat_id
+                self.engine.application = self.application
+                # Load historical data for new symbol
                 historical = self.engine.feed.get_historical_klines(limit=200)
                 if historical:
                     self.engine.ohlcv_history = historical
                     self.engine.initialize_engine()
+                    # Force initialization on first tick
+                    self.engine._force_initialization()
                 await update.message.reply_text(
                     f"✅ *Symbol changed*\n\n"
                     f"📈 *New Symbol:* `{yahoo_symbol}`\n"
                     f"💰 *Current Price:* {info.get('regularMarketPrice', 'N/A')}\n"
                     f"📊 *Name:* {info.get('longName', 'Unknown')}\n"
-                    f"🧠 *Engine State:* {'✅ Initialized' if self.engine.state.FG else '⏳ Waiting for data'}",
+                    f"🧠 *Engine State:* {'✅ Initialized' if self.engine.state.FG else '⏳ Initializing...'}",
                     parse_mode="Markdown"
                 )
             else:
