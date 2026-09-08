@@ -1151,13 +1151,6 @@ class AEEA_Engine:
             close_prices = [d["close"] for d in self.ohlcv_history[-y-1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
-```
-
----
-
-Segment 2 of 3
-
-```python
     def _on_tick(self, price_data: PriceData) -> None:
         """
         Orchestrates all operational layers: Validation, State Update, Regime Classification.
@@ -1844,13 +1837,6 @@ Segment 2 of 3
             "timestamp": datetime.now().isoformat(),
             "engine_initialized": state.FG
         }
-```
-
----
-
-Segment 3 of 3
-
-```python
 # ============================================================================
 # TELEGRAM BOT HANDLERS
 # ============================================================================
