@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot
 Author: Natalia Tanyatia
-Version: 4.07 (ARC-LENGTH COHERENCE PATCH - FIXED ENGINE INITIALIZATION)
+Version: 4.08 (ARC-LENGTH COHERENCE PATCH - FIXED TICK INCREMENT & PRICE UPDATE)
 """
 
 import asyncio
@@ -163,7 +163,7 @@ class AEI_CoreState:
     prime: int = -1
     dime: int = -1
     mem: int = -1
-    tick: int = -1
+    tick: int = 0  # CRITICAL: Starts at 0, increments on every tick
     y: int = MIN_PERIOD - 2
 
     signal: Decimal = Decimal('0.0')
@@ -499,6 +499,7 @@ class AEEA_Engine:
         self._signal_cooldown: int = 60  # Seconds between signals
         self._initialization_attempted: bool = False
         self._arc_length_verified: bool = False
+        self._tick_log_counter: int = 0  # For periodic logging
 
     def _verify_arc_length_coherence(self, price: Decimal, signal: Decimal) -> Dict[str, Any]:
         """
@@ -609,7 +610,7 @@ class AEEA_Engine:
                 self._F(j, state.iH, state.iL)
         
         state.FG = False  # MQL4: FG=false until OnTick() initializes
-        state.tick = 0
+        state.tick = 0  # Reset tick counter on fresh init
         state.R = True
         state.signature = False
         state.signal = Decimal('0.0')
@@ -763,7 +764,7 @@ class AEEA_Engine:
         if self._bar_open and len(self.ohlcv_history) >= 2:
             self._on_bar()
 
-        # Process tick
+        # Process tick - this calls _on_tick which handles tick increment
         self._on_tick(price_data)
 
     def _normalize(self, j: int) -> Tuple[Decimal, ...]:
@@ -1150,34 +1151,47 @@ class AEEA_Engine:
             close_prices = [d["close"] for d in self.ohlcv_history[-y-1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
+```
 
+---
+
+Segment 2 of 3
+
+```python
     def _on_tick(self, price_data: PriceData) -> None:
-        """Orchestrates all operational layers: Validation, State Update, Regime Classification."""
+        """
+        Orchestrates all operational layers: Validation, State Update, Regime Classification.
+        CRITICAL ARC-LENGTH PATCH: Tick increments FIRST on EVERY call.
+        """
         state = self.state
         
-        # CRITICAL ARC-LENGTH PATCH: Force tick increment & price update AT THE START
+        # ================================================================
+        # CRITICAL ARC-LENGTH PATCH: Tick MUST increment FIRST on EVERY call
+        # This is the PRIMARY DRIVER of coherence validation
+        # ================================================================
         state.tick += 1
         state.price = price_data.bid
         state.Price = price_data.close
         
-        # Log first tick for debugging
-        if state.tick == 1:
-            logger.info(f"⚡ First tick: Price={state.price:.5f}, Tick={state.tick}")
+        # Periodic tick logging (every 100 ticks)
+        self._tick_log_counter += 1
+        if self._tick_log_counter >= 100:
+            self._tick_log_counter = 0
+            logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}, Regime={state.Regime[state.Z - state.y - 1] if 0 <= state.Z - state.y - 1 < len(state.Regime) else 'Unknown'}")
         
         # ARC-LENGTH PRIORITY: Verify coherence on every tick
         arc_check = self._verify_arc_length_coherence(state.price, state.signal)
         if not arc_check["coherent"] and state.tick > 1:
-            logger.warning(f"⚠️ Arc-Length Deviation detected: {arc_check['deviation']:.6f}")
+            logger.warning(f"⚠️ Arc-Length Deviation detected at tick #{state.tick}: {arc_check['deviation']:.6f}")
             # Force stabilization if deviation exceeds threshold
             if arc_check['deviation'] > Decimal('1.0'):
                 logger.info("🔧 Large deviation detected - forcing stabilization")
                 self._on_reinit()
                 return
         
-        # CRITICAL FIX: If FG is false, this is the first tick. We MUST initialize now.
+        # Now check initialization - AFTER tick increment so tick count is preserved
         if not state.FG:
             self._force_initialization()
-            # After initialization, continue processing
             if not state.FG:
                 logger.error("❌ Engine initialization failed!")
                 return
@@ -1605,6 +1619,7 @@ class AEEA_Engine:
         state.signal = state.price
         state.signature = True
         self._last_signal_time = datetime.now()
+        logger.info(f"📡 SIGNAL GENERATED: price={state.price:.5f}, tick={state.tick}")
 
     def _on_gaurd(self, inp: int) -> bool:
         """Leading but passive inversion of binary logic for signal validation."""
@@ -1623,7 +1638,10 @@ class AEEA_Engine:
             return False
 
     def _on_reinit(self) -> None:
-        """Resets global state arrays to ensure coherent Hilbert space projection (MQL4 OnReInit() compatible)."""
+        """
+        Resets global state arrays to ensure coherent Hilbert space projection.
+        CRITICAL: Preserves tick count for arc-length coherence continuity.
+        """
         state = self.state
         
         # Save historical data (MQL4 preserves OHLCV history)
@@ -1632,6 +1650,7 @@ class AEEA_Engine:
         saved_Price = state.Price
         saved_iH = state.iH
         saved_iL = state.iL
+        saved_tick = state.tick  # CRITICAL: Preserve tick count for coherence continuity
         
         state.KC = state.invert
 
@@ -1721,8 +1740,9 @@ class AEEA_Engine:
         state.Price = saved_Price
         state.iH = saved_iH
         state.iL = saved_iL
+        state.tick = saved_tick  # CRITICAL: Restore tick count for coherence continuity
 
-        logger.info("🔄 OnReInit() completed (MQL4 compatible)")
+        logger.info(f"🔄 OnReInit() completed (MQL4 compatible) - Tick preserved: {state.tick}")
 
     def _send_signal_alert(self) -> None:
         """Send signal alert to registered chat with cooldown."""
@@ -1765,6 +1785,7 @@ class AEEA_Engine:
             f"📋 *Dime:* {state.dime}\n"
             f"🧠 *KC State:* {state.KC}\n\n"
             f"🧠 *Arc-Length Coherence:* {coherence_str}\n"
+            f"🔄 *Tick Count:* {state.tick}\n"
             f"💎 Natalia Tanyatia"
         )
 
@@ -1819,10 +1840,17 @@ class AEEA_Engine:
             "regime": state.Regime[state.Z - state.y - 1] if 0 <= state.Z - state.y - 1 < len(state.Regime) else "Unknown",
             "coherence": self._check_coherence(),
             "symbol": SYMBOL,
+            "tick": state.tick,
             "timestamp": datetime.now().isoformat(),
             "engine_initialized": state.FG
         }
+```
 
+---
+
+Segment 3 of 3
+
+```python
 # ============================================================================
 # TELEGRAM BOT HANDLERS
 # ============================================================================
@@ -2063,7 +2091,8 @@ class AEI_Bot:
             f"✅ *Condition δ(m-n-2)=1:* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
             f"🧠 *KC State:* {state.KC}\n"
             f"🔢 *Prime:* {state.prime}\n"
-            f"📋 *Dime:* {state.dime}"
+            f"📋 *Dime:* {state.dime}\n"
+            f"🔄 *Tick Count:* {state.tick}"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
@@ -2158,6 +2187,7 @@ class AEI_Bot:
         saved_Price = state.Price
         saved_iH = state.iH
         saved_iL = state.iL
+        saved_tick = state.tick  # CRITICAL: Preserve tick count
         
         # Size calculation (MQL4 style)
         if state.X <= state.y:
@@ -2249,6 +2279,7 @@ class AEI_Bot:
         state.Price = saved_Price
         state.iH = saved_iH
         state.iL = saved_iL
+        state.tick = saved_tick  # CRITICAL: Restore tick count
         
         # MQL4 STYLE: Initialize F() for each period with current bar data
         if len(self.engine.ohlcv_history) >= 2:
@@ -2283,7 +2314,8 @@ class AEI_Bot:
                 "• Premium/Discount/HH/LL reset to current bar data\n"
                 "• k/l signal flags cleared\n"
                 "• Tracking variables reset to initial state\n"
-                "• ✨ *Historical price data preserved via F() initialization*\n\n"
+                "• ✨ Historical price data preserved via F() initialization\n"
+                f"• 🔄 Tick count preserved: {state.tick}\n\n"
                 "📊 *Ready for new regime classification...*",
                 parse_mode="Markdown"
             )
@@ -2298,7 +2330,8 @@ class AEI_Bot:
                 "• Premium/Discount/HH/LL reset to current bar data\n"
                 "• k/l signal flags cleared\n"
                 "• Tracking variables reset to initial state\n"
-                "• ✨ *Historical price data preserved via F() initialization*\n\n"
+                "• ✨ Historical price data preserved via F() initialization\n"
+                f"• 🔄 Tick count preserved: {state.tick}\n\n"
                 "📊 *Ready for new regime classification...*",
                 parse_mode="Markdown"
             )
