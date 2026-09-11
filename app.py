@@ -2,20 +2,30 @@
 # -*- coding: utf-8 -*-
 
 """
-ÆEA TELEGRAM BOT - HEROKU DEPLOYMENT
+ÆEA TELEGRAM BOT - HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
 Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
-Platform: Heroku + Telegram Bot
+Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.10 (ARC-LENGTH COHERENCE PATCH - FIXED TICK INCREMENT & PRICE UPDATE)
+Version: 4.12 (TELEGRAM WEB APP MINI-APP ENABLED, ARC-LENGTH COHERENCE ENFORCED)
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import math
 import os
 import sys
+import ssl
 import logging
+import subprocess
+import threading
+import time
+import re as _re_bridge
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qsl
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Any
@@ -29,14 +39,20 @@ getcontext().prec = 28
 # ============================================================================
 # TELEGRAM BOT IMPORTS
 # ============================================================================
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    WebAppInfo,
+    MenuButtonWebApp,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
-    filters
+    filters,
 )
 
 # ============================================================================
@@ -76,6 +92,17 @@ GF_TOLERANCE: Decimal = Decimal('2.6666666666666667')
 PHI_SYMBOLIC = "(1 + sqrt(5)) / 2"
 PI_SYMBOLIC = "PI"
 ARC_LENGTH_AXIOM = "s=r"
+
+# --- TELEGRAM WEB APP / TUNNEL ENVIRONMENT ---
+TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
+BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "127.0.0.1").strip()
+BRIDGE_PORT: int = int(os.getenv("BRIDGE_PORT", "8765"))
+BRIDGE_USE_TLS: bool = os.getenv("BRIDGE_USE_TLS", "0").strip() in ("1", "true", "yes")
+BRIDGE_TLS_CERT: str = os.getenv("BRIDGE_TLS_CERT", "").strip()
+BRIDGE_TLS_KEY: str = os.getenv("BRIDGE_TLS_KEY", "").strip()
+BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
+BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
+TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
 # --- SYMBOL MAPPING (Yahoo Finance Format) ---
 SYMBOL_MAP = {
@@ -163,7 +190,7 @@ class AEI_CoreState:
     prime: int = -1
     dime: int = -1
     mem: int = -1
-    tick: int = 0  # CRITICAL: Starts at 0, increments on every tick
+    tick: int = 0
     y: int = MIN_PERIOD - 2
 
     signal: Decimal = Decimal('0.0')
@@ -292,19 +319,23 @@ class AEI_CoreState:
     chat_id: Optional[int] = None
     _initialized: bool = False
 
+    # --- Telegram Web App session identifiers (new) ---
+    webapp_user_id: Optional[int] = None
+    webapp_username: Optional[str] = None
+    webapp_verified: bool = False
+    webapp_last_seen: Optional[datetime] = None
+
 # ============================================================================
 # INDICATOR CALCULATIONS (Decimal Precision)
 # ============================================================================
 
 def sma(data: List[Decimal], period: int) -> Decimal:
-    """Simple Moving Average with Decimal precision."""
     if len(data) < period:
         return Decimal('0.0')
     total = sum(data[-period:], Decimal('0.0'))
     return total / Decimal(period)
 
 def ema(data: List[Decimal], period: int) -> Decimal:
-    """Exponential Moving Average with Decimal precision."""
     if len(data) < period:
         return sma(data, period)
     alpha = Decimal('2.0') / Decimal(period + 1)
@@ -313,13 +344,12 @@ def ema(data: List[Decimal], period: int) -> Decimal:
     return data[-1]
 
 def rsi(data: List[Decimal], period: int = 14) -> Decimal:
-    """Relative Strength Index with Decimal precision."""
     if len(data) < period + 1:
         return Decimal('50.0')
     gains = Decimal('0.0')
     losses = Decimal('0.0')
     for i in range(1, period + 1):
-        diff = data[-i] - data[-i-1]
+        diff = data[-i] - data[-i - 1]
         if diff >= Decimal('0.0'):
             gains += diff
         else:
@@ -331,8 +361,7 @@ def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     rs = avg_gain / avg_loss
     return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
 
-def stochastic(high: List[Decimal], low: List[Decimal], close: List[Decimal], k_period: int = 14, d_period: int = 3) -> Tuple[Decimal, Decimal]:
-    """Stochastic Oscillator %K and %D with Decimal precision."""
+def stochastic(high, low, close, k_period=14, d_period=3):
     if len(close) < k_period:
         return Decimal('50.0'), Decimal('50.0')
     highest = max(high[-k_period:])
@@ -343,8 +372,7 @@ def stochastic(high: List[Decimal], low: List[Decimal], close: List[Decimal], k_
     k = Decimal('100.0') * (close[-1] - lowest) / range_val
     return k, k
 
-def bollinger_bands(close: List[Decimal], period: int = 20, dev: Decimal = Decimal('2.0')) -> Tuple[Decimal, Decimal, Decimal]:
-    """Bollinger Bands: Upper, Middle, Lower with Decimal precision."""
+def bollinger_bands(close, period=20, dev=Decimal('2.0')):
     if len(close) < period:
         return Decimal('0.0'), Decimal('0.0'), Decimal('0.0')
     mid = sma(close, period)
@@ -354,45 +382,129 @@ def bollinger_bands(close: List[Decimal], period: int = 20, dev: Decimal = Decim
     lower = mid - dev * std
     return upper, mid, lower
 
-def atr(high: List[Decimal], low: List[Decimal], close: List[Decimal], period: int = 14) -> Decimal:
-    """Average True Range with Decimal precision."""
+def atr(high, low, close, period=14):
     if len(close) < period + 1:
         return Decimal('0.0')
     tr_values = []
     for i in range(1, period + 1):
         tr1 = high[-i] - low[-i]
-        tr2 = abs(high[-i] - close[-i-1])
-        tr3 = abs(low[-i] - close[-i-1])
+        tr2 = abs(high[-i] - close[-i - 1])
+        tr3 = abs(low[-i] - close[-i - 1])
         tr_values.append(max(tr1, tr2, tr3))
     return sum(tr_values) / Decimal(period)
 
-def stddev(data: List[Decimal], period: int) -> Decimal:
-    """Standard Deviation with Decimal precision."""
+def stddev(data, period):
     if len(data) < period:
         return Decimal('0.0')
     mean = sum(data[-period:]) / Decimal(period)
     variance = sum((x - mean) ** 2 for x in data[-period:]) / Decimal(period)
     return Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
 
-def ichimoku(high: List[Decimal], low: List[Decimal], close: List[Decimal]) -> Dict[str, Decimal]:
-    """Ichimoku Kinko Hyo (Simplified) with Decimal precision."""
+def ichimoku(high, low, close):
     n1, n2, n3 = 9, 26, 52
     if len(close) < n3:
-        return {"tenkan": Decimal('50.0'), "kijun": Decimal('50.0'), "senkou_a": Decimal('50.0'), "senkou_b": Decimal('50.0')}
+        return {"tenkan": Decimal('50.0'), "kijun": Decimal('50.0'),
+                "senkou_a": Decimal('50.0'), "senkou_b": Decimal('50.0')}
     tenkan = (max(high[-n1:]) + min(low[-n1:])) / Decimal('2.0')
     kijun = (max(high[-n2:]) + min(low[-n2:])) / Decimal('2.0')
     senkou_a = (tenkan + kijun) / Decimal('2.0')
     senkou_b = (max(high[-n3:]) + min(low[-n3:])) / Decimal('2.0')
     return {"tenkan": tenkan, "kijun": kijun, "senkou_a": senkou_a, "senkou_b": senkou_b}
 
-def to_decimal(value: Any) -> Decimal:
-    """Convert value to Decimal with error handling."""
+def to_decimal(value):
     try:
         if isinstance(value, Decimal):
             return value
         return Decimal(str(value))
-    except:
+    except Exception:
         return Decimal('0.0')
+
+# ============================================================================
+# TELEGRAM WEB APP AUTHENTICATION (HMAC-SHA256)
+# ============================================================================
+
+def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> Optional[Dict[str, Any]]:
+    """
+    Verify Telegram Web App `initData` using the documented HMAC-SHA256 scheme.
+
+    Returns the parsed user dict on success, None on failure.
+
+    Per Telegram docs:
+      secret_key = HMAC_SHA256(bot_token, "WebAppData")
+      data_check_string = sorted "key=value" lines joined by "\\n" excluding `hash`
+      expected_hash = HMAC_SHA256(data_check_string, secret_key).hexdigest()
+    """
+    if not init_data or not bot_token:
+        return None
+    try:
+        parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+    except Exception:
+        return None
+    received_hash = parsed.pop("hash", None)
+    if not received_hash:
+        return None
+
+    data_check_string = "\n".join(
+        f"{k}={v}" for k, v in sorted(parsed.items())
+    )
+    secret_key = hmac.new(
+        b"WebAppData",
+        bot_token.encode("utf-8"),
+        hashlib.sha256
+    ).digest()
+    expected_hash = hmac.new(
+        secret_key,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_hash, received_hash):
+        return None
+
+    auth_date_raw = parsed.get("auth_date")
+    if auth_date_raw is not None:
+        try:
+            auth_age = time.time() - int(auth_date_raw)
+            if auth_age > max_age_seconds or auth_age < -300:
+                return None
+        except (ValueError, TypeError):
+            return None
+
+    user_json = parsed.get("user")
+    user_obj: Optional[Dict[str, Any]] = None
+    if user_json:
+        try:
+            user_obj = json.loads(user_json)
+        except Exception:
+            user_obj = None
+
+    return {
+        "user": user_obj,
+        "auth_date": int(auth_date_raw) if auth_date_raw else None,
+        "raw": parsed,
+    }
+
+def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Optional[str], bool]:
+    """
+    Extract (user_id, username, verified) from either:
+      - `X-Telegram-Init-Data` header (raw initData string), or
+      - `Authorization: tma <initData>` header (Telegram webview form)
+    Verified against TELEGRAM_BOT_TOKEN_ENV using verify_telegram_init_data.
+    """
+    raw_init = handler.headers.get("X-Telegram-Init-Data", "").strip()
+    if not raw_init:
+        auth_hdr = handler.headers.get("Authorization", "").strip()
+        if auth_hdr.lower().startswith("tma "):
+            raw_init = auth_hdr[4:].strip()
+    if not raw_init:
+        return (None, None, False)
+
+    verified = verify_telegram_init_data(raw_init, TELEGRAM_BOT_TOKEN_ENV)
+    if not verified or not verified.get("user"):
+        return (None, None, False)
+
+    u = verified["user"] or {}
+    return (u.get("id"), u.get("username"), True)
 
 # ============================================================================
 # YAHOO FINANCE FEED
@@ -408,7 +520,6 @@ class YahooFinanceFeed:
         self._cached_price: Decimal = Decimal('0.0')
 
     def get_current_price(self) -> Tuple[Decimal, Decimal]:
-        """Get latest bid/ask as Decimal."""
         try:
             data = self.ticker.history(period="1d", interval="1m")
             if data.empty:
@@ -421,13 +532,11 @@ class YahooFinanceFeed:
             return Decimal('0.0'), Decimal('0.0')
 
     def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, Any]]:
-        """Get historical OHLCV data with Decimal conversion."""
         try:
             period = f"{limit}min"
             data = self.ticker.history(period=period, interval=interval)
             if data.empty:
                 return []
-
             ohlcv_data = []
             for idx, row in data.iterrows():
                 ohlcv_data.append({
@@ -444,7 +553,6 @@ class YahooFinanceFeed:
             return []
 
     def get_intraday(self, interval: str = "1m") -> Dict[str, Any]:
-        """Get latest intraday data with Decimal conversion."""
         try:
             data = self.ticker.history(period="2d", interval=interval)
             if data.empty:
@@ -463,7 +571,6 @@ class YahooFinanceFeed:
             return {}
 
     def get_info(self) -> Dict[str, Any]:
-        """Get ticker information."""
         try:
             info = self.ticker.info
             return {
@@ -478,7 +585,7 @@ class YahooFinanceFeed:
             return {}
 
 # ============================================================================
-# CORE ÆEA ENGINE
+# CORE ÆEA ENGINE (unchanged from v4.11 in logic; chat_id/state extension only)
 # ============================================================================
 
 class AEEA_Engine:
@@ -496,31 +603,22 @@ class AEEA_Engine:
         self.chat_id: Optional[int] = None
         self.application = None
         self._last_signal_time: Optional[datetime] = None
-        self._signal_cooldown: int = 60  # Seconds between signals
+        self._signal_cooldown: int = 60
         self._initialization_attempted: bool = False
         self._arc_length_verified: bool = False
-        self._tick_log_counter: int = 0  # For periodic logging
-        self._price_update_counter: int = 0  # Track price updates
+        self._tick_log_counter: int = 0
+        self._price_update_counter: int = 0
+        self._bridge_publish_callback = None
 
     def _verify_arc_length_coherence(self, price: Decimal, signal: Decimal) -> Dict[str, Any]:
-        """
-        Verify Arc-Length Axiom (s² = r²) on current state.
-        Returns coherence status and deviation.
-        """
         state = self.state
-        
-        # s = arc length (tick count as proxy for path length)
         arc_sq = Decimal(str(state.tick if state.tick > 0 else 0))
-        
-        # r = radial distance (difference between price and signal)
         if signal != Decimal('0.0'):
             radius_sq = abs(price - signal) * Decimal('1000')
         else:
             radius_sq = arc_sq
-        
         diff = abs(arc_sq - radius_sq)
         coherent = diff < Decimal('0.01')
-        
         return {
             "coherent": coherent,
             "arc_sq": arc_sq,
@@ -529,18 +627,12 @@ class AEEA_Engine:
         }
 
     def initialize_engine(self) -> None:
-        """Initialize engine state with current data - MQL4 compatible."""
         state = self.state
-        
-        # Prevent multiple initializations
         if state._initialized and state.FG:
             logger.info("⏳ Engine already initialized, skipping...")
             return
-        
         state._initialized = True
         logger.info("🚀 Engine initialization started (MQL4 style)...")
-        
-        # Get initial price data if available
         if self.ohlcv_history:
             latest = self.ohlcv_history[-1]
             state.price = latest["close"]
@@ -549,23 +641,17 @@ class AEEA_Engine:
             state.iL = latest["low"]
             state.t = datetime.now()
         else:
-            # Try to get price from feed
             bid, ask = self.feed.get_current_price()
             if bid > Decimal('0.0'):
                 state.price = bid
                 state.Price = bid
                 state.t = datetime.now()
-        
-        # Set up arrays with proper size
         if state.X <= state.y:
             state.X = state.y + MAX_PERIOD
-        
         size = state.X - state.y
         if size <= 0:
             size = MAX_PERIOD
             state.X = state.y + size
-        
-        # Initialize all arrays
         state.k = [False] * size
         state.l = [False] * size
         state.HH = [Decimal('0.0')] * size
@@ -574,16 +660,12 @@ class AEEA_Engine:
         state.Discount = [Decimal('0.0')] * size
         state.Regime = [""] * size
         state.U = []
-        
-        # Initialize 13-dimensional indicator arrays
         for i in range(13):
             if i < len(state.cA):
                 state.cA[i] = [Decimal('0.0')] * size
                 state.iA[i] = [Decimal('0.0')] * size
                 state.kA[i] = [Decimal('0.0')] * size
                 state.lA[i] = [Decimal('0.0')] * size
-        
-        # Set initial tracking variables
         state.D = Decimal('0.0')
         state.E = Decimal('0.0')
         state.Z = state.y + 1
@@ -602,58 +684,40 @@ class AEEA_Engine:
         state.T = state.X
         state.X = state.y
         state.Y = state.y
-        
-        # Initialize F for each j if we have historical data (MQL4 style)
         if len(self.ohlcv_history) >= 2:
             state.iH = self.ohlcv_history[-2]["high"]
             state.iL = self.ohlcv_history[-2]["low"]
             for j in range(state.y + 1, state.X + 1):
                 self._F(j, state.iH, state.iL)
-        
-        state.FG = False  # MQL4: FG=false until OnTick() initializes
-        state.tick = 0  # Reset tick counter on fresh init
+        state.FG = False
+        state.tick = 0
         state.R = True
         state.signature = False
         state.signal = Decimal('0.0')
-        
-        # Initialize indicator values
         if len(self.ohlcv_history) >= state.y + 1:
             norm_vals = self._normalize(state.y)
             for i in range(min(13, len(norm_vals))):
                 if i < len(state.iA) and len(state.iA[i]) > 0:
                     state.iA[i][0] = norm_vals[i]
                     state.cA[i][0] = norm_vals[i]
-        
-        # Update volatility metrics
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(state.y)
-        
-        # Verify Arc-Length Axiom on initialization
         arc_check = self._verify_arc_length_coherence(state.price, state.signal)
         self._arc_length_verified = arc_check["coherent"]
         logger.info(f"✅ Arc-Length Axiom verification: {'COHERENT' if arc_check['coherent'] else 'DEVIATION'} (deviation={arc_check['deviation']:.6f})")
-        
         logger.info("✅ Engine state prepared (FG=false - waiting for OnTick initialization)")
 
     def _force_initialization(self) -> None:
-        """Force engine initialization on first tick - MQL4 compatible."""
         state = self.state
-        
         if state.FG:
             return
-        
         logger.info("🚀 First tick detected. Forcing engine initialization (MQL4 style)...")
-        
-        # Ensure arrays are properly sized
         if state.X <= state.y:
             state.X = state.y + MAX_PERIOD
-        
         size = state.X - state.y
         if size <= 0:
             size = MAX_PERIOD
             state.X = state.y + size
-        
-        # Resize arrays if needed
         if len(state.k) != size:
             state.k = [False] * size
             state.l = [False] * size
@@ -662,83 +726,60 @@ class AEEA_Engine:
             state.Premium = [Decimal('0.0')] * size
             state.Discount = [Decimal('0.0')] * size
             state.Regime = [""] * size
-        
-        # Get current bar data for F() initialization
         if len(self.ohlcv_history) >= 2:
             iH = self.ohlcv_history[-2]["high"]
             iL = self.ohlcv_history[-2]["low"]
         else:
-            # Use current price as fallback
             iH = state.price
             iL = state.price
-        
-        # MQL4 style: Initialize F() for each j from y+1 to X
         for j in range(state.y + 1, state.X + 1):
             idx = j - state.y - 1
             if 0 <= idx < len(state.k):
-                # F() implementation
                 norm_vals = self._normalize(j)
                 for i in range(min(13, len(norm_vals))):
                     if i < len(state.cA) and idx < len(state.cA[i]):
                         state.cA[i][idx] = norm_vals[i] if i < len(norm_vals) else Decimal('50.0')
-                
                 state.k[idx] = False
                 state.l[idx] = False
                 state.HH[idx] = iH
                 state.LL[idx] = iL
                 state.Premium[idx] = iH
                 state.Discount[idx] = iL
-                
                 for i in range(13):
                     if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
                         state.kA[i][idx] = state.cA[i][idx]
                         state.lA[i][idx] = state.cA[i][idx]
-                
                 if state.R and state.FG:
                     state.U.append(True)
                     if all(state.U):
                         state.R = False
-        
         state.FG = True
         state._initialized = True
         logger.info("✅ Engine initialized on first tick (MQL4 style)")
 
     def update_price_from_feed(self) -> None:
-        """Update price from Yahoo Finance."""
         data = self.feed.get_intraday()
         if not data:
             logger.warning("⚠️ No data from Yahoo Finance feed")
             return
-
         bid = data["close"]
         ask = data["close"]
         volume = data.get("volume", Decimal('0.0'))
         timestamp = data.get("timestamp", datetime.now())
-
         self.update_price(bid, ask, volume, timestamp)
 
-    def update_price(self, bid: Decimal, ask: Decimal, volume: Decimal = Decimal('0.0'), 
-                     timestamp: Optional[datetime] = None) -> None:
-        """Update current price state."""
+    def update_price(self, bid, ask, volume=Decimal('0.0'), timestamp=None) -> None:
         if timestamp is None:
             timestamp = datetime.now()
-            
         price_data = PriceData(
-            bid=bid,
-            ask=ask,
+            bid=bid, ask=ask,
             close=(bid + ask) / Decimal('2.0'),
-            open=bid,
-            high=max(bid, ask),
-            low=min(bid, ask),
-            volume=volume,
-            timestamp=timestamp
+            open=bid, high=max(bid, ask), low=min(bid, ask),
+            volume=volume, timestamp=timestamp
         )
         self.price_history.append(price_data)
-
         if len(self.price_history) > 1000:
             self.price_history = self.price_history[-1000:]
-
-        # Detect new bar
         if self._last_price_update is None or (timestamp - self._last_price_update).seconds >= 60:
             self._bar_open = True
             self._last_price_update = timestamp
@@ -760,82 +801,63 @@ class AEEA_Engine:
                 self.ohlcv_history[-1]["low"] = min(self.ohlcv_history[-1]["low"], price_data.low)
                 self.ohlcv_history[-1]["close"] = price_data.close
                 self.ohlcv_history[-1]["volume"] += price_data.volume
-
-        # Process bar close
         if self._bar_open and len(self.ohlcv_history) >= 2:
             self._on_bar()
-
-        # Process tick - this calls _on_tick which handles tick increment
         self._on_tick(price_data)
 
-    def _normalize(self, j: int) -> Tuple[Decimal, ...]:
-        """Elevates 13 classical indicators to orthogonal basis vectors in H_13."""
+    def _normalize(self, j):
         if len(self.ohlcv_history) < j + 1:
             return (Decimal('50.0'),) * 13
-
         close_prices = [d["close"] for d in self.ohlcv_history]
         high_prices = [d["high"] for d in self.ohlcv_history]
         low_prices = [d["low"] for d in self.ohlcv_history]
-
         k, d = stochastic(high_prices, low_prices, close_prices)
         stoch_val = (k + d) / Decimal('2.0')
         rsi_val = rsi(close_prices, 14)
-
         return (
             Decimal('50.0'), stoch_val, Decimal('50.0'), Decimal('50.0'), Decimal('50.0'),
             Decimal('50.0'), Decimal('50.0'), Decimal('50.0'), Decimal('50.0'), Decimal('50.0'),
             Decimal('50.0'), Decimal('50.0'), rsi_val
         )
 
-    def _unify_volatility(self, j: int) -> Tuple[Decimal, Decimal]:
-        """Projects ATR and StdDev onto the unit phase manifold."""
+    def _unify_volatility(self, j):
         if len(self.ohlcv_history) < j + 1:
             return Decimal('50.0'), Decimal('50.0')
-
         close_prices = [d["close"] for d in self.ohlcv_history]
         high_prices = [d["high"] for d in self.ohlcv_history]
         low_prices = [d["low"] for d in self.ohlcv_history]
-
         atr_val = atr(high_prices, low_prices, close_prices, j)
         std_val = stddev(close_prices, j)
-
         atr_list = []
         std_list = []
         for i in range(len(self.ohlcv_history) - j):
             if i + j <= len(high_prices):
-                sub_high = high_prices[i:i+j]
-                sub_low = low_prices[i:i+j]
-                sub_close = close_prices[i:i+j]
+                sub_high = high_prices[i:i + j]
+                sub_low = low_prices[i:i + j]
+                sub_close = close_prices[i:i + j]
                 if len(sub_high) == j:
                     atr_list.append(atr(sub_high, sub_low, sub_close, j))
                     std_list.append(stddev(sub_close, j))
-
         atr_norm = Decimal('50.0')
         std_norm = Decimal('50.0')
-
         if atr_list:
             min_atr, max_atr = min(atr_list), max(atr_list)
             if max_atr - min_atr > Decimal('0.0'):
                 atr_norm = Decimal('100.0') * (atr_val - min_atr) / (max_atr - min_atr)
-
         if std_list:
             min_std, max_std = min(std_list), max(std_list)
             if max_std - min_std > Decimal('0.0'):
                 std_norm = Decimal('100.0') * (std_val - min_std) / (max_std - min_std)
-
         return atr_norm, std_norm
 
-    def _M(self, j: int, price: Decimal, Price: Decimal, iA: List[Decimal], cA: List[Decimal], kA: List[Decimal], HH: List[Decimal]) -> int:
-        """Computes projection operator Pi^{>theta}, tallying m (bullish/overbought count)."""
+    def _M(self, j, price, Price, iA, cA, kA, HH):
         m = 0
         y = self.state.y
         f = F_THRESHOLD + GF_TOLERANCE
         g_minus = G_THRESHOLD - GF_TOLERANCE
         idx = j - y - 1
-
         if idx < 0 or idx >= len(HH):
             return 0
-
         for i in range(13):
             if Price > HH[idx]:
                 if iA[i] > f or cA[i] < kA[i]:
@@ -845,26 +867,20 @@ class AEEA_Engine:
                     m += 1
             elif iA[i] > f:
                 m += 1
-
         if iA[0] > f or iA[0] < g_minus:
             m += 1
-
         if self.state.iIHKt > f and self.state.iIHKk > f:
             m += 1
-
         return m
 
-    def _N(self, j: int, price: Decimal, Price: Decimal, iA: List[Decimal], cA: List[Decimal], lA: List[Decimal], LL: List[Decimal]) -> int:
-        """Computes projection operator Pi^{<theta}, tallying n (bearish/oversold count)."""
+    def _N(self, j, price, Price, iA, cA, lA, LL):
         n = 0
         y = self.state.y
         f = F_THRESHOLD + GF_TOLERANCE
         g_minus = G_THRESHOLD - GF_TOLERANCE
         idx = j - y - 1
-
         if idx < 0 or idx >= len(LL):
             return 0
-
         for i in range(13):
             if Price < LL[idx]:
                 if iA[i] < g_minus or cA[i] > lA[i]:
@@ -874,17 +890,13 @@ class AEEA_Engine:
                     n += 1
             elif iA[i] < g_minus:
                 n += 1
-
         if iA[0] > f or iA[0] < g_minus:
             n += 1
-
         if self.state.iIHKt < g_minus and self.state.iIHKk < g_minus:
             n += 1
-
         return n
 
-    def _classify_regime(self, iStdDev: Decimal, iATR: Decimal) -> str:
-        """Classify market regime based on normalized ATR and StdDev."""
+    def _classify_regime(self, iStdDev, iATR):
         if iStdDev < Decimal('50.0') and iATR > Decimal('50.0'):
             return "sVolatile"
         elif iStdDev < Decimal('50.0') and iATR < Decimal('50.0'):
@@ -892,57 +904,46 @@ class AEEA_Engine:
         else:
             return "sTrend"
 
-    def _on_hold(self, inp: int, inp0: str, inp1: str) -> bool:
-        """Returns True if bar 'inp' is in either regime string inp0 or inp1."""
-        state = self.state
-        idx = inp - state.y - 1
-        if idx < 0 or idx >= len(state.Regime):
+    def _on_hold(self, inp, inp0, inp1):
+        idx = inp - self.state.y - 1
+        if idx < 0 or idx >= len(self.state.Regime):
             return False
-        return state.Regime[idx] == inp0 or state.Regime[idx] == inp1
+        return self.state.Regime[idx] == inp0 or self.state.Regime[idx] == inp1
 
-    def _on_fire(self, inp: int, inp0: str, inp1: str) -> bool:
-        """Returns True if bar 'inp' is NOT in either regime string inp0 or inp1."""
-        state = self.state
-        idx = inp - state.y - 1
-        if idx < 0 or idx >= len(state.Regime):
+    def _on_fire(self, inp, inp0, inp1):
+        idx = inp - self.state.y - 1
+        if idx < 0 or idx >= len(self.state.Regime):
             return False
-        return state.Regime[idx] != inp0 and state.Regime[idx] != inp1
+        return self.state.Regime[idx] != inp0 and self.state.Regime[idx] != inp1
 
-    def _F(self, j: int, iH: Decimal, iL: Decimal) -> None:
-        """Restarts recording, resetting vars to retain only most recent relevant price action data."""
+    def _F(self, j, iH, iL):
         state = self.state
         y = state.y
         idx = j - y - 1
-
         if idx < 0 or idx >= len(state.k):
             return
-
         state.k[idx] = False
         state.l[idx] = False
         state.HH[idx] = iH
         state.LL[idx] = iL
         state.Premium[idx] = iH
         state.Discount[idx] = iL
-
         for i in range(13):
             if idx < len(state.kA[i]):
                 state.kA[i][idx] = state.cA[i][idx]
                 state.lA[i][idx] = state.cA[i][idx]
-
         if state.R and state.FG:
             state.U.append(True)
             if all(state.U):
                 state.R = False
 
-    def _G(self) -> None:
-        """Resets price action data relative to signal events."""
+    def _G(self):
         if len(self.ohlcv_history) < 2:
             return
         H = self.ohlcv_history[-2]["high"]
         L = self.ohlcv_history[-2]["low"]
         state = self.state
         y = state.y
-
         for j in range(y + 1, state.h + 1):
             if j == state.X - 1:
                 break
@@ -960,25 +961,21 @@ class AEEA_Engine:
                     state.kA[i][idx] = state.cA[i][idx]
                     state.lA[i][idx] = state.cA[i][idx]
 
-    def _J(self) -> None:
-        """Determines current price direction 'J' given previous 'I' from OnCall()."""
+    def _J(self):
         state = self.state
         if state.I == state.iZ:
             state.J = state.iW
         else:
             state.J = state.iZ
-
         if state.iI == state.iz:
             state.iJ = state.iw
         else:
             state.iJ = state.iz
 
-    def _O(self, inp: int, inp0: int, inp1: int) -> None:
-        """Checks if ranging period 'inp' is higher/lower than BB period reached by price."""
+    def _O(self, inp, inp0, inp1):
         pass
 
-    def _R(self, j: int) -> None:
-        """Finds lowest ranging period > non-trending/trending reached, and highest ranging period < those reached."""
+    def _R(self, j):
         state = self.state
         if j <= state.J:
             state.O = j
@@ -989,7 +986,6 @@ class AEEA_Engine:
             state.r = j
         elif j > state.J:
             state.r = j
-
         if j <= state.iJ:
             state.o = j
             state.io = j
@@ -1000,35 +996,29 @@ class AEEA_Engine:
         elif j > state.iJ:
             state.ir = j
 
-    def _KC(self) -> None:
-        """Implements 'Only Constant is Change' principle via binary Change Constants."""
+    def _KC(self):
         state = self.state
         if state.E != Decimal('0.0') and not state.A and not state.B and state.v and state.signal < state.E:
             state.invert = not state.KC
         if state.D != Decimal('0.0') and not state.B and not state.A and state.u and state.signal > state.D:
             state.invert = not state.KC
 
-    def _on_call(self) -> None:
-        """Scans multiple temporal scales, checking regime continuity and evaluating edge cases."""
+    def _on_call(self):
         state = self.state
         y = state.y
-
         for j in range(y + 1, state.X + 2):
             idx = j - y - 1
             if idx < 0 or idx >= len(state.Regime):
                 break
-
             if state.Suply <= state.price or state.iSuply <= state.price or state.iSuply <= state.iH:
                 i = j
                 state.I = state.iW
                 state.iZ = i
                 state.Z = i
                 state.iC = state.C
-
                 if state.iw != 0 and state.jC == state.Cc:
                     state.h = state.I
                 state.jC = not state.C
-
                 if self._on_hold(j, "sTrend", "tTrend"):
                     state.iz = i
                     state.z = i
@@ -1036,21 +1026,17 @@ class AEEA_Engine:
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                     if idx < len(state.k):
                         state.k[idx] = m >= 12
-
                 if state.X != state.X - 1:
                     state.X += 1
-
             if state.Demand >= state.price or state.iDemand >= state.price or state.iDemand >= state.iL:
                 i = j
                 state.I = state.iZ
                 state.iW = i
                 state.W = i
                 state.jC = state.C
-
                 if state.iz != 0 and state.iC == state.Cc:
                     state.h = state.I
                 state.iC = not state.C
-
                 if self._on_hold(j, "sTrend", "tTrend"):
                     state.iw = i
                     state.w = i
@@ -1058,24 +1044,18 @@ class AEEA_Engine:
                     n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
                     if idx < len(state.l):
                         state.l[idx] = n >= 12
-
                 if state.X != state.X - 1:
                     state.X += 1
-
         state.X = y
 
-    def _on_point(self) -> None:
-        """Classifies market regime on tick using normalized ATR and StdDev."""
+    def _on_point(self):
         state = self.state
         y = state.y
-
         for j in range(y + 1, state.X):
             idx = j - y - 1
             if idx < 0 or idx >= len(state.Regime):
                 break
-
             iATR_norm, iStdDev_norm = self._unify_volatility(j)
-
             if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
@@ -1085,7 +1065,6 @@ class AEEA_Engine:
                         state.l[idx] = n >= 12
                     if self._on_fire(j, "sVolatile", "tVolatile"):
                         state.Regime[idx] = "sVolatile"
-
             elif iStdDev_norm < Decimal('50.0') and iATR_norm < Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     self._R(j)
@@ -1096,22 +1075,17 @@ class AEEA_Engine:
                         state.l[idx] = n >= 12
                     if self._on_fire(j, "sRange", "tRange"):
                         state.Regime[idx] = "sRange"
-
             elif self._on_fire(j, "sTrend", "tTrend"):
                 state.Regime[idx] = "sTrend"
 
-    def _on_bar(self) -> None:
-        """Determines market regime on bar using normalized volatility metrics."""
+    def _on_bar(self):
         state = self.state
         y = state.y
-
         for j in range(y + 1, state.X):
             idx = j - y - 1
             if idx < 0 or idx >= len(state.Regime):
                 break
-
             iATR_norm, iStdDev_norm = self._unify_volatility(j)
-
             if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     if state.Regime[idx] != "tVolatile":
@@ -1122,7 +1096,6 @@ class AEEA_Engine:
                             state.k[idx] = m >= 12
                             state.l[idx] = n >= 12
                         state.Regime[idx] = "tVolatile"
-
             elif iStdDev_norm < Decimal('50.0') and iATR_norm < Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     self._R(j)
@@ -1134,7 +1107,6 @@ class AEEA_Engine:
                     if state.Regime[idx] != "tRange":
                         self._F(j, self.ohlcv_history[-1]["high"], self.ohlcv_history[-1]["low"])
                         state.Regime[idx] = "tRange"
-
             elif (state.Regime[idx] != "tTrend" and
                   state.Regime[idx] != "sTrend" and
                   idx < len(state.LL) and idx < len(state.Discount) and
@@ -1142,81 +1114,56 @@ class AEEA_Engine:
                   state.LL[idx] < state.Discount[idx] and
                   state.HH[idx] > state.Premium[idx]):
                 state.Regime[idx] = "Stable"
-
             else:
                 if state.Regime[idx] != "tTrend":
                     self._F(j, self.ohlcv_history[-1]["high"], self.ohlcv_history[-1]["low"])
                     state.Regime[idx] = "tTrend"
-
         if len(self.ohlcv_history) >= y + 1:
-            close_prices = [d["close"] for d in self.ohlcv_history[-y-1:]]
+            close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
-    def _on_tick(self, price_data: PriceData) -> None:
-        """
-        Orchestrates all operational layers: Validation, State Update, Regime Classification.
-        CRITICAL ARC-LENGTH PATCH: Tick increments FIRST on EVERY call.
-        """
+
+    def _on_tick(self, price_data):
         state = self.state
-        
-        # ================================================================
-        # CRITICAL ARC-LENGTH PATCH: Tick MUST increment FIRST on EVERY call
-        # This is the PRIMARY DRIVER of coherence validation
-        # ================================================================
         state.tick += 1
         state.price = price_data.bid
         state.Price = price_data.close
-        
-        # Periodic tick logging (every 100 ticks)
         self._tick_log_counter += 1
         if self._tick_log_counter >= 100:
             self._tick_log_counter = 0
-            logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}, Regime={state.Regime[state.Z - state.y - 1] if 0 <= state.Z - state.y - 1 < len(state.Regime) else 'Unknown'}")
-        
-        # ARC-LENGTH PRIORITY: Verify coherence on every tick
+            logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}")
         arc_check = self._verify_arc_length_coherence(state.price, state.signal)
         if not arc_check["coherent"] and state.tick > 1:
             logger.warning(f"⚠️ Arc-Length Deviation detected at tick #{state.tick}: {arc_check['deviation']:.6f}")
-            # Force stabilization if deviation exceeds threshold
             if arc_check['deviation'] > Decimal('1.0'):
                 logger.info("🔧 Large deviation detected - forcing stabilization")
                 self._on_reinit()
                 return
-        
-        # Now check initialization - AFTER tick increment so tick count is preserved
         if not state.FG:
             self._force_initialization()
             if not state.FG:
                 logger.error("❌ Engine initialization failed!")
                 return
-
         if len(self.ohlcv_history) >= 2:
             state.iopen = self.ohlcv_history[-2]["open"]
             state.iPrice = self.ohlcv_history[-2]["close"]
             state.iH = self.ohlcv_history[-2]["high"]
             state.iL = self.ohlcv_history[-2]["low"]
-
         if len(self.ohlcv_history) >= state.y + 1:
-            close_prices = [d["close"] for d in self.ohlcv_history[-state.y-1:]]
+            close_prices = [d["close"] for d in self.ohlcv_history[-state.y - 1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, state.y)
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], state.y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
-
-        # Update volatility metrics
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(state.y)
-
         self._on_point()
         self._O(state.iO, state.O, state.J)
         self._O(state.io, state.o, state.iJ)
-
         self._on_call()
         self._J()
-
         if len(self.ohlcv_history) > 1 and self.ohlcv_history[-1]["timestamp"] != state.t:
             self._on_bar()
             self._O(state.iO, state.O, state.J)
             self._O(state.io, state.o, state.iJ)
-
         if state.J == state.y + 1 and state.J != 2:
             self._on_stand()
             self._J()
@@ -1236,7 +1183,6 @@ class AEEA_Engine:
                     state.o = state.y + 1
             else:
                 state.o = 2
-
         if state.J == state.X - 1:
             self._on_track()
             self._J()
@@ -1256,9 +1202,7 @@ class AEEA_Engine:
                     state.o = state.X - 1
             else:
                 state.o = state.X - 1
-
         state.t = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else None
-
         if state.Z != state.X - 1:
             if state.Z != state.y + 1 and state.k[state.iZ - state.y - 1] if 0 <= state.iZ - state.y - 1 < len(state.k) else False:
                 state.h = state.iZ
@@ -1275,7 +1219,6 @@ class AEEA_Engine:
                 if state.O != state.y + 1 and state.O != state.X - 1:
                     state.h = state.iO
                     self._on_goe()
-
         if state.W != state.X - 1:
             if state.W != state.y + 1 and state.l[state.iW - state.y - 1] if 0 <= state.iW - state.y - 1 < len(state.l) else False:
                 state.h = state.iW
@@ -1292,19 +1235,15 @@ class AEEA_Engine:
                 if state.O != state.y + 1 and state.O != state.X - 1:
                     state.h = state.iO
                     self._on_toe()
-
         if state.GF:
             self._on_reinit()
             state.GF = False
-
         if state.signature and state.chat_id:
             self._send_signal_alert()
 
-    def _on_track(self) -> None:
-        """Upside regime scanner - extends analysis beyond maximum valued range."""
+    def _on_track(self):
         state = self.state
         y = state.y
-
         for s in range(state.X - 1, state.S):
             idx = s - y - 1
             if idx < 0 or idx >= len(state.Regime):
@@ -1316,11 +1255,9 @@ class AEEA_Engine:
                 state.iZ = s
                 state.T += 1
                 state.iC = state.C
-
                 if state.iw != 0 and state.jC == state.Cc:
                     state.h = state.I
                 state.jC = not state.C
-
                 if state.iStdDev > Decimal('50.0'):
                     state.S += 1
                     state.iz = s
@@ -1345,18 +1282,15 @@ class AEEA_Engine:
                     else:
                         state.Regime[idx] = "sVolatile"
                     state.S += 1
-
             if state.Demand >= state.price or state.iDemand >= state.price or state.iDemand >= state.iL:
                 state.I = state.iZ
                 state.W = state.X - 1
                 state.iW = s
                 state.T += 1
                 state.jC = state.C
-
                 if state.iz != 0 and state.iC == state.Cc:
                     state.h = state.I
                 state.iC = not state.C
-
                 if state.iStdDev > Decimal('50.0'):
                     state.S += 1
                     state.iw = s
@@ -1381,13 +1315,10 @@ class AEEA_Engine:
                     else:
                         state.Regime[idx] = "sVolatile"
                     state.S += 1
-
             if s == 4 * state.X:
                 break
-
         state.S = state.X
         state.T = state.X
-
         if state.Z != 4 * state.X:
             if state.Z >= state.z:
                 state.z = state.X - 2
@@ -1395,7 +1326,6 @@ class AEEA_Engine:
                 state.z = state.X - 1
         else:
             state.z = state.X - 1
-
         if state.W != 4 * state.X:
             if state.W >= state.w:
                 state.w = state.X - 2
@@ -1404,11 +1334,9 @@ class AEEA_Engine:
         else:
             state.w = state.X - 1
 
-    def _on_stand(self) -> None:
-        """Downside regime scanner - extends analysis below minimum valued range."""
+    def _on_stand(self):
         state = self.state
         y = state.y
-
         for s in range(y + 1, state.Y, -1):
             if s == 1 or s < 0:
                 break
@@ -1418,18 +1346,15 @@ class AEEA_Engine:
             j = s
             state.ir = 0
             state.ij = 0
-
             if state.Suply <= state.price or state.iSuply <= state.price or state.iSuply <= state.iH:
                 state.I = state.iW
                 state.Z = y + 1
                 state.iZ = s
                 state.T -= 1
                 state.iC = state.C
-
                 if state.iw != 0 and state.jC == state.Cc:
                     state.h = state.I
                 state.jC = not state.C
-
                 if state.X != state.Y and state.iz == 0 and state.iStdDev > Decimal('50.0'):
                     state.ij = s
                     state.iz = s
@@ -1459,18 +1384,15 @@ class AEEA_Engine:
                     if state.Y != 2 and state.X != 2:
                         state.Y -= 1
                         state.X -= 1
-
             if state.Demand >= state.price or state.iDemand >= state.price or state.iDemand >= state.iL:
                 state.I = state.iZ
                 state.W = y + 1
                 state.iW = s
                 state.T -= 1
                 state.jC = state.C
-
                 if state.iz != 0 and state.iC == state.Cc:
                     state.h = state.I
                 state.iC = not state.C
-
                 if state.X != state.Y and state.iw == 0 and state.iStdDev > Decimal('50.0'):
                     state.ij = s
                     state.iw = s
@@ -1505,10 +1427,8 @@ class AEEA_Engine:
                 if state.Y != 2 and state.X != 2:
                     state.Y -= 1
                     state.X -= 1
-
         state.X = state.y
         state.Y = state.y
-
         if state.Z != 2:
             if state.Z >= state.z:
                 state.z = state.y
@@ -1516,7 +1436,6 @@ class AEEA_Engine:
                 state.z = state.y + 1
         else:
             state.z = state.y + 1
-
         if state.W != 2:
             if state.W >= state.w:
                 state.w = state.y
@@ -1525,12 +1444,10 @@ class AEEA_Engine:
         else:
             state.w = state.y + 1
 
-    def _on_goe(self) -> None:
-        """Bearish reversal signal generator."""
+    def _on_goe(self):
         state = self.state
         if state.signal != Decimal('0.0'):
             return
-
         if self._on_gaurd(0) and state.KC:
             if ((state.h == state.io and state.z > state.o) or
                 (state.h == state.iO and state.Z > state.O) or
@@ -1546,7 +1463,6 @@ class AEEA_Engine:
                 self._signal()
                 state.tick_tock = True
                 state.tag = 1
-
         elif self._on_gaurd(0) != state.KC:
             if ((state.h == state.io and state.z > state.o) or
                 (state.h == state.iO and state.Z > state.O) or
@@ -1564,12 +1480,10 @@ class AEEA_Engine:
                 state.tag = 1
             self._KC()
 
-    def _on_toe(self) -> None:
-        """Bullish reversal signal generator."""
+    def _on_toe(self):
         state = self.state
         if state.signal != Decimal('0.0'):
             return
-
         if self._on_gaurd(0) and state.KC:
             if ((state.h == state.io and state.w > state.o) or
                 (state.h == state.iO and state.W > state.O) or
@@ -1585,7 +1499,6 @@ class AEEA_Engine:
                 self._signal()
                 state.tick_tock = True
                 state.tag = 0
-
         elif self._on_gaurd(0) != state.KC:
             if ((state.h == state.io and state.w > state.o) or
                 (state.h == state.iO and state.W > state.O) or
@@ -1603,8 +1516,7 @@ class AEEA_Engine:
                 state.tag = 0
             self._KC()
 
-    def _signal(self) -> None:
-        """Resets signal state variables, anchors signal price to current market price."""
+    def _signal(self):
         state = self.state
         state.ab = not state.ba
         state.count = 0
@@ -1615,8 +1527,7 @@ class AEEA_Engine:
         self._last_signal_time = datetime.now()
         logger.info(f"📡 SIGNAL GENERATED: price={state.price:.5f}, tick={state.tick}")
 
-    def _on_gaurd(self, inp: int) -> bool:
-        """Leading but passive inversion of binary logic for signal validation."""
+    def _on_gaurd(self, inp):
         state = self.state
         if state.price > state.E and state.E != Decimal('0.0'):
             if state.signature and inp != -1:
@@ -1631,39 +1542,27 @@ class AEEA_Engine:
                 state.dime = 1
             return False
 
-    def _on_reinit(self) -> None:
-        """
-        Resets global state arrays to ensure coherent Hilbert space projection.
-        CRITICAL: Preserves tick count for arc-length coherence continuity.
-        """
+    def _on_reinit(self):
         state = self.state
-        
-        # Save historical data (MQL4 preserves OHLCV history)
         saved_ohlcv = self.ohlcv_history.copy()
         saved_price = state.price
         saved_Price = state.Price
         saved_iH = state.iH
         saved_iL = state.iL
-        saved_tick = state.tick  # CRITICAL: Preserve tick count for coherence continuity
-        
+        saved_tick = state.tick
         state.KC = state.invert
-
-        # Reset arrays with proper size
         if state.X <= state.y:
             state.X = state.y + MAX_PERIOD
         size = state.X - state.y
         if size <= 0:
             size = MAX_PERIOD
             state.X = state.y + size
-
         for i in range(13):
             if i < len(state.cA):
                 state.cA[i] = [Decimal('0.0')] * size
                 state.iA[i] = [Decimal('0.0')] * size
                 state.kA[i] = [Decimal('0.0')] * size
                 state.lA[i] = [Decimal('0.0')] * size
-
-        # Clear all indicator lists
         state.IHKk = []
         state.IHKt = []
         state.RSI = []
@@ -1679,7 +1578,6 @@ class AEEA_Engine:
         state.StdDev = []
         state.ATR = []
         state.ADX = []
-
         state.Regime = [""] * size
         state.Premium = [Decimal('0.0')] * size
         state.Discount = [Decimal('0.0')] * size
@@ -1688,7 +1586,6 @@ class AEEA_Engine:
         state.k = [False] * size
         state.l = [False] * size
         state.U = []
-
         state.R = True
         state.D = Decimal('0.0')
         state.E = Decimal('0.0')
@@ -1722,51 +1619,36 @@ class AEEA_Engine:
         state.FG = False
         state.signature = False
         state.signal = Decimal('0.0')
-
         state.FVG = -1
         state.BL = []
         state.bottomLine = "   "
         state.bL = "   "
-
-        # Restore historical data (MQL4 preserves price history)
         self.ohlcv_history = saved_ohlcv
         state.price = saved_price
         state.Price = saved_Price
         state.iH = saved_iH
         state.iL = saved_iL
-        state.tick = saved_tick  # CRITICAL: Restore tick count for coherence continuity
-
+        state.tick = saved_tick
         logger.info(f"🔄 OnReInit() completed (MQL4 compatible) - Tick preserved: {state.tick}")
 
-    def _send_signal_alert(self) -> None:
-        """Send signal alert to registered chat with cooldown."""
+    def _send_signal_alert(self):
         state = self.state
         if not state.chat_id or not self.application:
             return
-
-        # Cooldown check
         if self._last_signal_time:
             elapsed = (datetime.now() - self._last_signal_time).seconds
             if elapsed < self._signal_cooldown:
                 return
-
         direction = "📈 BUY" if state.price > state.signal else "📉 SELL"
         m_count = sum(1 for v in state.k if v)
         n_count = sum(1 for v in state.l if v)
         condition_met = m_count - n_count > 2
-
-        # Get current price from feed
         bid, ask = self.feed.get_current_price()
         price_str = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
-
-        # Get regime
         idx = state.Z - state.y - 1
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
-
-        # Get arc-length coherence status
         arc_check = self._verify_arc_length_coherence(state.price, state.signal)
         coherence_str = "✅ COHERENT" if arc_check["coherent"] else f"⚠️ DEVIATION: {arc_check['deviation']:.6f}"
-
         msg = (
             f"🚨 *ÆEA SIGNAL ALERT*\n\n"
             f"📊 *Direction:* {direction}\n"
@@ -1782,7 +1664,6 @@ class AEEA_Engine:
             f"🔄 *Tick Count:* {state.tick}\n"
             f"💎 Natalia Tanyatia"
         )
-
         try:
             self.application.bot.send_message(
                 chat_id=state.chat_id,
@@ -1794,33 +1675,24 @@ class AEEA_Engine:
         except Exception as e:
             logger.error(f"❌ Failed to send signal alert: {e}")
 
-    def _check_coherence(self) -> str:
-        """Check arc-length coherence (s=r) - Decimal precision."""
+    def _check_coherence(self):
         state = self.state
-        
-        # s = arc length (tick count as proxy for path length)
         arc_sq = Decimal(str(state.tick if state.tick > 0 else 0))
-        
-        # r = radial distance (difference between price and signal)
         if state.signal != Decimal('0.0'):
             radius_sq = abs(state.price - state.signal) * Decimal('1000')
         else:
             radius_sq = arc_sq
-        
         diff = abs(arc_sq - radius_sq)
-        
         if diff < Decimal('0.01'):
             return "✅ COHERENT"
         else:
             return f"⚠️ DEVIATION: {diff:.6f}"
 
-    def get_signal_status(self) -> Dict[str, Any]:
-        """Get current signal status for API."""
+    def get_signal_status(self):
         state = self.state
         m_count = sum(1 for v in state.k if v)
         n_count = sum(1 for v in state.l if v)
         condition_met = m_count - n_count > 2
-
         return {
             "signal": float(state.signal),
             "price": float(state.price),
@@ -1838,12 +1710,637 @@ class AEEA_Engine:
             "timestamp": datetime.now().isoformat(),
             "engine_initialized": state.FG
         }
+
 # ============================================================================
-# TELEGRAM BOT HANDLERS
+# HTTP BRIDGE — TELEGRAM WEB APP ENABLED
+# ============================================================================
+
+class BridgeState:
+    """
+    Thread-safe shared state between the Telegram bot's engine
+    and the local HTTPS bridge (consumed by index.html as a Telegram Mini App).
+    """
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._snapshot: Dict[str, Any] = {
+            "symbol": SYMBOL,
+            "price": "0.0",
+            "ask": "0.0",
+            "bid": "0.0",
+            "signal": "0.0",
+            "regime": "Unknown",
+            "tick": 0,
+            "m_count": 0,
+            "n_count": 0,
+            "coherent": True,
+            "arc_sq": "0",
+            "radius_sq": "0",
+            "deviation": "0",
+            "timestamp": datetime.now().isoformat(),
+            "endpoint": None,
+            "webapp_user_id": None,
+            "webapp_username": None,
+        }
+        self._fvgs: Dict[int, Dict[str, str]] = {}
+        self._next_fvg_idx = 0
+        self._webapp_sessions: Dict[int, Dict[str, Any]] = {}
+        self._handshake_lock = threading.Lock()
+
+    def publish(self, snapshot):
+        with self._lock:
+            self._snapshot = dict(snapshot)
+
+    def get_snapshot(self):
+        with self._lock:
+            return dict(self._snapshot)
+
+    def register_webapp_session(self, user_id, username, chat_id=None):
+        with self._handshake_lock:
+            self._webapp_sessions[user_id] = {
+                "user_id": user_id,
+                "username": username,
+                "chat_id": chat_id,
+                "first_seen": self._webapp_sessions.get(user_id, {}).get("first_seen", datetime.now().isoformat()),
+                "last_seen": datetime.now().isoformat(),
+            }
+        with self._lock:
+            self._snapshot["webapp_user_id"] = user_id
+            self._snapshot["webapp_username"] = username
+        engine = BRIDGE_ENGINE_REF.get("engine")
+        if engine is not None:
+            try:
+                engine.state.webapp_user_id = user_id
+                engine.state.webapp_username = username
+                engine.state.webapp_verified = True
+                engine.state.webapp_last_seen = datetime.now()
+                if chat_id is not None:
+                    engine.state.chat_id = chat_id
+            except Exception as e:
+                logger.warning(f"register_webapp_session → engine map failed: {e}")
+        logger.info(f"🌐 Web App session registered: user_id={user_id}, username={username}")
+        return True
+
+    def add_fvg(self, fvg_type, price_str, user_id=None):
+        if fvg_type not in ("top", "bott"):
+            raise ValueError("fvg_type must be 'top' or 'bott'")
+        try:
+            price_dec = Decimal(str(price_str))
+        except Exception:
+            raise ValueError("price must be a decimal string")
+        if price_dec <= Decimal('0.0'):
+            raise ValueError("price must be > 0")
+        with self._lock:
+            snap = self._snapshot
+            try:
+                arc_sq = Decimal(str(snap.get("arc_sq", "0")))
+                radius_sq = Decimal(str(snap.get("radius_sq", "0")))
+                dev = abs(arc_sq - radius_sq)
+                if dev > Decimal('1.0') and arc_sq > Decimal('0'):
+                    raise ValueError(
+                        "ARC-LENGTH DEVIATION: s²={} ≠ r²={} (dev={})".format(
+                            arc_sq, radius_sq, dev
+                        )
+                    )
+            except ValueError:
+                raise
+            except Exception:
+                pass
+            idx = self._next_fvg_idx
+            self._next_fvg_idx += 1
+            self._fvgs[idx] = {
+                "type": fvg_type,
+                "price": str(price_dec),
+                "idx": idx,
+                "created": datetime.now().isoformat(),
+                "user_id": user_id,
+            }
+            self._inject_into_engine(fvg_type, price_dec, idx)
+            return idx
+
+    def remove_fvg(self, idx):
+        with self._lock:
+            if idx in self._fvgs:
+                del self._fvgs[idx]
+                return True
+            return False
+
+    def list_fvgs(self):
+        with self._lock:
+            return list(self._fvgs.values())
+
+    def _inject_into_engine(self, fvg_type, price, idx):
+        engine = BRIDGE_ENGINE_REF.get("engine")
+        if engine is None:
+            return
+        try:
+            st = engine.state
+            arr = st.Premium if fvg_type == "top" else st.Discount
+            if len(arr) == 0:
+                return
+            slot = idx % len(arr)
+            arr[slot] = price
+            st.FVG = max(st.FVG, idx)
+        except Exception as e:
+            logger.warning(f"BridgeState._inject_into_engine: {e}")
+
+
+BRIDGE_STATE = BridgeState()
+BRIDGE_ENGINE_REF: Dict[str, Any] = {"engine": None, "bot": None, "public_url": None}
+
+
+# ----------------------------------------------------------------------------
+# TUNNEL MANAGER (cloudflared / ngrok / serveo fallback)
+# ----------------------------------------------------------------------------
+class TunnelManager:
+    """
+    Spawn a public HTTPS tunnel pointing at the local bridge port.
+    Priority: explicit TELEGRAM_WEBAPP_URL env → cloudflared → ngrok → serveo(ssh) → None.
+
+    The discovered URL is stored in BRIDGE_ENGINE_REF["public_url"] and
+    propagated to BRIDGE_STATE snapshot ("endpoint") so the frontend can
+    use it for `Telegram.WebApp` deep-links and `openTelegramLink` calls.
+    """
+    URL_RE_CLOUDFLARED = _re_bridge.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
+    URL_RE_NGROK = _re_bridge.compile(r"https://[a-z0-9\-]+\.ngrok(?:-free)?\.app")
+    URL_RE_SERVEO = _re_bridge.compile(r"https://[a-z0-9\-]+\.serveo\.net")
+
+    def __init__(self, port: int, prefer: str = "cloudflared", timeout: int = 45):
+        self.port = port
+        self.prefer = prefer
+        self.timeout = timeout
+        self.process: Optional[subprocess.Popen] = None
+        self.public_url: Optional[str] = None
+        self.provider: Optional[str] = None
+
+    def _which(self, name):
+        from shutil import which
+        return which(name)
+
+    def _spawn(self, cmd):
+        logger.info(f"🌐 Spawning tunnel: {' '.join(cmd)}")
+        return subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True,
+        )
+
+    def _scan_for_url(self, proc, regex, deadline):
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            if line:
+                logger.debug(f"[tunnel] {line}")
+            m = regex.search(line)
+            if m:
+                return m.group(0)
+            if time.time() > deadline:
+                return None
+        return None
+
+    def _try_cloudflared(self):
+        if not self._which("cloudflared"):
+            return None
+        try:
+            proc = self._spawn([
+                "cloudflared", "tunnel", "--url", f"http://127.0.0.1:{self.port}",
+                "--no-autoupdate",
+            ])
+        except Exception as e:
+            logger.warning(f"cloudflared spawn failed: {e}")
+            return None
+        deadline = time.time() + self.timeout
+        url = self._scan_for_url(proc, self.URL_RE_CLOUDFLARED, deadline)
+        if url:
+            self.process = proc
+            self.public_url = url
+            self.provider = "cloudflared"
+            return url
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        return None
+
+    def _try_ngrok(self):
+        if not self._which("ngrok"):
+            return None
+        try:
+            proc = self._spawn(["ngrok", "http", str(self.port), "--log=stdout"])
+        except Exception as e:
+            logger.warning(f"ngrok spawn failed: {e}")
+            return None
+        deadline = time.time() + self.timeout
+        url = self._scan_for_url(proc, self.URL_RE_NGROK, deadline)
+        if url:
+            self.process = proc
+            self.public_url = url
+            self.provider = "ngrok"
+            return url
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        return None
+
+    def _try_serveo(self):
+        if not self._which("ssh"):
+            return None
+        try:
+            proc = self._spawn([
+                "ssh", "-o", "StrictHostKeyChecking=no",
+                "-o", "ServerAliveInterval=30",
+                "-R", f"80:127.0.0.1:{self.port}",
+                "serveo.net",
+            ])
+        except Exception as e:
+            logger.warning(f"serveo spawn failed: {e}")
+            return None
+        deadline = time.time() + self.timeout
+        url = self._scan_for_url(proc, self.URL_RE_SERVEO, deadline)
+        if url:
+            self.process = proc
+            self.public_url = url
+            self.provider = "serveo"
+            return url
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        return None
+
+    def start(self):
+        if TELEGRAM_WEBAPP_URL:
+            self.public_url = TELEGRAM_WEBAPP_URL
+            self.provider = "explicit"
+            BRIDGE_ENGINE_REF["public_url"] = self.public_url
+            logger.info(f"🌐 Using explicit TELEGRAM_WEBAPP_URL: {self.public_url}")
+            return self.public_url
+
+        order = [self.prefer] + [p for p in ("cloudflared", "ngrok", "serveo") if p != self.prefer]
+        for provider in order:
+            method = getattr(self, f"_try_{provider}", None)
+            if method is None:
+                continue
+            try:
+                url = method()
+            except Exception as e:
+                logger.warning(f"Tunnel provider {provider} raised: {e}")
+                url = None
+            if url:
+                BRIDGE_ENGINE_REF["public_url"] = url
+                logger.info(f"🌐 Tunnel established via {provider}: {url}")
+                return url
+        logger.warning("⚠️ No tunnel available. Telegram Mini App will require manual TELEGRAM_WEBAPP_URL.")
+        return None
+
+    def stop(self):
+        if self.process is None:
+            return
+        try:
+            self.process.terminate()
+            self.process.wait(timeout=5)
+        except Exception:
+            try:
+                self.process.kill()
+            except Exception:
+                pass
+        self.process = None
+        logger.info("🌐 Tunnel stopped")
+
+
+# ----------------------------------------------------------------------------
+# BRIDGE HANDLER
+# ----------------------------------------------------------------------------
+class BridgeHandler(BaseHTTPRequestHandler):
+    """HTTP/1.1 handler for the ÆEA Mini App bridge."""
+    server_version = "AEI-Bridge/4.12"
+
+    def log_message(self, fmt, *args):
+        return
+
+    def _set_cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data")
+
+    def _send_json(self, code, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self._set_cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_html(self, code, html):
+        body = html.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self._set_cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_body(self):
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length <= 0:
+            return b""
+        return self.rfile.read(length)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._set_cors()
+        self.end_headers()
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == "/health":
+            self._send_json(200, {"ok": True, "service": "aei-bridge", "version": "4.12"})
+            return
+        if path == "/config":
+            self._send_json(200, {
+                "public_url": BRIDGE_ENGINE_REF.get("public_url"),
+                "tls": BRIDGE_USE_TLS,
+                "port": BRIDGE_PORT,
+                "host": BRIDGE_HOST,
+                "symbol": SYMBOL,
+                "webapp_enabled": True,
+            })
+            return
+        if path == "/state":
+            snap = BRIDGE_STATE.get_snapshot()
+            public = BRIDGE_ENGINE_REF.get("public_url")
+            if public:
+                snap["endpoint"] = public
+            else:
+                host = self.headers.get("Host", f"{BRIDGE_HOST}:{BRIDGE_PORT}")
+                scheme = "https" if BRIDGE_USE_TLS else "http"
+                snap["endpoint"] = f"{scheme}://{host}"
+            self._send_json(200, snap)
+            return
+        if path == "/fvg":
+            self._send_json(200, {"fvgs": BRIDGE_STATE.list_fvgs()})
+            return
+        if path == "/" or path == "/index.html":
+            try:
+                base = os.path.dirname(os.path.abspath(__file__))
+                html_path = os.path.join(base, "index.html")
+                if os.path.isfile(html_path):
+                    with open(html_path, "r", encoding="utf-8") as f:
+                        self._send_html(200, f.read())
+                else:
+                    self._send_html(200,
+                        "<!DOCTYPE html><html><body style='font-family:monospace;"
+                        "background:#050510;color:#aaccff;padding:40px;'>"
+                        "<h2>⚡ ÆEA Mini App Bridge Online</h2>"
+                        "<p>index.html not found in <code>" + base + "</code>.</p>"
+                        "<p>Place <code>index.html</code> next to <code>app.py</code> "
+                        "to serve the Telegram Web App GUI from this endpoint.</p>"
+                        "<p>API: <code>GET /state</code> · <code>POST /fvg</code> · "
+                        "<code>DELETE /fvg/{idx}</code> · <code>POST /handshake</code> · "
+                        "<code>GET /config</code></p>"
+                        "</body></html>")
+            except Exception as e:
+                self._send_json(500, {"error": "read_index_failed", "detail": str(e)})
+            return
+        self._send_json(404, {"error": "not_found", "path": path})
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+
+        if path == "/handshake":
+            try:
+                raw = self._read_body()
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+                init_data = data.get("initData", "").strip()
+                chat_id = data.get("chat_id")
+
+                if not init_data:
+                    self._send_json(400, {"error": "missing_init_data"})
+                    return
+
+                verified = verify_telegram_init_data(init_data, TELEGRAM_BOT_TOKEN_ENV)
+                if not verified or not verified.get("user"):
+                    logger.warning("🚫 Handshake rejected: initData verification failed")
+                    self._send_json(403, {"error": "invalid_init_data"})
+                    return
+
+                u = verified["user"] or {}
+                user_id = u.get("id")
+                username = u.get("username")
+                BRIDGE_STATE.register_webapp_session(user_id, username, chat_id=chat_id)
+                logger.info(f"🤝 Handshake OK: user_id={user_id}, username={username}, chat_id={chat_id}")
+                self._send_json(200, {
+                    "ok": True,
+                    "user_id": user_id,
+                    "username": username,
+                    "public_url": BRIDGE_ENGINE_REF.get("public_url"),
+                })
+            except Exception as e:
+                logger.error(f"Handshake error: {e}")
+                self._send_json(500, {"error": "internal", "detail": str(e)})
+            return
+
+        if path == "/fvg":
+            user_id, username, verified = _extract_auth_headers(self)
+            try:
+                raw = self._read_body()
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+                fvg_type = data.get("type")
+                price_str = data.get("price")
+                if fvg_type is None or price_str is None:
+                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price"]})
+                    return
+                idx = BRIDGE_STATE.add_fvg(fvg_type, price_str, user_id=user_id)
+                logger.info(f"🔷 FVG committed: type={fvg_type} price={price_str} idx={idx} verified={verified} user={username}")
+                self._send_json(201, {
+                    "ok": True,
+                    "idx": idx,
+                    "type": fvg_type,
+                    "price": price_str,
+                    "verified": verified,
+                })
+            except ValueError as ve:
+                logger.warning(f"FVG rejected: {ve}")
+                self._send_json(422, {"error": "validation", "detail": str(ve)})
+            except Exception as e:
+                logger.error(f"FVG POST error: {e}")
+                self._send_json(500, {"error": "internal", "detail": str(e)})
+            return
+
+        self._send_json(404, {"error": "not_found", "path": path})
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        m = _re_bridge.match(r"^/fvg/(\d+)$", path)
+        if m:
+            idx = int(m.group(1))
+            ok = BRIDGE_STATE.remove_fvg(idx)
+            if ok:
+                logger.info(f"🔻 FVG removed: idx={idx}")
+                self._send_json(200, {"ok": True, "idx": idx})
+            else:
+                self._send_json(404, {"error": "fvg_not_found", "idx": idx})
+            return
+        self._send_json(404, {"error": "not_found", "path": path})
+
+
+class BridgeServer:
+    """
+    Runs a ThreadingHTTPServer in a daemon thread.
+    Supports optional TLS (BRIDGE_USE_TLS=1) with BRIDGE_TLS_CERT/KEY.
+    Spawns an optional public HTTPS tunnel via TunnelManager.
+    """
+    def __init__(self, host=BRIDGE_HOST, port=BRIDGE_PORT):
+        self.host = host
+        self.port = int(port)
+        self._httpd: Optional[ThreadingHTTPServer] = None
+        self._thread: Optional[threading.Thread] = None
+        self._tunnel: Optional[TunnelManager] = None
+        self._ssl_context: Optional[ssl.SSLContext] = None
+
+    def _build_ssl_context(self):
+        if not BRIDGE_USE_TLS:
+            return None
+        if not BRIDGE_TLS_CERT or not BRIDGE_TLS_KEY:
+            logger.warning("⚠️ BRIDGE_USE_TLS=1 but cert/key paths missing — falling back to HTTP")
+            return None
+        if not (os.path.isfile(BRIDGE_TLS_CERT) and os.path.isfile(BRIDGE_TLS_KEY)):
+            logger.warning("⚠️ TLS cert or key file not found — falling back to HTTP")
+            return None
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(certfile=BRIDGE_TLS_CERT, keyfile=BRIDGE_TLS_KEY)
+            logger.info(f"🔒 TLS enabled: cert={BRIDGE_TLS_CERT}")
+            return ctx
+        except Exception as e:
+            logger.error(f"❌ Failed to load TLS context: {e}")
+            return None
+
+    def start(self):
+        if self._thread is not None:
+            return
+        try:
+            self._httpd = ThreadingHTTPServer((self.host, self.port), BridgeHandler)
+            self._httpd.daemon_threads = True
+            self._ssl_context = self._build_ssl_context()
+            if self._ssl_context is not None:
+                self._httpd.socket = self._ssl_context.wrap_socket(
+                    self._httpd.socket, server_side=True
+                )
+        except OSError as e:
+            logger.error(f"❌ Bridge server bind failed on {self.host}:{self.port}: {e}")
+            return
+
+        self._thread = threading.Thread(
+            target=self._httpd.serve_forever,
+            name="aei-bridge",
+            daemon=True
+        )
+        self._thread.start()
+        scheme = "https" if self._ssl_context else "http"
+        logger.info(f"🌐 ÆEA Mini App Bridge listening on {scheme}://{self.host}:{self.port}")
+        logger.info(f"   → GET  /             (serves index.html — Telegram Web App)")
+        logger.info(f"   → GET  /state        (index.html polls every 2s)")
+        logger.info(f"   → POST /handshake    (verifies initData, binds chat_id)")
+        logger.info(f"   → POST /fvg          (FVG commit; Arc-Length Gate + initData HMAC)")
+        logger.info(f"   → DEL  /fvg/{{idx}}    (FVG removal)")
+        logger.info(f"   → GET  /config       (bridge metadata)")
+
+        self._tunnel = TunnelManager(self.port, prefer=BRIDGE_TUNNEL, timeout=BRIDGE_PUBLIC_TIMEOUT)
+        threading.Thread(target=self._tunnel.start, name="aei-tunnel", daemon=True).start()
+
+    def stop(self):
+        if self._tunnel is not None:
+            try:
+                self._tunnel.stop()
+            except Exception:
+                pass
+            self._tunnel = None
+        if self._httpd is not None:
+            try:
+                self._httpd.shutdown()
+                self._httpd.server_close()
+            except Exception:
+                pass
+            self._httpd = None
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        logger.info("🌐 ÆEA Mini App Bridge stopped")
+
+
+def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
+    if getattr(engine, "_bridge_attached", False):
+        return
+    original_on_tick = engine._on_tick
+
+    def wrapped_on_tick(price_data):
+        original_on_tick(price_data)
+        try:
+            st = engine.state
+            idx = st.Z - st.y - 1
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+            arc_check = engine._verify_arc_length_coherence(st.price, st.signal)
+            snapshot = {
+                "symbol": SYMBOL,
+                "price": str(st.price),
+                "bid": str(price_data.bid),
+                "ask": str(price_data.ask),
+                "signal": str(st.signal),
+                "regime": regime,
+                "tick": int(st.tick),
+                "m_count": int(sum(1 for v in st.k if v)),
+                "n_count": int(sum(1 for v in st.l if v)),
+                "coherent": bool(arc_check["coherent"]),
+                "arc_sq": str(arc_check["arc_sq"]),
+                "radius_sq": str(arc_check["radius_sq"]),
+                "deviation": str(arc_check["deviation"]),
+                "timestamp": datetime.now().isoformat(),
+                "endpoint": BRIDGE_ENGINE_REF.get("public_url"),
+                "webapp_user_id": st.webapp_user_id,
+                "webapp_username": st.webapp_username,
+            }
+            BRIDGE_STATE.publish(snapshot)
+        except Exception as e:
+            logger.warning(f"Bridge publish failed: {e}")
+
+    engine._on_tick = wrapped_on_tick
+    engine._bridge_attached = True
+    logger.info("🔗 Bridge attached to AEEA_Engine (snapshot publishing active)")
+
+
+def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
+    if getattr(bot, "_bridge_attached", False):
+        return
+    original_run = bot.run
+
+    def wrapped_run():
+        BRIDGE_ENGINE_REF["engine"] = bot.engine
+        BRIDGE_ENGINE_REF["bot"] = bot
+        _bridge_attach_to_engine(bot.engine)
+        server = BridgeServer()
+        server.start()
+        bot._bridge_server = server
+        try:
+            original_run()
+        finally:
+            server.stop()
+
+    bot.run = wrapped_run
+    bot._bridge_attached = True
+    logger.info("🔗 Bridge attached to AEI_Bot.run()")
+
+# ============================================================================
+# TELEGRAM BOT HANDLERS (Web App extended)
 # ============================================================================
 
 class AEI_Bot:
-    """Telegram Bot Interface for ÆEA Engine with Yahoo Finance Integration."""
+    """Telegram Bot Interface for ÆEA Engine with Web App Mini-App support."""
 
     def __init__(self, token: str, bot_name: str = "UpscaleTradeBot"):
         self.token = token
@@ -1852,13 +2349,16 @@ class AEI_Bot:
         self.application = None
         self._running = False
         self._price_task: Optional[asyncio.Task] = None
+        self._bridge_server: Optional[BridgeServer] = None
+        self._webapp_url: Optional[str] = None
 
-    async def price_feed_loop(self) -> None:
-        """Continuous price feed loop for Yahoo Finance data."""
+    def _resolve_webapp_url(self) -> Optional[str]:
+        return TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
+
+    async def price_feed_loop(self):
         logger.info("🔄 Starting Yahoo Finance price feed loop...")
         while self._running:
             try:
-                # CRITICAL FIX: Update price directly and log tick increment
                 self.engine.update_price_from_feed()
                 logger.info(f"📊 Price updated: {self.engine.state.price:.5f}, Tick: {self.engine.state.tick}")
                 await asyncio.sleep(UPDATE_INTERVAL)
@@ -1866,13 +2366,9 @@ class AEI_Bot:
                 logger.error(f"❌ Price feed error: {e}")
                 await asyncio.sleep(5)
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send a welcome message when /start is issued."""
-        chat_id = update.effective_chat.id
-        self.engine.state.chat_id = chat_id
-        self.engine.application = self.application
-
-        keyboard = [
+    def _build_main_keyboard(self) -> InlineKeyboardMarkup:
+        webapp_url = self._resolve_webapp_url()
+        rows = [
             [
                 InlineKeyboardButton("📊 Status", callback_data="status"),
                 InlineKeyboardButton("📈 Signal", callback_data="signal"),
@@ -1890,9 +2386,24 @@ class AEI_Bot:
                 InlineKeyboardButton("🔄 Reset", callback_data="reset"),
             ],
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        if webapp_url:
+            rows.append([
+                InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))
+            ])
+        else:
+            rows.append([
+                InlineKeyboardButton("⚡ Mini App (tunnel pending…)", callback_data="webapp_pending")
+            ])
+        return InlineKeyboardMarkup(rows)
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        self.engine.state.chat_id = chat_id
+        self.engine.application = self.application
 
         engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
+        webapp_url = self._resolve_webapp_url()
+        webapp_display = webapp_url if webapp_url else "⏳ Tunnel not yet established"
 
         welcome = (
             "🔷 *ÆEA Quantum-Financial Topology Bot*\n\n"
@@ -1904,15 +2415,18 @@ class AEI_Bot:
             "`/signal` - Current trading signal\n"
             "`/indicators` - 13D Hilbert Space projection\n"
             "`/fvg` - Fair Value Gap tracking\n"
-            "`/reset` - Reset topological branch (MQL4 compatible)\n"
+            "`/reset` - Reset topological branch\n"
             "`/start_feed` - Start Yahoo Finance price feed\n"
             "`/stop_feed` - Stop Yahoo Finance price feed\n"
             "`/symbol <PAIR>` - Change trading symbol\n"
             "`/info` - Ticker information\n"
+            "`/webapp` - Launch Telegram Mini App\n"
+            "`/webgui` - Show local bridge URL\n"
             "`/help` - Show this message\n\n"
             f"📈 *Current Symbol:* `{SYMBOL}`\n"
             f"🔄 *Feed Status:* {'Active' if self._running else 'Inactive'}\n"
             f"📊 *Data Source:* Yahoo Finance (Free, No KYC)\n"
+            f"🌐 *Mini App URL:* `{webapp_display}`\n"
             f"🧠 *Engine Status:* {engine_status}\n\n"
             "🧠 *Theoretical Foundation:*\n"
             "• Arc-Length Coherence (s = r)\n"
@@ -1921,17 +2435,13 @@ class AEI_Bot:
             "• Non-Hermitian Lindblad Dynamics\n\n"
             "💎 Natalia Tanyatia"
         )
-        await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=reply_markup)
+        await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
 
-    async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show help message."""
+    async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.start(update, context)
 
-    async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Display current market state."""
-        # Check if engine is initialized
+    async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
-            # Try to force initialization
             logger.info("⚠️ Engine not initialized, attempting to force...")
             self.engine._force_initialization()
             if not self.engine.state.FG:
@@ -1947,18 +2457,9 @@ class AEI_Bot:
         state = self.engine.state
         idx = state.Z - state.y - 1
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
-
-        # Get current price from feed
         bid, ask = self.engine.feed.get_current_price()
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
-
         coherence = self.engine._check_coherence()
-
-        keyboard = [[
-            InlineKeyboardButton("📈 Signal", callback_data="signal"),
-            InlineKeyboardButton("📊 Regime", callback_data="regime"),
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
 
         response = (
             "🔷 *ÆEA STATUS*\n\n"
@@ -1971,18 +2472,18 @@ class AEI_Bot:
             f"🧠 *KC State:* {state.KC}\n"
             f"🔄 *Tick:* {state.tick}\n"
             f"🧠 *Engine State:* {'✅ Initialized' if state.FG else '⏳ Initializing'}\n"
+            f"🌐 *Mini App User:* {state.webapp_username or '—'}\n"
             f"📅 *Last Update:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             f"📊 *Imbalance:* m={sum(1 for v in state.k if v)}, n={sum(1 for v in state.l if v)}\n"
             f"📡 *Feed Active:* {'✅' if self._running else '❌'}"
         )
+        reply_markup = self._build_main_keyboard()
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
         else:
             await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
-    async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Display detailed regime classification."""
-        # Check if engine is initialized
+    async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
             self.engine._force_initialization()
             if not self.engine.state.FG:
@@ -1997,25 +2498,13 @@ class AEI_Bot:
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
-
-        if 0 <= idx < len(state.Regime):
-            current = state.Regime[idx]
-        else:
-            current = "Unknown"
-
+        current = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
         premium = state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0')
         discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
         hh = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
         ll = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
-
         k_count = sum(1 for v in state.k if v)
         l_count = sum(1 for v in state.l if v)
-
-        keyboard = [[
-            InlineKeyboardButton("📊 Status", callback_data="status"),
-            InlineKeyboardButton("📈 Signal", callback_data="signal"),
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
 
         response = (
             "📊 *REGIME CLASSIFICATION*\n\n"
@@ -2029,14 +2518,13 @@ class AEI_Bot:
             f"📐 *Imbalance Condition:* "
             f"{'✅ TRIGGER' if k_count >= 12 or l_count >= 12 else '⏳ WAITING'}"
         )
+        reply_markup = self._build_main_keyboard()
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
         else:
             await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
-    async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Display current trading signal."""
-        # Check if engine is initialized
+    async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
             self.engine._force_initialization()
             if not self.engine.state.FG:
@@ -2049,7 +2537,6 @@ class AEI_Bot:
                 return
 
         state = self.engine.state
-
         if state.signal == Decimal('0.0'):
             direction = "🟡 NEUTRAL"
             confidence = "N/A"
@@ -2064,12 +2551,6 @@ class AEI_Bot:
         n_count = sum(1 for v in state.l if v)
         condition_met = m_count - n_count > 2
 
-        keyboard = [[
-            InlineKeyboardButton("📊 Status", callback_data="status"),
-            InlineKeyboardButton("📊 Regime", callback_data="regime"),
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
         response = (
             "🎯 *TRADING SIGNAL*\n\n"
             f"📊 *Direction:* {direction}\n"
@@ -2083,14 +2564,13 @@ class AEI_Bot:
             f"📋 *Dime:* {state.dime}\n"
             f"🔄 *Tick Count:* {state.tick}"
         )
+        reply_markup = self._build_main_keyboard()
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
         else:
             await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
-    async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Display 13D Hilbert Space projection."""
-        # Check if engine is initialized
+    async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
             self.engine._force_initialization()
             if not self.engine.state.FG:
@@ -2105,13 +2585,11 @@ class AEI_Bot:
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
-
         if idx < 0 or idx >= 13:
             await update.message.reply_text("❌ Insufficient data for indicator projection.")
             return
 
         i_values = [state.iA[i][idx] if idx < len(state.iA[i]) else Decimal('50.0') for i in range(13)]
-
         names = [
             "ADX", "Stochastic", "RVI", "AC", "Force", "OBV",
             "AD", "MFI", "Momentum", "DeM", "WPR", "CCI", "RSI"
@@ -2127,20 +2605,13 @@ class AEI_Bot:
         indicator_str += f"  Overbought: 66.6 (f={F_THRESHOLD:.1f})\n"
         indicator_str += f"  Oversold:   33.3 (g={G_THRESHOLD:.1f})"
 
-        keyboard = [[
-            InlineKeyboardButton("📊 Status", callback_data="status"),
-            InlineKeyboardButton("📈 Signal", callback_data="signal"),
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
+        reply_markup = self._build_main_keyboard()
         if update.callback_query:
             await update.callback_query.edit_message_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
         else:
             await update.message.reply_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
 
-    async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Display Fair Value Gap tracking."""
-        # Check if engine is initialized
+    async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
             await update.message.reply_text(
                 "⏳ *Engine not initialized*\n\n"
@@ -2152,6 +2623,14 @@ class AEI_Bot:
 
         state = self.engine.state
         idx = state.Z - state.y - 1
+        bridge_fvgs = BRIDGE_STATE.list_fvgs()
+        bridge_str = ""
+        if bridge_fvgs:
+            bridge_str = "\n\n🌐 *Web App FVGs:*\n"
+            for f in bridge_fvgs[-8:]:
+                mark = "▲" if f["type"] == "top" else "▼"
+                who = f" (user {f['user_id']})" if f.get("user_id") else ""
+                bridge_str += f"  {mark} {f['price']} (idx={f['idx']}){who}\n"
 
         response = (
             "📐 *FAIR VALUE GAP TRACKING*\n\n"
@@ -2163,38 +2642,30 @@ class AEI_Bot:
             f"  🔶 *Discount:* {state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0'):.5f}\n"
             f"  📈 *HH:* {state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0'):.5f}\n"
             f"  📉 *LL:* {state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0'):.5f}"
+            f"{bridge_str}"
         )
         await update.message.reply_text(response, parse_mode="Markdown")
 
-    async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Reset topological branch - matches MQL4 OnReInit() behavior with historical preservation."""
+    async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         state = self.engine.state
-        
-        # Save historical data (MQL4 preserves OHLCV history)
         saved_ohlcv = self.engine.ohlcv_history.copy()
         saved_price = state.price
         saved_Price = state.Price
         saved_iH = state.iH
         saved_iL = state.iL
-        saved_tick = state.tick  # CRITICAL: Preserve tick count
-        
-        # Size calculation (MQL4 style)
+        saved_tick = state.tick
         if state.X <= state.y:
             state.X = state.y + MAX_PERIOD
         size = state.X - state.y
         if size <= 0:
             size = MAX_PERIOD
             state.X = state.y + size
-        
-        # Reset indicator arrays (MQL4 OnReInit() style)
         for i in range(13):
             if i < len(state.cA):
                 state.cA[i] = [Decimal('0.0')] * size
                 state.iA[i] = [Decimal('0.0')] * size
                 state.kA[i] = [Decimal('0.0')] * size
                 state.lA[i] = [Decimal('0.0')] * size
-        
-        # Clear all indicator lists
         state.IHKk = []
         state.IHKt = []
         state.RSI = []
@@ -2210,8 +2681,6 @@ class AEI_Bot:
         state.StdDev = []
         state.ATR = []
         state.ADX = []
-        
-        # Reset arrays (MQL4 style - completely fresh)
         state.Regime = [""] * size
         state.Premium = [Decimal('0.0')] * size
         state.Discount = [Decimal('0.0')] * size
@@ -2219,11 +2688,8 @@ class AEI_Bot:
         state.LL = [Decimal('0.0')] * size
         state.k = [False] * size
         state.l = [False] * size
-        
         state.U = []
         state.R = True
-        
-        # Reset tracking variables (MQL4 OnReInit() style)
         state.D = Decimal('0.0')
         state.E = Decimal('0.0')
         state.K = False
@@ -2256,21 +2722,16 @@ class AEI_Bot:
         state.FG = False
         state.signature = False
         state.signal = Decimal('0.0')
-        
         state.FVG = -1
         state.BL = []
         state.bottomLine = "   "
         state.bL = "   "
-        
-        # Restore historical data (MQL4 preserves price history)
         self.engine.ohlcv_history = saved_ohlcv
         state.price = saved_price
         state.Price = saved_Price
         state.iH = saved_iH
         state.iL = saved_iL
-        state.tick = saved_tick  # CRITICAL: Restore tick count
-        
-        # MQL4 STYLE: Initialize F() for each period with current bar data
+        state.tick = saved_tick
         if len(self.engine.ohlcv_history) >= 2:
             iH = self.engine.ohlcv_history[-2]["high"]
             iL = self.engine.ohlcv_history[-2]["low"]
@@ -2283,50 +2744,31 @@ class AEI_Bot:
                     state.LL[idx] = iL
                     state.Premium[idx] = iH
                     state.Discount[idx] = iL
-                    # Copy current indicator values to kA/lA if available
                     for i in range(13):
                         if idx < len(state.kA[i]) and idx < len(state.cA[i]):
                             state.kA[i][idx] = state.cA[i][idx]
                             state.lA[i][idx] = state.cA[i][idx]
-        
-        # Set FG to true (MQL4 behavior - after F() initialization)
         state.FG = True
-        
+        reset_msg = (
+            "🔄 *TOPOLOGICAL BRANCH RESET*\n\n"
+            "The Hilbert space projection has been re-anchored to the current\n"
+            "topological branch with historical preservation (MQL4 OnReInit() compatible).\n\n"
+            "🧠 *State Reset:*\n"
+            "• All 13 indicator arrays reset\n"
+            "• Regime classification cleared\n"
+            "• Premium/Discount/HH/LL reset to current bar data\n"
+            "• k/l signal flags cleared\n"
+            "• Tracking variables reset to initial state\n"
+            "• ✨ Historical price data preserved via F() initialization\n"
+            f"• 🔄 Tick count preserved: {state.tick}\n\n"
+            "📊 *Ready for new regime classification...*"
+        )
         if update.callback_query:
-            await update.callback_query.edit_message_text(
-                "🔄 *TOPOLOGICAL BRANCH RESET*\n\n"
-                "The Hilbert space projection has been re-anchored to the current\n"
-                "topological branch with historical preservation (MQL4 OnReInit() compatible).\n\n"
-                "🧠 *State Reset:*\n"
-                "• All 13 indicator arrays reset\n"
-                "• Regime classification cleared\n"
-                "• Premium/Discount/HH/LL reset to current bar data\n"
-                "• k/l signal flags cleared\n"
-                "• Tracking variables reset to initial state\n"
-                "• ✨ Historical price data preserved via F() initialization\n"
-                f"• 🔄 Tick count preserved: {state.tick}\n\n"
-                "📊 *Ready for new regime classification...*",
-                parse_mode="Markdown"
-            )
+            await update.callback_query.edit_message_text(reset_msg, parse_mode="Markdown")
         else:
-            await update.message.reply_text(
-                "🔄 *TOPOLOGICAL BRANCH RESET*\n\n"
-                "The Hilbert space projection has been re-anchored to the current\n"
-                "topological branch with historical preservation (MQL4 OnReInit() compatible).\n\n"
-                "🧠 *State Reset:*\n"
-                "• All 13 indicator arrays reset\n"
-                "• Regime classification cleared\n"
-                "• Premium/Discount/HH/LL reset to current bar data\n"
-                "• k/l signal flags cleared\n"
-                "• Tracking variables reset to initial state\n"
-                "• ✨ Historical price data preserved via F() initialization\n"
-                f"• 🔄 Tick count preserved: {state.tick}\n\n"
-                "📊 *Ready for new regime classification...*",
-                parse_mode="Markdown"
-            )
+            await update.message.reply_text(reset_msg, parse_mode="Markdown")
 
-    async def start_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Start the Yahoo Finance price feed."""
+    async def start_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if self._running:
             await update.message.reply_text("⚠️ Price feed is already running.")
             return
@@ -2334,21 +2776,17 @@ class AEI_Bot:
         self._running = True
         self.engine._running = True
 
-        # Load historical data
         historical = self.engine.feed.get_historical_klines(limit=200)
         if historical:
             self.engine.ohlcv_history = historical
             logger.info(f"✅ Loaded {len(historical)} historical bars")
-            # Prepare engine state - FG will be set to True on first tick (MQL4 compatible)
             self.engine.initialize_engine()
             logger.info("✅ Engine state prepared - will initialize on first tick")
         else:
             logger.warning("⚠️ No historical data loaded - will initialize on first tick")
 
-        # Get initial price - this will trigger _on_tick() which will auto-initialize
         self.engine.update_price_from_feed()
 
-        # Start price feed loop
         if self._price_task is None or self._price_task.done():
             self._price_task = asyncio.create_task(self.price_feed_loop())
 
@@ -2363,16 +2801,14 @@ class AEI_Bot:
             parse_mode="Markdown"
         )
 
-    async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Stop the Yahoo Finance price feed."""
+    async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._running = False
         self.engine._running = False
         if self._price_task and not self._price_task.done():
             self._price_task.cancel()
         await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
 
-    async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Change trading symbol."""
+    async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         global SYMBOL
         args = context.args
         if not args:
@@ -2388,28 +2824,24 @@ class AEI_Bot:
             return
 
         new_symbol = args[0].upper()
-        if new_symbol in SYMBOL_MAP:
-            yahoo_symbol = SYMBOL_MAP[new_symbol]
-        else:
-            yahoo_symbol = new_symbol
+        yahoo_symbol = SYMBOL_MAP.get(new_symbol, new_symbol)
 
         try:
             ticker = yf.Ticker(yahoo_symbol)
             info = ticker.info
             if info.get("regularMarketPrice"):
-                # Update global symbol
                 SYMBOL = yahoo_symbol
-                # Reset engine with new symbol
+                prev_chat = self.engine.state.chat_id
                 self.engine = AEEA_Engine()
                 self.engine.feed = YahooFinanceFeed(yahoo_symbol)
-                self.engine.state.chat_id = self.engine.state.chat_id
+                self.engine.state.chat_id = prev_chat
                 self.engine.application = self.application
-                # Load historical data for new symbol
+                BRIDGE_ENGINE_REF["engine"] = self.engine
+                _bridge_attach_to_engine(self.engine)
                 historical = self.engine.feed.get_historical_klines(limit=200)
                 if historical:
                     self.engine.ohlcv_history = historical
                     self.engine.initialize_engine()
-                    # Force initialization on first tick
                     self.engine._force_initialization()
                 await update.message.reply_text(
                     f"✅ *Symbol changed*\n\n"
@@ -2424,8 +2856,7 @@ class AEI_Bot:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
-    async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Display ticker information."""
+    async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         info = self.engine.feed.get_info()
         response = (
             "📊 *TICKER INFORMATION*\n\n"
@@ -2442,11 +2873,63 @@ class AEI_Bot:
         else:
             await update.message.reply_text(response, parse_mode="Markdown")
 
-    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle inline button callbacks."""
+    async def webapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Launch / advertise the Telegram Mini App."""
+        url = self._resolve_webapp_url()
+        if not url:
+            await update.message.reply_text(
+                "⏳ *Mini App URL not yet available*\n\n"
+                "The bridge is starting a public HTTPS tunnel. "
+                "Please try again in ~30–45 seconds.\n\n"
+                "Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment to a "
+                "pre-provisioned HTTPS endpoint.",
+                parse_mode="Markdown"
+            )
+            return
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]
+        ])
+        await update.message.reply_text(
+            f"🌐 *ÆEA Telegram Mini App*\n\n"
+            f"*Public URL:* `{url}`\n"
+            f"*Provider:* {'explicit' if TELEGRAM_WEBAPP_URL else BRIDGE_TUNNEL}\n\n"
+            f"Tap the button below to launch the full Codex Symbolica visualization "
+            f"as a Telegram Web App — the same GUI served locally at "
+            f"`http://127.0.0.1:{BRIDGE_PORT}`, but reachable from inside Telegram.\n\n"
+            f"*Features inside the Mini App:*\n"
+            f"  ▲ Draw premium FVG (Top)\n"
+            f"  ▼ Draw discount FVG (Bottom)\n"
+            f"  ✖ Delete FVG (Deleter)\n"
+            f"  ⟳ Live state polling every 2 s\n"
+            f"  🧠 Arc-Length Coherence gate enforced on every FVG commit\n\n"
+            f"Your Telegram user ID is bound to `chat_id` on handshake, so bot "
+            f"signal alerts route to the same account.",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+
+    async def webgui(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show the local + public bridge URL."""
+        scheme = "https" if BRIDGE_USE_TLS else "http"
+        local_url = f"{scheme}://{BRIDGE_HOST}:{BRIDGE_PORT}/"
+        public_url = self._resolve_webapp_url() or "⏳ (tunnel pending)"
+        await update.message.reply_text(
+            f"🌐 *ÆEA Bridge Endpoints*\n\n"
+            f"*Local URL:* `{local_url}`\n"
+            f"*Public URL:* `{public_url}`\n\n"
+            f"*State endpoint:* `{public_url.rstrip('/')}/state`\n"
+            f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`\n\n"
+            f"*Chart tools in Mini App:*\n"
+            f"  ▲ Top → Blue premium FVG\n"
+            f"  ▼ Bottom → Red discount FVG\n"
+            f"  ✖ Delete → Remove FVG\n"
+            f"  Esc → Pan/Rotate",
+            parse_mode="Markdown"
+        )
+
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-
         action = query.data
         if action == "status":
             await self.status(update, context)
@@ -2464,18 +2947,37 @@ class AEI_Bot:
             await self.info(update, context)
         elif action == "reset":
             await self.reset(update, context)
+        elif action == "webapp_pending":
+            await query.edit_message_text(
+                "⏳ *Mini App tunnel is starting…*\n\n"
+                f"Please retry `/webapp` in ~30–45 seconds.\n"
+                f"Tunnel provider: `{BRIDGE_TUNNEL}`",
+                parse_mode="Markdown"
+            )
 
-    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Log errors."""
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Update {update} caused error {context.error}")
-        if update and update.message:
-            await update.message.reply_text("❌ An error occurred. Please try again.")
 
-    def run(self) -> None:
-        """Start the bot."""
-        self.application = Application.builder().token(self.token).build()
+    async def _post_init(self, application) -> None:
+        """Register a global MenuButtonWebApp so the Mini App is one tap away."""
+        url = self._resolve_webapp_url()
+        if not url:
+            logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
+            return
+        try:
+            await application.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="ÆEA Mini App",
+                    web_app=WebAppInfo(url=url)
+                )
+            )
+            logger.info(f"✅ MenuButtonWebApp registered: {url}")
+        except Exception as e:
+            logger.warning(f"Failed to set menu button: {e}")
 
-        # Add command handlers
+    def run(self):
+        self.application = Application.builder().token(self.token).post_init(self._post_init).build()
+
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("help", self.help))
         self.application.add_handler(CommandHandler("status", self.status))
@@ -2488,11 +2990,11 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("stop_feed", self.stop_feed))
         self.application.add_handler(CommandHandler("symbol", self.symbol))
         self.application.add_handler(CommandHandler("info", self.info))
+        self.application.add_handler(CommandHandler("webapp", self.webapp))
+        self.application.add_handler(CommandHandler("webgui", self.webgui))
+        self.application.add_handler(CommandHandler("mini", self.webapp))
 
-        # Add callback query handler
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
-
-        # Add error handler
         self.application.add_error_handler(self.error_handler)
 
         logger.info(f"🤖 {self.bot_name} starting...")
@@ -2500,24 +3002,110 @@ class AEI_Bot:
         logger.info(f"🧠 Arc-Length Axiom (s=r) enforced.")
         logger.info(f"🔄 Non-Hermitian Lindblad Dynamics active.")
         logger.info(f"📡 Data Source: Yahoo Finance (Free, No KYC)")
+        logger.info(f"⚡ Telegram Mini App enabled.")
         logger.info(f"💎 Ready. Use /start to begin.")
 
         self.application.run_polling()
 
 # ============================================================================
+# BRIDGE BOOTSTRAP
+# ============================================================================
+_bridge_attach_to_bot(AEI_Bot)
+
+# ============================================================================
 # MAIN ENTRY POINT
 # ============================================================================
 
+_BRIDGE_MANIFEST = r"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.12 (MINI APP)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Architecture:
+  • Telegram bot      : app.py (python-telegram-bot)
+  • Data feed         : Yahoo Finance (free, no KYC)
+  • HTTPS bridge      : http://127.0.0.1:8765  (auto-attached)
+  • Public tunnel     : cloudflared | ngrok | serveo (auto-discovered)
+  • Web GUI           : index.html → Telegram Web App (Mini App)
+  • Menu button       : MenuButtonWebApp (one tap to open Mini App)
+
+Bridge endpoints (consumed by index.html):
+  GET    /             → serves index.html (Telegram Web App GUI)
+  GET    /state        → engine snapshot (exact Decimal strings)
+  GET    /config       → bridge metadata (public_url, tls, symbol)
+  POST   /handshake    → verifies Telegram initData (HMAC-SHA256)
+                        binds webapp_user_id → state.chat_id
+  POST   /fvg          → commit Top()/Bott() FVG (Arc-Length Gate)
+                        requires valid X-Telegram-Init-Data header
+  DELETE /fvg/{idx}    → remove FVG (mirrors æea.mq4 Deleter())
+  GET    /fvg          → list all FVGs
+  GET    /health       → liveness probe
+
+Telegram Web App integration:
+  • Bot commands: /webapp, /mini, /webgui
+  • Inline button: "⚡ Open ÆEA Mini App" (WebAppInfo url)
+  • MenuButtonWebApp: persistent bottom-left menu
+  • initData HMAC verified via WebAppData secret + SHA-256
+  • auth_date freshness enforced (≤ 24h, ≥ -5m skew)
+
+Tunnel providers (in priority order):
+  1. TELEGRAM_WEBAPP_URL env (explicit; skips tunnel spawn)
+  2. cloudflared tunnel --url http://127.0.0.1:8765
+  3. ngrok http 8765
+  4. ssh -R 80:127.0.0.1:8765 serveo.net
+
+Required environment:
+  TELEGRAM_BOT_TOKEN       — bot token from BotFather (required)
+  TELEGRAM_WEBAPP_URL      — optional explicit HTTPS URL
+  BRIDGE_PORT              — default 8765
+  BRIDGE_HOST              — default 127.0.0.1
+  BRIDGE_USE_TLS           — 1 to wrap server in TLS (BRIDGE_TLS_CERT/KEY)
+  BRIDGE_TUNNEL            — cloudflared | ngrok | serveo
+
+Chart overlay parity (index.html ↔ æea.mq4):
+  ▲ Top    (blue)     ↔ Top()  → Premium[] push
+  ▼ Bottom (red)      ↔ Bott() → Discount[] push
+  ✖ Delete            ↔ Deleter() → BL[] splice
+  Auto-decoherence    ↔ OnTick() BL decoherence check
+
+Arc-Length Gate (TF Spec §3, §8):
+  FVG commits are rejected when s² ≠ r² (DbZ principle).
+  Deviation tolerance: |s² − r²| ≤ 1.0 in snapshot units.
+
+Exactness (no float leakage):
+  • Backend: Python Decimal (28-digit context)
+  • Transport: JSON with Decimal-as-string
+  • Frontend: Fraction (numerator/denominator integers)
+
+Quick start:
+  1. export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'
+  2. (optional) export TELEGRAM_WEBAPP_URL='https://your.tunnel.url'
+  3. python3 app.py                    # starts bot + bridge + tunnel
+  4. In Telegram: /start → tap "⚡ Open ÆEA Mini App"
+  5. Draw FVGs with ▲ / ▼ tools; ✖ to delete
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+def _print_manifest():
+    try:
+        print(_BRIDGE_MANIFEST)
+    except Exception:
+        pass
+
+_AEL_Bot_run_orig = AEI_Bot.run
+
+def _AEI_Bot_run_with_manifest(self):
+    _print_manifest()
+    return _AEL_Bot_run_orig(self)
+
+AEI_Bot.run = _AEI_Bot_run_with_manifest
+
 def main():
     """Main entry point."""
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not TOKEN:
         logger.error("❌ Error: TELEGRAM_BOT_TOKEN not set.")
-        logger.error("   Set it as environment variable.")
         logger.error("   export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'")
         sys.exit(1)
-
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
 
