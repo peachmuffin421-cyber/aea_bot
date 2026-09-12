@@ -2307,15 +2307,15 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
         return
     original_run = bot.run
 
-    def wrapped_run():
-        BRIDGE_ENGINE_REF["engine"] = bot.engine
-        BRIDGE_ENGINE_REF["bot"] = bot
-        _bridge_attach_to_engine(bot.engine)
+    def wrapped_run(self):  # <-- FIX: Accept 'self' to act as a bound method
+        BRIDGE_ENGINE_REF["engine"] = self.engine
+        BRIDGE_ENGINE_REF["bot"] = self
+        _bridge_attach_to_engine(self.engine)
         server = BridgeServer()
         server.start()
-        bot._bridge_server = server
+        self._bridge_server = server
         try:
-            original_run()
+            original_run(self)  # <-- FIX: Pass 'self' to the original bound method
         finally:
             server.stop()
 
