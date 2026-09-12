@@ -2020,9 +2020,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-def _set_cors(self):
-    self.send_header("Access-Control-Allow-Origin", "https://peachmuffin421-cyber.github.io")
-    self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+    def _set_cors(self):
+        self.send_header("Access-Control-Allow-Origin", "https://peachmuffin421-cyber.github.io")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data")
 
     def _send_json(self, code, payload):
@@ -2098,11 +2098,6 @@ def _set_cors(self):
                         "background:#050510;color:#aaccff;padding:40px;'>"
                         "<h2>⚡ ÆEA Mini App Bridge Online</h2>"
                         "<p>index.html not found in <code>" + base + "</code>.</p>"
-                        "<p>Place <code>index.html</code> next to <code>app.py</code> "
-                        "to serve the Telegram Web App GUI from this endpoint.</p>"
-                        "<p>API: <code>GET /state</code> · <code>POST /fvg</code> · "
-                        "<code>DELETE /fvg/{idx}</code> · <code>POST /handshake</code> · "
-                        "<code>GET /config</code></p>"
                         "</body></html>")
             except Exception as e:
                 self._send_json(500, {"error": "read_index_failed", "detail": str(e)})
@@ -2111,24 +2106,20 @@ def _set_cors(self):
 
     def do_POST(self):
         path = urlparse(self.path).path
-
         if path == "/handshake":
             try:
                 raw = self._read_body()
                 data = json.loads(raw.decode("utf-8")) if raw else {}
                 init_data = data.get("initData", "").strip()
                 chat_id = data.get("chat_id")
-
                 if not init_data:
                     self._send_json(400, {"error": "missing_init_data"})
                     return
-
                 verified = verify_telegram_init_data(init_data, TELEGRAM_BOT_TOKEN_ENV)
                 if not verified or not verified.get("user"):
                     logger.warning("🚫 Handshake rejected: initData verification failed")
                     self._send_json(403, {"error": "invalid_init_data"})
                     return
-
                 u = verified["user"] or {}
                 user_id = u.get("id")
                 username = u.get("username")
@@ -2144,7 +2135,6 @@ def _set_cors(self):
                 logger.error(f"Handshake error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
-
         if path == "/fvg":
             user_id, username, verified = _extract_auth_headers(self)
             try:
@@ -2171,7 +2161,6 @@ def _set_cors(self):
                 logger.error(f"FVG POST error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
-
         self._send_json(404, {"error": "not_found", "path": path})
 
     def do_DELETE(self):
@@ -2187,7 +2176,6 @@ def _set_cors(self):
                 self._send_json(404, {"error": "fvg_not_found", "idx": idx})
             return
         self._send_json(404, {"error": "not_found", "path": path})
-
 
 class BridgeServer:
     """
