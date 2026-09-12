@@ -96,7 +96,7 @@ ARC_LENGTH_AXIOM = "s=r"
 # --- TELEGRAM WEB APP / TUNNEL ENVIRONMENT ---
 TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
 BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "127.0.0.1").strip()
-BRIDGE_PORT: int = int(os.getenv("BRIDGE_PORT", "8765"))
+BRIDGE_PORT: int = int(os.getenv("PORT", os.getenv("BRIDGE_PORT", "8765")))
 BRIDGE_USE_TLS: bool = os.getenv("BRIDGE_USE_TLS", "0").strip() in ("1", "true", "yes")
 BRIDGE_TLS_CERT: str = os.getenv("BRIDGE_TLS_CERT", "").strip()
 BRIDGE_TLS_KEY: str = os.getenv("BRIDGE_TLS_KEY", "").strip()
@@ -2020,9 +2020,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-    def _set_cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+def _set_cors(self):
+    self.send_header("Access-Control-Allow-Origin", "https://peachmuffin421-cyber.github.io")
+    self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data")
 
     def _send_json(self, code, payload):
