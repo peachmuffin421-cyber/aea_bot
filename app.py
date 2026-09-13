@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.12 (TELEGRAM WEB APP MINI-APP ENABLED, ARC-LENGTH COHERENCE ENFORCED)
+Version: 4.13 (TELEGRAM WEB APP MINI-APP ENABLED, ARC-LENGTH COHERENCE ENFORCED, CORS FIXED)
 """
 
 import asyncio
@@ -95,7 +95,7 @@ ARC_LENGTH_AXIOM = "s=r"
 
 # --- TELEGRAM WEB APP / TUNNEL ENVIRONMENT ---
 TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
-BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "127.0.0.1").strip()
+BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
 BRIDGE_PORT: int = int(os.getenv("PORT", os.getenv("BRIDGE_PORT", "8765")))
 BRIDGE_USE_TLS: bool = os.getenv("BRIDGE_USE_TLS", "0").strip() in ("1", "true", "yes")
 BRIDGE_TLS_CERT: str = os.getenv("BRIDGE_TLS_CERT", "").strip()
@@ -103,6 +103,11 @@ BRIDGE_TLS_KEY: str = os.getenv("BRIDGE_TLS_KEY", "").strip()
 BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
 BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
 TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
+# --- CORS CONFIGURATION ---
+# Default "*" allows any origin (required for cross-origin GitHub Pages ↔ Heroku).
+# Set CORS_ORIGIN env var to restrict to your GitHub Pages domain for production.
+CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
 
 # --- SYMBOL MAPPING (Yahoo Finance Format) ---
 SYMBOL_MAP = {
@@ -319,7 +324,7 @@ class AEI_CoreState:
     chat_id: Optional[int] = None
     _initialized: bool = False
 
-    # --- Telegram Web App session identifiers (new) ---
+    # --- Telegram Web App session identifiers ---
     webapp_user_id: Optional[int] = None
     webapp_username: Optional[str] = None
     webapp_verified: bool = False
@@ -585,7 +590,7 @@ class YahooFinanceFeed:
             return {}
 
 # ============================================================================
-# CORE ÆEA ENGINE (unchanged from v4.11 in logic; chat_id/state extension only)
+# CORE ÆEA ENGINE
 # ============================================================================
 
 class AEEA_Engine:
@@ -2015,15 +2020,21 @@ class TunnelManager:
 # ----------------------------------------------------------------------------
 class BridgeHandler(BaseHTTPRequestHandler):
     """HTTP/1.1 handler for the ÆEA Mini App bridge."""
-    server_version = "AEI-Bridge/4.12"
+    server_version = "AEI-Bridge/4.13"
 
     def log_message(self, fmt, *args):
         return
 
     def _set_cors(self):
-        self.send_header("Access-Control-Allow-Origin", "https://peachmuffin421-cyber.github.io")
+        # Allow configurable origin (default: any). This is required because the
+        # Mini App runs inside Telegram's WebView on a different origin than
+        # the Heroku backend (e.g., GitHub Pages or a cloudflared tunnel).
+        origin = CORS_ORIGIN
+        self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data")
+        if origin != "*":
+            self.send_header("Vary", "Origin")
 
     def _send_json(self, code, payload):
         body = json.dumps(payload).encode("utf-8")
@@ -2059,7 +2070,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
-            self._send_json(200, {"ok": True, "service": "aei-bridge", "version": "4.12"})
+            self._send_json(200, {"ok": True, "service": "aei-bridge", "version": "4.13"})
             return
         if path == "/config":
             self._send_json(200, {
@@ -2069,6 +2080,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "host": BRIDGE_HOST,
                 "symbol": SYMBOL,
                 "webapp_enabled": True,
+                "cors_origin": CORS_ORIGIN,
             })
             return
         if path == "/state":
@@ -2307,7 +2319,7 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
         return
     original_run = bot.run
 
-    def wrapped_run(self):  # <-- FIX: Accept 'self' to act as a bound method
+    def wrapped_run(self):
         BRIDGE_ENGINE_REF["engine"] = self.engine
         BRIDGE_ENGINE_REF["bot"] = self
         _bridge_attach_to_engine(self.engine)
@@ -2315,7 +2327,7 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
         server.start()
         self._bridge_server = server
         try:
-            original_run(self)  # <-- FIX: Pass 'self' to the original bound method
+            original_run(self)
         finally:
             server.stop()
 
@@ -2991,6 +3003,7 @@ class AEI_Bot:
         logger.info(f"🔄 Non-Hermitian Lindblad Dynamics active.")
         logger.info(f"📡 Data Source: Yahoo Finance (Free, No KYC)")
         logger.info(f"⚡ Telegram Mini App enabled.")
+        logger.info(f"🌐 CORS origin: {CORS_ORIGIN}")
         logger.info(f"💎 Ready. Use /start to begin.")
 
         self.application.run_polling()
@@ -3006,12 +3019,12 @@ _bridge_attach_to_bot(AEI_Bot)
 
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.12 (MINI APP)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.13 (MINI APP)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
   • Telegram bot      : app.py (python-telegram-bot)
   • Data feed         : Yahoo Finance (free, no KYC)
-  • HTTPS bridge      : http://127.0.0.1:8765  (auto-attached)
+  • HTTPS bridge      : http://0.0.0.0:8765  (auto-attached)
   • Public tunnel     : cloudflared | ngrok | serveo (auto-discovered)
   • Web GUI           : index.html → Telegram Web App (Mini App)
   • Menu button       : MenuButtonWebApp (one tap to open Mini App)
@@ -3044,10 +3057,11 @@ Tunnel providers (in priority order):
 Required environment:
   TELEGRAM_BOT_TOKEN       — bot token from BotFather (required)
   TELEGRAM_WEBAPP_URL      — optional explicit HTTPS URL
-  BRIDGE_PORT              — default 8765
-  BRIDGE_HOST              — default 127.0.0.1
+  PORT                     — Heroku-assigned; fallback 8765
+  BRIDGE_HOST              — default 0.0.0.0 (Heroku requires this)
   BRIDGE_USE_TLS           — 1 to wrap server in TLS (BRIDGE_TLS_CERT/KEY)
   BRIDGE_TUNNEL            — cloudflared | ngrok | serveo
+  CORS_ORIGIN              — "*" (default) or restricted origin
 
 Chart overlay parity (index.html ↔ æea.mq4):
   ▲ Top    (blue)     ↔ Top()  → Premium[] push
