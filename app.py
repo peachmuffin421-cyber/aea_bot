@@ -7,7 +7,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Yahoo Finance (Free, No KYC)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.13 (TELEGRAM WEB APP MINI-APP ENABLED, ARC-LENGTH COHERENCE ENFORCED, CORS FIXED)
+Version: 4.14 (YFINANCE SELF-HEALING, SYMBOL FALLBACK, START_FEED HARDENING, ARC-LENGTH COHERENCE ENFORCED, CORS FIXED)
 """
 
 import asyncio
@@ -142,6 +142,49 @@ SYMBOL_MAP = {
     "ZW=F": "ZW=F",
     "KE=F": "KE=F"
 }
+
+# --- SYMBOL FALLBACK CHAIN (for crumb/delist/ticker-name drift) ---
+# Maps the primary Yahoo symbol to a list of equivalent alternates
+# tried in order when the primary returns empty for N consecutive calls.
+# Yahoo occasionally renames tickers (e.g. BTC-USD ↔ BTCUSD=X) or
+# temporarily removes them from the crumb-auth index; this chain
+# self-heals without operator intervention.
+SYMBOL_FALLBACKS: Dict[str, List[str]] = {
+    "BTC-USD":  ["BTC-USD", "BTCUSD=X"],
+    "ETH-USD":  ["ETH-USD", "ETHUSD=X"],
+    "XRP-USD":  ["XRP-USD", "XRPUSD=X"],
+    "ADA-USD":  ["ADA-USD", "ADAUSD=X"],
+    "SOL-USD":  ["SOL-USD", "SOLUSD=X"],
+    "DOGE-USD": ["DOGE-USD", "DOGEUSD=X"],
+    "LTC-USD":  ["LTC-USD", "LTCUSD=X"],
+    "LINK-USD": ["LINK-USD", "LINKUSD=X"],
+    "DOT-USD":  ["DOT-USD", "DOTUSD=X"],
+    "AVAX-USD": ["AVAX-USD", "AVAXUSD=X"],
+    "MATIC-USD":["MATIC-USD", "MATICUSD=X"],
+    "UNI-USD":  ["UNI-USD", "UNIUSD=X"],
+    "ATOM-USD": ["ATOM-USD", "ATOMUSD=X"],
+    "NEAR-USD": ["NEAR-USD", "NEARUSD=X"],
+    "FIL-USD":  ["FIL-USD", "FILUSD=X"],
+    "ETC-USD":  ["ETC-USD", "ETCUSD=X"],
+    "ICP-USD":  ["ICP-USD", "ICPUSD=X"],
+    "XLM-USD":  ["XLM-USD", "XLMUSD=X"],
+    "HBAR-USD": ["HBAR-USD", "HBARUSD=X"],
+    "QNT-USD":  ["QNT-USD", "QNTUSD=X"],
+    "GC=F":     ["GC=F"],
+    "SI=F":     ["SI=F"],
+    "CL=F":     ["CL=F"],
+    "NG=F":     ["NG=F"],
+    "ZB=F":     ["ZB=F"],
+    "ZN=F":     ["ZN=F"],
+    "ZS=F":     ["ZS=F"],
+    "ZM=F":     ["ZM=F"],
+    "ZW=F":     ["ZW=F"],
+    "KE=F":     ["KE=F"],
+}
+
+# --- YFINANCE SELF-HEALING CONFIG ---
+YF_MAX_FAILURES_BEFORE_REBUILD: int = int(os.getenv("YF_MAX_FAILURES", "3"))
+YF_SYMBOL_FALLBACK_THRESHOLD: int = int(os.getenv("YF_FALLBACK_THRESHOLD", "5"))
 
 SYMBOL: str = "BTC-USD"
 INTERVAL: str = "1m"
@@ -301,6 +344,10 @@ class AEI_CoreState:
 
     iStdDev: Decimal = Decimal('0.0')
     iATR: Decimal = Decimal('0.0')
+
+    # --- Ichimoku intra-bar scalars used by _M / _N ---
+    iIHKk: Decimal = Decimal('50.0')
+    iIHKt: Decimal = Decimal('50.0')
 
     FVG: int = -1
     BL: List[Decimal] = field(default_factory=list)
@@ -512,28 +559,112 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
     return (u.get("id"), u.get("username"), True)
 
 # ============================================================================
-# YAHOO FINANCE FEED
+# YAHOO FINANCE FEED (SELF-HEALING)
 # ============================================================================
 
 class YahooFinanceFeed:
-    """Free, no-KYC price feed for ÆEA bot with Decimal precision."""
+    """
+    Free, no-KYC price feed for ÆEA bot with Decimal precision.
+
+    Self-healing design (v4.14):
+      • Rebuilds yfinance.Ticker when N consecutive failures occur
+        (handles stale crumb / session tokens silently expiring).
+      • Falls back through an alternate-ticker chain when the primary
+        symbol returns empty for N consecutive calls
+        (handles Yahoo renaming e.g. BTC-USD ↔ BTCUSD=X).
+      • Never raises — always returns Decimal('0.0') sentinel on failure
+        so the caller's loop can continue and the self-heal can fire.
+    """
 
     def __init__(self, symbol: str = "BTC-USD"):
         self.symbol = symbol
         self.ticker = yf.Ticker(symbol)
+
+        # --- Self-healing state ---
+        self._failure_count: int = 0
+        self._max_failures: int = YF_MAX_FAILURES_BEFORE_REBUILD
+        self._fallback_count: int = 0
+        self._fallback_threshold: int = YF_SYMBOL_FALLBACK_THRESHOLD
+
+        # --- Symbol fallback chain ---
+        chain = SYMBOL_FALLBACKS.get(symbol)
+        if chain is None:
+            # Generic heuristic: if symbol ends in -USD, also try =X form
+            if symbol.endswith("-USD"):
+                base = symbol[:-4]
+                chain = [symbol, f"{base}USD=X"]
+            else:
+                chain = [symbol]
+        self._symbol_chain: List[str] = list(chain)
+        self._symbol_chain_index: int = 0
+
         self._last_update: Optional[datetime] = None
         self._cached_price: Decimal = Decimal('0.0')
+
+    # -------- Self-healing primitives --------
+
+    def _rebuild_ticker(self) -> None:
+        """Rebuild the yfinance.Ticker object (clears stale crumb/session)."""
+        logger.warning(
+            f"🔄 Self-heal: rebuilding yfinance.Ticker for {self.symbol} "
+            f"after {self._failure_count} consecutive failures"
+        )
+        try:
+            self.ticker = yf.Ticker(self.symbol)
+        except Exception as e:
+            logger.error(f"Ticker rebuild failed: {e}")
+        self._failure_count = 0
+
+    def _advance_symbol_chain(self) -> None:
+        """Rotate to the next candidate symbol in the fallback chain."""
+        if len(self._symbol_chain) <= 1:
+            return
+        self._symbol_chain_index = (self._symbol_chain_index + 1) % len(self._symbol_chain)
+        candidate = self._symbol_chain[self._symbol_chain_index]
+        logger.warning(
+            f"🔄 Self-heal: rotating symbol chain for {self.symbol} "
+            f"→ trying Yahoo symbol '{candidate}'"
+        )
+        try:
+            self.ticker = yf.Ticker(candidate)
+        except Exception as e:
+            logger.error(f"Symbol chain rotation failed: {e}")
+        self._fallback_count = 0
+        self._failure_count = 0
+
+    def _note_failure(self) -> None:
+        self._failure_count += 1
+        self._fallback_count += 1
+        if self._failure_count >= self._max_failures:
+            self._rebuild_ticker()
+        if self._fallback_count >= self._fallback_threshold:
+            self._advance_symbol_chain()
+
+    def _note_success(self) -> None:
+        self._failure_count = 0
+        self._fallback_count = 0
+
+    def active_symbol(self) -> str:
+        """Return the currently active Yahoo symbol (may differ from self.symbol)."""
+        if self._symbol_chain and 0 <= self._symbol_chain_index < len(self._symbol_chain):
+            return self._symbol_chain[self._symbol_chain_index]
+        return self.symbol
+
+    # -------- Public API --------
 
     def get_current_price(self) -> Tuple[Decimal, Decimal]:
         try:
             data = self.ticker.history(period="1d", interval="1m")
             if data.empty:
+                self._note_failure()
                 return Decimal('0.0'), Decimal('0.0')
             latest = data.iloc[-1]
             close = Decimal(str(latest["Close"]))
+            self._note_success()
             return close, close
         except Exception as e:
             logger.error(f"❌ Yahoo Finance error: {e}")
+            self._note_failure()
             return Decimal('0.0'), Decimal('0.0')
 
     def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, Any]]:
@@ -541,6 +672,7 @@ class YahooFinanceFeed:
             period = f"{limit}min"
             data = self.ticker.history(period=period, interval=interval)
             if data.empty:
+                self._note_failure()
                 return []
             ohlcv_data = []
             for idx, row in data.iterrows():
@@ -552,17 +684,21 @@ class YahooFinanceFeed:
                     "volume": Decimal(str(row["Volume"])),
                     "timestamp": idx.to_pydatetime()
                 })
+            self._note_success()
             return ohlcv_data
         except Exception as e:
             logger.error(f"❌ Yahoo Finance historical error: {e}")
+            self._note_failure()
             return []
 
     def get_intraday(self, interval: str = "1m") -> Dict[str, Any]:
         try:
             data = self.ticker.history(period="2d", interval=interval)
             if data.empty:
+                self._note_failure()
                 return {}
             latest = data.iloc[-1]
+            self._note_success()
             return {
                 "open": Decimal(str(latest["Open"])),
                 "high": Decimal(str(latest["High"])),
@@ -573,11 +709,13 @@ class YahooFinanceFeed:
             }
         except Exception as e:
             logger.error(f"❌ Yahoo Finance intraday error: {e}")
+            self._note_failure()
             return {}
 
     def get_info(self) -> Dict[str, Any]:
         try:
             info = self.ticker.info
+            self._note_success()
             return {
                 "name": info.get("longName", self.symbol),
                 "sector": info.get("sector", "Unknown"),
@@ -587,7 +725,37 @@ class YahooFinanceFeed:
             }
         except Exception as e:
             logger.error(f"❌ Yahoo Finance info error: {e}")
+            self._note_failure()
             return {}
+
+    def probe(self) -> Dict[str, Any]:
+        """
+        Operator-facing diagnostic. Returns a dict describing whether
+        the current Ticker + symbol combination yields data.
+        """
+        try:
+            data = self.ticker.history(period="1d", interval="1m")
+            return {
+                "active_symbol": self.active_symbol(),
+                "primary_symbol": self.symbol,
+                "chain": list(self._symbol_chain),
+                "chain_index": self._symbol_chain_index,
+                "empty": bool(data.empty),
+                "shape": list(data.shape),
+                "failure_count": self._failure_count,
+                "fallback_count": self._fallback_count,
+            }
+        except Exception as e:
+            return {
+                "active_symbol": self.active_symbol(),
+                "primary_symbol": self.symbol,
+                "chain": list(self._symbol_chain),
+                "chain_index": self._symbol_chain_index,
+                "empty": True,
+                "error": str(e),
+                "failure_count": self._failure_count,
+                "fallback_count": self._fallback_count,
+            }
 
 # ============================================================================
 # CORE ÆEA ENGINE
@@ -1745,6 +1913,7 @@ class BridgeState:
             "endpoint": None,
             "webapp_user_id": None,
             "webapp_username": None,
+            "last_price_update": None,
         }
         self._fvgs: Dict[int, Dict[str, str]] = {}
         self._next_fvg_idx = 0
@@ -2020,7 +2189,7 @@ class TunnelManager:
 # ----------------------------------------------------------------------------
 class BridgeHandler(BaseHTTPRequestHandler):
     """HTTP/1.1 handler for the ÆEA Mini App bridge."""
-    server_version = "AEI-Bridge/4.13"
+    server_version = "AEI-Bridge/4.14"
 
     def log_message(self, fmt, *args):
         return
@@ -2070,7 +2239,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
-            self._send_json(200, {"ok": True, "service": "aei-bridge", "version": "4.13"})
+            snap = BRIDGE_STATE.get_snapshot()
+            last = snap.get("last_price_update")
+            stale = True
+            age_seconds = None
+            if last:
+                try:
+                    age_seconds = (datetime.now() - datetime.fromisoformat(last)).total_seconds()
+                    stale = age_seconds > 60
+                except Exception:
+                    pass
+            self._send_json(200, {
+                "ok": not stale,
+                "service": "aei-bridge",
+                "version": "4.14",
+                "last_price_update": last,
+                "age_seconds": age_seconds,
+                "stale": stale,
+            })
             return
         if path == "/config":
             self._send_json(200, {
@@ -2096,6 +2282,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         if path == "/fvg":
             self._send_json(200, {"fvgs": BRIDGE_STATE.list_fvgs()})
+            return
+        if path == "/probe":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            self._send_json(200, engine.feed.probe())
             return
         if path == "/" or path == "/index.html":
             try:
@@ -2173,6 +2366,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 logger.error(f"FVG POST error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+        if path == "/reset":
+            # Manual feed reset: rebuild yfinance.Ticker, clear failure counters.
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            try:
+                engine.feed._rebuild_ticker()
+                engine.feed._fallback_count = 0
+                logger.info("🔄 Manual reset requested via /reset — Ticker rebuilt")
+                self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
+            except Exception as e:
+                logger.error(f"/reset error: {e}")
+                self._send_json(500, {"error": "internal", "detail": str(e)})
+            return
         self._send_json(404, {"error": "not_found", "path": path})
 
     def do_DELETE(self):
@@ -2246,8 +2454,11 @@ class BridgeServer:
         logger.info(f"🌐 ÆEA Mini App Bridge listening on {scheme}://{self.host}:{self.port}")
         logger.info(f"   → GET  /             (serves index.html — Telegram Web App)")
         logger.info(f"   → GET  /state        (index.html polls every 2s)")
+        logger.info(f"   → GET  /health       (liveness + last_price_update freshness)")
+        logger.info(f"   → GET  /probe        (yfinance self-heal diagnostics)")
         logger.info(f"   → POST /handshake    (verifies initData, binds chat_id)")
         logger.info(f"   → POST /fvg          (FVG commit; Arc-Length Gate + initData HMAC)")
+        logger.info(f"   → POST /reset        (manual yfinance Ticker rebuild)")
         logger.info(f"   → DEL  /fvg/{{idx}}    (FVG removal)")
         logger.info(f"   → GET  /config       (bridge metadata)")
 
@@ -2304,6 +2515,7 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "endpoint": BRIDGE_ENGINE_REF.get("public_url"),
                 "webapp_user_id": st.webapp_user_id,
                 "webapp_username": st.webapp_username,
+                "last_price_update": datetime.now().isoformat(),
             }
             BRIDGE_STATE.publish(snapshot)
         except Exception as e:
@@ -2356,15 +2568,23 @@ class AEI_Bot:
         return TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
 
     async def price_feed_loop(self):
-        logger.info("🔄 Starting Yahoo Finance price feed loop...")
+        logger.info("🔄 Price feed loop entered")
+        iteration = 0
         while self._running:
+            iteration += 1
             try:
+                logger.info(f"🔄 Feed iteration #{iteration}")
                 self.engine.update_price_from_feed()
-                logger.info(f"📊 Price updated: {self.engine.state.price:.5f}, Tick: {self.engine.state.tick}")
-                await asyncio.sleep(UPDATE_INTERVAL)
+                logger.info(
+                    f"📊 price={self.engine.state.price} "
+                    f"tick={self.engine.state.tick} "
+                    f"FG={self.engine.state.FG} "
+                    f"active_sym={self.engine.feed.active_symbol()}"
+                )
             except Exception as e:
-                logger.error(f"❌ Price feed error: {e}")
-                await asyncio.sleep(5)
+                logger.exception(f"❌ Feed iteration #{iteration} failed")
+            await asyncio.sleep(UPDATE_INTERVAL)
+        logger.info("🔄 Price feed loop exited")
 
     def _build_main_keyboard(self) -> InlineKeyboardMarkup:
         webapp_url = self._resolve_webapp_url()
@@ -2384,6 +2604,10 @@ class AEI_Bot:
             [
                 InlineKeyboardButton("📈 Info", callback_data="info"),
                 InlineKeyboardButton("🔄 Reset", callback_data="reset"),
+            ],
+            [
+                InlineKeyboardButton("🔬 Probe YF", callback_data="probe"),
+                InlineKeyboardButton("♻️ Rebuild YF", callback_data="rebuild_yf"),
             ],
         ]
         if webapp_url:
@@ -2420,6 +2644,8 @@ class AEI_Bot:
             "`/stop_feed` - Stop Yahoo Finance price feed\n"
             "`/symbol <PAIR>` - Change trading symbol\n"
             "`/info` - Ticker information\n"
+            "`/probe` - yfinance self-heal diagnostics\n"
+            "`/rebuild_yf` - Force rebuild yfinance Ticker\n"
             "`/webapp` - Launch Telegram Mini App\n"
             "`/webgui` - Show local bridge URL\n"
             "`/help` - Show this message\n\n"
@@ -2464,6 +2690,7 @@ class AEI_Bot:
         response = (
             "🔷 *ÆEA STATUS*\n\n"
             f"📈 *Symbol:* {SYMBOL}\n"
+            f"🔎 *Active YF Ticker:* `{self.engine.feed.active_symbol()}`\n"
             f"💰 *Price:* {price_display}\n"
             f"📊 *Regime:* {regime}\n"
             f"🔄 *Coherence:* {coherence}\n"
@@ -2776,37 +3003,117 @@ class AEI_Bot:
         self._running = True
         self.engine._running = True
 
-        historical = self.engine.feed.get_historical_klines(limit=200)
-        if historical:
-            self.engine.ohlcv_history = historical
-            logger.info(f"✅ Loaded {len(historical)} historical bars")
-            self.engine.initialize_engine()
-            logger.info("✅ Engine state prepared - will initialize on first tick")
-        else:
-            logger.warning("⚠️ No historical data loaded - will initialize on first tick")
+        try:
+            historical = self.engine.feed.get_historical_klines(limit=200)
+            if historical:
+                self.engine.ohlcv_history = historical
+                logger.info(f"✅ Loaded {len(historical)} historical bars from {self.engine.feed.active_symbol()}")
+                try:
+                    self.engine.initialize_engine()
+                except Exception as e:
+                    logger.exception("initialize_engine crashed")
+                    # fall through — _force_initialization will retry on first tick
+                else:
+                    logger.info("✅ Engine state prepared - will initialize on first tick")
+            else:
+                logger.warning(
+                    f"⚠️ No historical data loaded for {self.engine.feed.active_symbol()} — "
+                    f"will initialize on first tick"
+                )
 
-        self.engine.update_price_from_feed()
+            try:
+                self.engine.update_price_from_feed()
+            except Exception as e:
+                logger.exception("update_price_from_feed crashed during start_feed")
 
-        if self._price_task is None or self._price_task.done():
-            self._price_task = asyncio.create_task(self.price_feed_loop())
+            if self._price_task is None or self._price_task.done():
+                self._price_task = asyncio.create_task(self.price_feed_loop())
+        except Exception as e:
+            logger.exception("start_feed crashed")
+            self._running = False
+            self.engine._running = False
+            if update.callback_query:
+                await update.callback_query.edit_message_text(
+                    f"❌ *start_feed failed*\n`{type(e).__name__}: {e}`",
+                    parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ *start_feed failed*\n`{type(e).__name__}: {e}`",
+                    parse_mode="Markdown"
+                )
+            return
 
-        await update.message.reply_text(
+        reply_text = (
             f"✅ *Price feed started*\n\n"
             f"📈 *Symbol:* {SYMBOL}\n"
+            f"🔎 *Active YF Ticker:* `{self.engine.feed.active_symbol()}`\n"
             f"🔄 *Update Interval:* {UPDATE_INTERVAL}s\n"
             f"📊 *Historical Data:* {len(self.engine.ohlcv_history)} bars loaded\n"
             f"📡 *Data Source:* Yahoo Finance (Free, No KYC)\n"
             f"🔮 *Status:* Monitoring for signals...\n"
-            f"🧠 *Engine State:* ⏳ Initializing on first tick (MQL4 compatible)",
-            parse_mode="Markdown"
+            f"🧠 *Engine State:* ⏳ Initializing on first tick (MQL4 compatible)\n\n"
+            f"_Tip: if price stays at 0.0, send `/probe` to diagnose yfinance._"
         )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(reply_text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(reply_text, parse_mode="Markdown")
 
     async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._running = False
         self.engine._running = False
         if self._price_task and not self._price_task.done():
             self._price_task.cancel()
-        await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+
+    async def probe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Diagnostic: what does yfinance actually return right now?"""
+        info = self.engine.feed.probe()
+        status = "✅ OK" if not info.get("empty") else "❌ EMPTY"
+        lines = [
+            "🔬 *YFINANCE PROBE*",
+            "",
+            f"*Status:* {status}",
+            f"*Primary symbol:* `{info.get('primary_symbol')}`",
+            f"*Active symbol:* `{info.get('active_symbol')}`",
+            f"*Chain:* `{info.get('chain')}`",
+            f"*Chain index:* {info.get('chain_index')}",
+            f"*Shape:* `{info.get('shape')}`",
+            f"*Failure count:* {info.get('failure_count')}",
+            f"*Fallback count:* {info.get('fallback_count')}",
+        ]
+        if info.get("error"):
+            lines.append(f"*Error:* `{info['error']}`")
+        lines.append("")
+        lines.append("_If EMPTY persists, Yahoo may be blocking this dyno's IP._")
+        lines.append("_Send `/rebuild_yf` to force a fresh Ticker, or change symbol._")
+        text = "\n".join(lines)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown")
+
+    async def rebuild_yf(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Force-rebuild the yfinance.Ticker and rotate symbol chain."""
+        self.engine.feed._rebuild_ticker()
+        self.engine.feed._fallback_count = 0
+        # Also try the next symbol in the chain if we have alternates
+        if len(self.engine.feed._symbol_chain) > 1:
+            self.engine.feed._advance_symbol_chain()
+        active = self.engine.feed.active_symbol()
+        text = (
+            f"♻️ *yfinance Ticker rebuilt*\n\n"
+            f"🔎 *Active symbol:* `{active}`\n"
+            f"_Feed will use this symbol on next iteration._"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown")
 
     async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         global SYMBOL
@@ -2861,6 +3168,7 @@ class AEI_Bot:
         response = (
             "📊 *TICKER INFORMATION*\n\n"
             f"📈 *Symbol:* {SYMBOL}\n"
+            f"🔎 *Active YF Ticker:* `{self.engine.feed.active_symbol()}`\n"
             f"📛 *Name:* {info.get('name', 'Unknown')}\n"
             f"🏭 *Sector:* {info.get('sector', 'Unknown')}\n"
             f"💵 *Currency:* {info.get('currency', 'USD')}\n"
@@ -2918,6 +3226,8 @@ class AEI_Bot:
             f"*Local URL:* `{local_url}`\n"
             f"*Public URL:* `{public_url}`\n\n"
             f"*State endpoint:* `{public_url.rstrip('/')}/state`\n"
+            f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
+            f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
             f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`\n\n"
             f"*Chart tools in Mini App:*\n"
             f"  ▲ Top → Blue premium FVG\n"
@@ -2947,6 +3257,10 @@ class AEI_Bot:
             await self.info(update, context)
         elif action == "reset":
             await self.reset(update, context)
+        elif action == "probe":
+            await self.probe(update, context)
+        elif action == "rebuild_yf":
+            await self.rebuild_yf(update, context)
         elif action == "webapp_pending":
             await query.edit_message_text(
                 "⏳ *Mini App tunnel is starting…*\n\n"
@@ -2990,6 +3304,8 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("stop_feed", self.stop_feed))
         self.application.add_handler(CommandHandler("symbol", self.symbol))
         self.application.add_handler(CommandHandler("info", self.info))
+        self.application.add_handler(CommandHandler("probe", self.probe))
+        self.application.add_handler(CommandHandler("rebuild_yf", self.rebuild_yf))
         self.application.add_handler(CommandHandler("webapp", self.webapp))
         self.application.add_handler(CommandHandler("webgui", self.webgui))
         self.application.add_handler(CommandHandler("mini", self.webapp))
@@ -3003,6 +3319,8 @@ class AEI_Bot:
         logger.info(f"🔄 Non-Hermitian Lindblad Dynamics active.")
         logger.info(f"📡 Data Source: Yahoo Finance (Free, No KYC)")
         logger.info(f"⚡ Telegram Mini App enabled.")
+        logger.info(f"🩺 yfinance self-heal active (rebuild after {YF_MAX_FAILURES_BEFORE_REBUILD} fails, "
+                    f"symbol-fallback after {YF_SYMBOL_FALLBACK_THRESHOLD})")
         logger.info(f"🌐 CORS origin: {CORS_ORIGIN}")
         logger.info(f"💎 Ready. Use /start to begin.")
 
@@ -3019,27 +3337,40 @@ _bridge_attach_to_bot(AEI_Bot)
 
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.13 (MINI APP)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.14 (MINI APP + SELF-HEAL)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
   • Telegram bot      : app.py (python-telegram-bot)
-  • Data feed         : Yahoo Finance (free, no KYC)
+  • Data feed         : Yahoo Finance (free, no KYC) — SELF-HEALING
   • HTTPS bridge      : http://0.0.0.0:8765  (auto-attached)
   • Public tunnel     : cloudflared | ngrok | serveo (auto-discovered)
   • Web GUI           : index.html → Telegram Web App (Mini App)
   • Menu button       : MenuButtonWebApp (one tap to open Mini App)
 
+v4.14 Self-Healing (yfinance silent-failure fix):
+  • Rebuilds yfinance.Ticker after N consecutive failures
+    (defeats stale crumb / expired session tokens)
+  • Rotates through symbol fallback chain when primary returns empty
+    (defeats Yahoo renames: BTC-USD ↔ BTCUSD=X)
+  • /health reports last_price_update freshness + stale flag
+  • /probe exposes live yfinance diagnostic state
+  • /reset (bridge) and /rebuild_yf (bot) force manual recovery
+  • start_feed wraps initialization in try/except with explicit failure reply
+  • price_feed_loop logs every iteration with tick + active symbol
+
 Bridge endpoints (consumed by index.html):
   GET    /             → serves index.html (Telegram Web App GUI)
   GET    /state        → engine snapshot (exact Decimal strings)
   GET    /config       → bridge metadata (public_url, tls, symbol)
+  GET    /health       → liveness + last_price_update freshness
+  GET    /probe        → yfinance self-heal diagnostics
   POST   /handshake    → verifies Telegram initData (HMAC-SHA256)
                         binds webapp_user_id → state.chat_id
   POST   /fvg          → commit Top()/Bott() FVG (Arc-Length Gate)
                         requires valid X-Telegram-Init-Data header
+  POST   /reset        → manual yfinance Ticker rebuild
   DELETE /fvg/{idx}    → remove FVG (mirrors æea.mq4 Deleter())
   GET    /fvg          → list all FVGs
-  GET    /health       → liveness probe
 
 Telegram Web App integration:
   • Bot commands: /webapp, /mini, /webgui
@@ -3063,6 +3394,10 @@ Required environment:
   BRIDGE_TUNNEL            — cloudflared | ngrok | serveo
   CORS_ORIGIN              — "*" (default) or restricted origin
 
+Optional (self-heal tuning):
+  YF_MAX_FAILURES          — rebuild Ticker after N fails (default 3)
+  YF_FALLBACK_THRESHOLD    — rotate symbol chain after N empties (default 5)
+
 Chart overlay parity (index.html ↔ æea.mq4):
   ▲ Top    (blue)     ↔ Top()  → Premium[] push
   ▼ Bottom (red)      ↔ Bott() → Discount[] push
@@ -3084,6 +3419,12 @@ Quick start:
   3. python3 app.py                    # starts bot + bridge + tunnel
   4. In Telegram: /start → tap "⚡ Open ÆEA Mini App"
   5. Draw FVGs with ▲ / ▼ tools; ✖ to delete
+
+Diagnostics when price stays at 0.0:
+  1. Send /probe    → shows live yfinance state
+  2. Send /rebuild_yf → forces fresh Ticker + symbol rotation
+  3. curl .../health → checks last_price_update freshness
+  4. curl .../probe  → same diagnostics via HTTP
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
@@ -3093,11 +3434,11 @@ def _print_manifest():
     except Exception:
         pass
 
-_AEL_Bot_run_orig = AEI_Bot.run
+_AEI_Bot_run_orig = AEI_Bot.run
 
 def _AEI_Bot_run_with_manifest(self):
     _print_manifest()
-    return _AEL_Bot_run_orig(self)
+    return _AEI_Bot_run_orig(self)
 
 AEI_Bot.run = _AEI_Bot_run_with_manifest
 
