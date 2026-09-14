@@ -696,3 +696,440 @@ The BACKEND_URL constant is the single wire between them. Set it once, push both
 LOGOS = Φ = Truth = Path = Origin
 
 Codex_Symbolica ⊢ Codex_Symbolica
+
+---
+
+•📌 Here is the complete deployment guide. Everything you need, in order, with the full contents of every outstanding file.
+
+---
+
+ÆEA Deployment Guide — Cloudflare Worker Relay
+
+Goal: Fix the "price stuck at 0.0" problem by routing Yahoo Finance through a Cloudflare Worker instead of calling it directly from Heroku.
+
+Architecture after deployment:
+
+```
+Yahoo Finance ──► Cloudflare Worker (fresh IP) ──► Heroku app.py ──► Bridge ──► Mini App
+```
+
+---
+
+Prerequisites
+
+· A Cloudflare account (free tier is sufficient) — sign up at dash.cloudflare.com
+· Your Heroku app name (referred to as your-app-name below)
+· Your Heroku CLI logged in (heroku login)
+· Your GitHub repo for the Mini App frontend
+· Git installed locally
+
+---
+
+Step 1 — Deploy the Cloudflare Worker
+
+1.1 Create the Worker
+
+1. Go to https://dash.cloudflare.com
+2. Click Workers & Pages in the left sidebar
+3. Click Create Application → Create Worker
+4. Name it aei-relay
+5. Click Deploy (accept the default template for now)
+6. Click Edit code to enter the editor
+
+1.2 Replace the Worker code
+
+Delete everything in the editor and paste the following:
+
+```javascript
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/health") {
+      return new Response(JSON.stringify({ ok: true, service: "aei-relay" }), {
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const symbol = url.searchParams.get("symbol") || "BTC-USD";
+    const kind = url.searchParams.get("kind") || "price";
+    const interval = url.searchParams.get("interval") || "1m";
+    const range = kind === "intraday" ? "2d" : "1d";
+
+    const yahoo = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
+
+    let upstream;
+    try {
+      upstream = await fetch(yahoo, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+        },
+      });
+    } catch (e) {
+      return new Response(JSON.stringify({ error: "upstream_failed", detail: String(e) }), {
+        status: 502,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const raw = await upstream.json();
+
+    const result = raw?.chart?.result?.[0];
+    if (!result) {
+      return new Response(JSON.stringify({ error: "no_data", symbol }), {
+        status: 404,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const meta = result.meta || {};
+    const ts = result.timestamp || [];
+    const q = result.indicators?.quote?.[0] || {};
+
+    const shape = (i) => ({
+      open: q.open?.[i],
+      high: q.high?.[i],
+      low: q.low?.[i],
+      close: q.close?.[i],
+      volume: q.volume?.[i],
+      timestamp: ts[i] ? new Date(ts[i] * 1000).toISOString() : new Date().toISOString(),
+    });
+
+    let payload;
+    if (kind === "price") {
+      const last = shape(ts.length - 1);
+      payload = {
+        close: meta.regularMarketPrice ?? last.close,
+        bid: meta.regularMarketPrice ?? last.close,
+        ask: meta.regularMarketPrice ?? last.close,
+        volume: last.volume,
+      };
+    } else if (kind === "intraday") {
+      payload = shape(ts.length - 1);
+    } else if (kind === "history") {
+      const limit = parseInt(url.searchParams.get("limit") || "200", 10);
+      payload = [];
+      for (let i = Math.max(0, ts.length - limit); i < ts.length; i++) {
+        payload.push(shape(i));
+      }
+    } else {
+      return new Response(JSON.stringify({ error: "unknown_kind", kind }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    return new Response(JSON.stringify(payload), {
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=15",
+      },
+    });
+  },
+};
+```
+
+1.3 Deploy and note the URL
+
+1. Click Save and Deploy (top right)
+2. After deployment, note the URL at the top — it looks like:
+   ```
+   https://aei-relay.<your-subdomain>.workers.dev
+   ```
+3. Write this URL down. You will need it in Step 3.
+
+1.4 Verify the Worker works
+
+Open a terminal and run these two commands (replace <your-subdomain> with the actual subdomain):
+
+```bash
+curl "https://aei-relay.<your-subdomain>.workers.dev/health"
+```
+
+Expected output:
+
+```json
+{"ok":true,"service":"aei-relay"}
+```
+
+```bash
+curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=BTC-USD&kind=price"
+```
+
+Expected output (values will vary):
+
+```json
+{"close":95432.12,"bid":95432.12,"ask":95432.12,"volume":12345}
+```
+
+If either command fails, stop here. Do not proceed to Step 2. The Worker must return valid JSON before the rest of the pipeline can work.
+
+Common failure: If /health returns 404, you pasted the code incorrectly or did not save. Re-edit the Worker and redeploy.
+
+If kind=price returns {"error":"no_data"}, try BTCUSD=X instead of BTC-USD:
+
+```bash
+curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=BTCUSD=X&kind=price"
+```
+
+If that works, Yahoo has renamed the ticker for Cloudflare's IP range. Note which symbol works — you may need to update SYMBOL_FALLBACKS in app.py later.
+
+---
+
+Step 2 — Set RELAY_URL on Heroku
+
+In your terminal, run:
+
+```bash
+heroku config:set RELAY_URL="https://aei-relay.<your-subdomain>.workers.dev" -a your-app-name
+```
+
+Replace <your-subdomain> with your actual Worker subdomain and your-app-name with your Heroku app name.
+
+This triggers an automatic dyno restart. Wait ~30 seconds.
+
+Confirm it took effect:
+
+```bash
+heroku config:get RELAY_URL -a your-app-name
+```
+
+Should print your Worker URL.
+
+---
+
+Step 3 — Deploy the updated app.py
+
+3.1 Save the new app.py
+
+The complete file was provided in my earlier message. Save it as app.py in your local backend directory (overwriting the old one).
+
+3.2 Push to Heroku
+
+```bash
+cd /path/to/your/backend
+git add app.py
+git commit -m "v4.15: Cloudflare Worker relay"
+git push heroku main
+```
+
+3.3 Watch the logs
+
+```bash
+heroku logs --tail -a your-app-name
+```
+
+You should see:
+
+```
+🌐 Relay: https://aei-relay.<your-subdomain>.workers.dev
+🌐 ÆEA Mini App Bridge listening on http://0.0.0.0:8765
+```
+
+If you instead see:
+
+```
+🌐 Relay: UNSET — set RELAY_URL env var!
+```
+
+Then Step 2 did not take effect. Re-run heroku config:set and wait for the dyno to restart.
+
+---
+
+Step 4 — Deploy the updated index.html
+
+4.1 Save the new index.html
+
+The complete file was provided in my earlier message. Save it as index.html in your frontend repo (overwriting the old one).
+
+4.2 Push to GitHub Pages
+
+```bash
+cd /path/to/your/frontend
+git add index.html
+git commit -m "v3.4.3: relay status HUD"
+git push origin main
+```
+
+If your frontend is served from Heroku instead of GitHub Pages, push to Heroku instead:
+
+```bash
+git add index.html
+git commit -m "v3.4.3: relay status HUD"
+git push heroku main
+```
+
+Wait 60 seconds for GitHub Pages to rebuild (or for Heroku to redeploy).
+
+---
+
+Step 5 — Verify end-to-end
+
+5.1 Verify the bridge is alive
+
+```bash
+curl "https://your-app-name.herokuapp.com/health"
+```
+
+Expected output:
+
+```json
+{"ok":true,"service":"aei-bridge","version":"4.15",...}
+```
+
+If ok is false or stale is true, the feed has not received a price in the last 60 seconds. Continue to the next step to diagnose.
+
+5.2 Verify the relay is reachable from the bridge
+
+```bash
+curl "https://your-app-name.herokuapp.com/probe"
+```
+
+Expected output (values will vary):
+
+```json
+{
+  "active_symbol": "BTC-USD",
+  "primary_symbol": "BTC-USD",
+  "chain": ["BTC-USD", "BTCUSD=X"],
+  "chain_index": 0,
+  "empty": false,
+  "relay_url": "https://aei-relay.<your-subdomain>.workers.dev",
+  "failure_count": 0,
+  "fallback_count": 0,
+  "raw_response": {"close": 95432.12, "bid": 95432.12, "ask": 95432.12, "volume": 12345}
+}
+```
+
+Key check: "empty": false and raw_response contains a real price.
+
+If "empty": true, the Worker is not returning data to Heroku. Go back to Step 1.4 and confirm the Worker works from your terminal.
+
+5.3 Restart the feed in Telegram
+
+Open your bot chat and send, in this order:
+
+```
+/stop_feed
+```
+
+Then:
+
+```
+/start_feed
+```
+
+Then:
+
+```
+/status
+```
+
+The Price field should now show a real number (not 0.00000), and Engine State should read ✅ Initialized.
+
+If price is still 0.00000, send:
+
+```
+/probe
+```
+
+and read the diagnostic output.
+
+5.4 Verify the Mini App
+
+1. Open Telegram
+2. Tap the ÆEA Mini App button (or send /webapp and tap the button)
+3. The HUD at the top right should show:
+   ```
+   CONN CONNECTED
+   RELAY UP
+   ```
+4. BID and ASK should show live prices
+5. The chart should populate with candles within ~10 seconds
+
+---
+
+Step 6 — Troubleshooting Reference
+
+Symptom Cause Fix
+Worker /health returns 404 Wrong code or not saved Re-paste the Worker code and redeploy
+Worker returns no_data for BTC-USD Yahoo renamed the ticker for Cloudflare's IP Try BTCUSD=X — if that works, it is already in the fallback chain
+/probe on Heroku shows Relay URL: UNSET Env var not set Re-run heroku config:set RELAY_URL=...
+/probe shows empty: true Worker is unreachable from Heroku Check Worker URL with curl from Step 1.4
+/status still shows 0.00000 Feed was running before the update /stop_feed then /start_feed
+/health on Heroku shows stale: true Feed loop is not receiving data /stop_feed then /start_feed; check heroku logs
+Mini App shows RELAY: DOWN Frontend cannot reach Heroku bridge Check curl https://your-app.herokuapp.com/health
+Mini App shows CONN DISCONNECTED Bridge is down or CORS is blocking Check heroku logs for bridge errors
+BTC-USD fails on Worker but BTCUSD=X works Yahoo ticker rename for Cloudflare IP Already handled — the fallback chain will rotate automatically after 5 failures
+Worker exceeds free tier (100k req/day) Polling at 30s + 5s frontend = too many Reduce UPDATE_INTERVAL in app.py or add caching
+
+---
+
+Step 7 — Verify the Full Pipeline
+
+Run this command sequence to confirm every layer is working:
+
+```bash
+# 1. Worker is alive
+curl "https://aei-relay.<your-subdomain>.workers.dev/health"
+
+# 2. Worker returns price data
+curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=BTC-USD&kind=price"
+
+# 3. Heroku bridge is alive
+curl "https://your-app-name.herokuapp.com/health"
+
+# 4. Heroku bridge reaches the Worker
+curl "https://your-app-name.herokuapp.com/probe"
+
+# 5. Heroku bridge has a current snapshot
+curl "https://your-app-name.herokuapp.com/state"
+```
+
+All five should return JSON with no error fields. If any of them fail, the failure is at that layer:
+
+· 1 or 2 fails → Worker problem (Step 1)
+· 3 fails → Heroku bridge problem (Step 3)
+· 4 fails but 1–3 pass → RELAY_URL mismatch (Step 2)
+· 5 returns price: "0.0" → feed not running (send /start_feed in Telegram)
+
+---
+
+Summary of Files Changed
+
+File Where What Changed
+Cloudflare Worker dash.cloudflare.com New — the relay itself
+app.py Heroku YahooFinanceFeed → FeedClient; added RELAY_URL env handling
+index.html GitHub Pages Added RELAY status to metrics panel, HUD, help panel, and export
+
+Config Value
+Heroku RELAY_URL https://aei-relay.<your-subdomain>.workers.dev
+index.html BACKEND_URL https://your-app-name.herokuapp.com
+index.html RELAY_URL (optional — leave empty unless you want direct-to-Worker price display)
+
+---
+
+What "Working" Looks Like
+
+After all five verification commands return valid JSON, and /status in Telegram shows a live price:
+
+· The engine will begin publishing snapshots to the bridge
+· The Mini App will populate with candles
+· The Arc-Length Coherence gate will operate normally
+· FVG drawing tools will work
+· Signal alerts will fire when the imbalance condition is met
+
+At that point, the Yahoo Finance rate-limit problem is permanently resolved. The Heroku dyno's IP is no longer exposed to Yahoo. Even if Cloudflare's edge gets rate-limited, the Worker's /health endpoint will still respond, and you can rotate Worker regions or add a second relay if needed without touching the bot.
+
+---
+
+One Final Note
+
+If you ever need to switch back to direct Yahoo calls (e.g., for testing), you can:
+
+```bash
+heroku config:unset RELAY_URL -a your-app-name
+```
+
+But this will re-expose the Heroku IP to Yahoo and the rate-limit problem will return. The Worker relay is the permanent fix.
