@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.16 (MQL4 PARITY: ORGANIC FIRST-TICK INITIALIZATION)
+Version: 4.16 (MQL4 PARITY: ORGANIC FIRST-TICK INITIALIZATION + ROBUST RELAY ERROR HANDLING)
 """
 import asyncio
 import hashlib
@@ -23,6 +23,7 @@ import time
 import re as _re_bridge
 import urllib.parse
 import urllib.request
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qsl
 from dataclasses import dataclass, field
@@ -417,7 +418,7 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
     return (u.get("id"), u.get("username"), True)
 
 # ============================================================================
-# FEED CLIENT — CLOUDFLARE WORKER RELAY
+# FEED CLIENT — CLOUDFLARE WORKER RELAY (ROBUST ERROR HANDLING)
 # ============================================================================
 class FeedClient:
     def __init__(self, symbol: str = "BTC-USD"):
@@ -455,11 +456,18 @@ class FeedClient:
         qs = urllib.parse.urlencode(params)
         url = f"{RELAY_URL}/?{qs}"
         try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "AEI-Bridge/4.16"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 payload = json.loads(r.read().decode("utf-8"))
                 self._failure_count = 0
                 return payload
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8', errors='ignore')
+            logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()}: {error_body}")
+            self._failure_count += 1
+            self._fallback_count += 1
+            if self._fallback_count >= 5: self._advance_symbol_chain()
+            return None
         except Exception as e:
             logger.warning(f"Relay error ({kind}) for {self.active_symbol()}: {e}")
             self._failure_count += 1
@@ -631,7 +639,6 @@ class AEEA_Engine:
         if state.FG: return
         logger.info("🚀 First tick detected. Forcing engine initialization (MQL4 style)...")
         
-        # MQL4 Parity: Set D and E to current price if signature is false
         if not state.signature:
             state.D = state.price
             state.E = state.price
@@ -682,7 +689,8 @@ class AEEA_Engine:
     def update_price_from_feed(self) -> None:
         data = self.feed.get_intraday()
         if not data:
-            logger.warning(f"⚠️ No data from relay for {self.engine.feed.active_symbol()}")
+            # FIXED: Was incorrectly referencing self.engine.feed
+            logger.warning(f"⚠️ No data from relay for {self.feed.active_symbol()}")
             return
         bid = data["close"]
         ask = data["close"]
@@ -2617,6 +2625,7 @@ v4.16 MQL4 Parity Update:
 • D and E signal thresholds anchored to first tick price
 • Arrays seeded dynamically as bars arrive (exact MQL4 FG==false logic)
 • Historical data is optional pre-seeding, not a prerequisite
+• ROBUST RELAY HANDLING: Catches Yahoo 403s and logs exact JSON errors
 
 Quick start:
 1. Deploy the Cloudflare Worker (see worker.js).
