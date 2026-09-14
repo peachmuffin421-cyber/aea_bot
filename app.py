@@ -529,7 +529,7 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
     return (u.get("id"), u.get("username"), True)
 
 # ============================================================================
-# FEED CLIENT — CLOUDFLARE WORKER RELAY
+# FEED CLIENT — CLOUDFLARE WORKER RELAY (PATCHED FOR NUMERIC PRICE TYPES)
 # ============================================================================
 
 class FeedClient:
@@ -602,9 +602,14 @@ class FeedClient:
         if not d or "close" not in d or d.get("close") is None:
             return Decimal('0.0'), Decimal('0.0')
         try:
-            c = Decimal(str(d["close"]))
-            bid = Decimal(str(d.get("bid", d["close"])))
-            ask = Decimal(str(d.get("ask", d["close"])))
+            # PATCH: Convert to string before Decimal() to handle both numeric and string types from the Worker
+            close_str = str(d["close"])
+            bid_str = str(d.get("bid", d["close"]))
+            ask_str = str(d.get("ask", d["close"]))
+            
+            c = Decimal(close_str)
+            bid = Decimal(bid_str)
+            ask = Decimal(ask_str)
             return bid, ask
         except Exception:
             return Decimal('0.0'), Decimal('0.0')
@@ -618,6 +623,7 @@ class FeedClient:
             try:
                 if row.get("close") is None:
                     continue
+                # PATCH: Convert to string before Decimal() to handle both numeric and string types from the Worker
                 out.append({
                     "open": Decimal(str(row["open"])),
                     "high": Decimal(str(row["high"])),
@@ -637,6 +643,7 @@ class FeedClient:
         if not d or d.get("close") is None:
             return {}
         try:
+            # PATCH: Convert to string before Decimal() to handle both numeric and string types from the Worker
             return {
                 "open": Decimal(str(d["open"])),
                 "high": Decimal(str(d["high"])),
