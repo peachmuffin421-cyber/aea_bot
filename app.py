@@ -2894,13 +2894,33 @@ class AEI_Bot:
         if self._running:
             await update.message.reply_text("⚠️ Price feed is already running.")
             return
-
+    
         self._running = True
         self.engine._running = True
-
+    
         try:
             historical = self.engine.feed.get_historical_klines(limit=200)
-            if historical:
+            # PATCH: Validate historical data before initializing
+            if not historical or len(historical) < 20: # Require at least 20 bars for indicators
+                logger.warning(f"⚠️ Insufficient historical data ({len(historical)} bars) from relay — delaying initialization.")
+                if update.callback_query:
+                    await update.callback_query.edit_message_text(
+                        f"⚠️ *Feed started, but historical data is missing.*\n\n"
+                        f"Historical bars received: {len(historical)}\n"
+                        f"Price will not update until the relay provides valid history.\n"
+                        f"Please check the Cloudflare Worker logs.",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"⚠️ *Feed started, but historical data is missing.*\n\n"
+                        f"Historical bars received: {len(historical)}\n"
+                        f"Price will not update until the relay provides valid history.\n"
+                        f"Please check the Cloudflare Worker logs.",
+                        parse_mode="Markdown"
+                    )
+                # We still continue, but the engine will likely fail to init properly until data arrives
+            else:
                 self.engine.ohlcv_history = historical
                 logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()}")
                 try:
@@ -2909,17 +2929,12 @@ class AEI_Bot:
                     logger.exception("initialize_engine crashed")
                 else:
                     logger.info("✅ Engine state prepared - will initialize on first tick")
-            else:
-                logger.warning(
-                    f"⚠️ No historical data from relay for {self.engine.feed.active_symbol()} — "
-                    f"will initialize on first tick"
-                )
-
+    
             try:
                 self.engine.update_price_from_feed()
             except Exception as e:
                 logger.exception("update_price_from_feed crashed during start_feed")
-
+    
             if self._price_task is None or self._price_task.done():
                 self._price_task = asyncio.create_task(self.price_feed_loop())
         except Exception as e:
@@ -2937,7 +2952,7 @@ class AEI_Bot:
                     parse_mode="Markdown"
                 )
             return
-
+    
         reply_text = (
             f"✅ *Price feed started*\n\n"
             f"📈 *Symbol:* {SYMBOL}\n"
