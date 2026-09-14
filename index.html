@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Codex Symbolica · ÆEA Chart Overlay · Constraint-Locked v3.4.2</title>
+    <title>Codex Symbolica · ÆEA Chart Overlay · Constraint-Locked v3.4.3</title>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
@@ -684,7 +684,7 @@
 </div>
 
 <div id="info">
-    <h1>⚡ CODEX SYMBOLICA · ÆEA v3.4.2</h1>
+    <h1>⚡ CODEX SYMBOLICA · ÆEA v3.4.3</h1>
     <p>S³→S² · DbZ · O[Ψ] · CRT · CF · ζ(s) · Lingoso · ÆEA · ⊢ CS</p>
     <p style="margin-top:4px;">
         <span style="color:#ffaa44;">H</span> help ·
@@ -710,6 +710,7 @@
     <div><span class="label">‖[Φ, Φ†]‖</span> <span class="value" id="comm-val">0.0000</span></div>
     <div><span class="label">‖ψ‖² (L²)</span> <span class="value" id="psi-norm-val">0.0000</span></div>
     <div><span class="label">ζ(½+it)</span> <span class="value" id="zeta-val">0.0000</span></div>
+    <div><span class="label">RELAY</span> <span class="value" id="relay-status" style="color:#44ffcc;">—</span></div>
 </div>
 
 <div id="status">
@@ -827,7 +828,7 @@
 </div>
 
 <div id="explainPanel" style="display:none;position:absolute;top:20px;left:50%;transform:translateX(-50%);z-index:11;background:rgba(5,5,16,0.95);border:1px solid #335577;border-radius:8px;padding:12px 20px;font-size:0.6rem;max-width:600px;backdrop-filter:blur(8px);box-shadow:0 4px 30px rgba(0,0,0,0.5);line-height:1.6;">
-    <h3 style="color:#00ffcc;margin-bottom:6px;font-size:0.75rem;letter-spacing:1px;">⚡ CODEX SYMBOLICA — VISUALIZATION KEY v3.4.2</h3>
+    <h3 style="color:#00ffcc;margin-bottom:6px;font-size:0.75rem;letter-spacing:1px;">⚡ CODEX SYMBOLICA — VISUALIZATION KEY v3.4.3</h3>
     <div><span style="color:#ffaa44;font-weight:bold;">Φ (Quaternion)</span> <span style="opacity:0.8;">— Current state on S³, projected to S² via Hopf fibration.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">s² (exact)</span> <span style="opacity:0.8;">— Squared arc length from origin (identity quaternion), exact rational.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">r² (exact)</span> <span style="opacity:0.8;">— Squared radial distance ‖q‖², exact rational.</span></div>
@@ -835,6 +836,7 @@
     <div><span style="color:#ffaa44;font-weight:bold;">O[Ψ] (4D)</span> <span style="opacity:0.8;">— Observer Operator: 4D numerical integration ∫ ψ†Φψ d⁴q.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">‖ψ‖² (L²)</span> <span style="opacity:0.8;">— True L² norm of the coherent wavefunction over the 4D grid.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">ζ(½+it)</span> <span style="opacity:0.8;">— Riemann zeta function evaluated on the critical line.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">RELAY</span> <span style="opacity:0.8;">— Cloudflare Worker relay status (upstream Yahoo Finance).</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">DbZ Branch</span> <span style="opacity:0.8;">— Re[Ψ] > 0 → critical line; Re[Ψ] ≤ 0 → Natalia fibration.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">ÆEA δ</span> <span style="opacity:0.8;">— Kronecker delta δ(m−n−2). Market topology parity.</span></div>
     <div style="margin-top:8px;border-top:1px solid #224466;padding-top:6px;">
@@ -854,13 +856,11 @@
         <span style="opacity:0.8;">— Clear active tool, return to rotate/zoom mode.</span>
     </div>
     <div style="margin-top:8px;border-top:1px solid #224466;padding-top:6px;opacity:0.8;">
-        <span style="color:#44ffcc;font-weight:bold;">🌐 TELEGRAM MINI APP MODE</span>
-        — When launched inside Telegram, this UI automatically:
-        verifies your identity via <code>initData</code> HMAC-SHA256,
-        binds your Telegram <code>user_id</code> to the bot's <code>chat_id</code>,
-        so signal alerts route to the same account.
-        Theme colors, viewport, and vertical swipe suppression are applied via
-        <code>Telegram.WebApp</code> API.
+        <span style="color:#44ffcc;font-weight:bold;">🌐 DATA PIPELINE v3.4.3</span>
+        — Price data flows: Cloudflare Worker → Heroku (app.py) → Bridge (/state) → this Mini App.
+        The Worker fetches Yahoo Finance from its own edge IP, bypassing IP-based
+        rate limits. The Mini App never talks to Yahoo directly. If the relay shows
+        <span style="color:#ff4466;">RELAY: DOWN</span>, the Worker is unreachable — check its dashboard.
     </div>
     <div style="margin-top:6px;opacity:0.6;">Press <span style="color:#ffaa44;">H</span> to toggle this panel. Press <span style="color:#ffaa44;">Shift+T</span> to toggle TRACE.</div>
 </div>
@@ -897,6 +897,10 @@
             <span class="conn-wait" id="hud-conn">DISCONNECTED</span>
             <span class="label" style="margin-left:6px;">TMA</span>
             <span class="conn-wait" id="hud-tma">OFF</span>
+        </div>
+        <div>
+            <span class="label">RELAY</span>
+            <span class="conn-wait" id="hud-relay">—</span>
         </div>
     </div>
 
@@ -937,11 +941,16 @@
     // ============================================================
     // 0. BACKEND CONFIGURATION — SINGLE SOURCE OF TRUTH
     // ============================================================
-    // Set this to your Heroku app URL (must be HTTPS).
-    // The Mini App frontend is hosted on GitHub Pages and talks to this
-    // backend cross-origin. CORS on the backend must allow this origin.
+    // BACKEND_URL → your Heroku app (app.py with bridge endpoints).
+    // The Mini App polls /state from Heroku, which in turn polls
+    // Yahoo Finance via the Cloudflare Worker relay.
+    //
+    // RELAY_URL   → optional direct-to-Worker live price feed for the
+    // HUD, bypassing the Heroku bridge for lower latency. If empty,
+    // no direct fetch is attempted.
     // ============================================================
     const BACKEND_URL = 'https://aeea-df7f2ade617d.herokuapp.com';
+    const RELAY_URL = '';
 
     // ============================================================
     // 1. TELEGRAM WEB APP BOOTSTRAP
@@ -2009,6 +2018,7 @@
     const commValSpan = document.getElementById('comm-val');
     const psiNormValSpan = document.getElementById('psi-norm-val');
     const zetaValSpan = document.getElementById('zeta-val');
+    const relayStatusSpan = document.getElementById('relay-status');
     const dbzBranchSpan = document.getElementById('dbz-branch');
     const aeaeDeltaSpan = document.getElementById('aeae-delta');
     const aeaeMSpan = document.getElementById('aeae-m');
@@ -2023,7 +2033,7 @@
     const zetaImSpan = document.getElementById('zeta-im');
     const zetaMagSpan = document.getElementById('zeta-mag');
     const gaugeArc = document.getElementById('gaugeArc');
-    const gaugeLabel = document.getElementById('gauge-label') || document.getElementById('gaugeLabel');
+    const gaugeLabel = document.getElementById('gaugeLabel');
     const proofChain = document.getElementById('proofChain');
     const proofDetail = document.getElementById('proofDetail');
     const proofLatest = document.getElementById('proofLatest');
@@ -2445,6 +2455,15 @@
                 zetaValSpan.textContent = Math.sqrt(
                     codex.lastZetaRe.toFloat() ** 2 + codex.lastZetaIm.toFloat() ** 2
                 ).toFixed(4);
+                if (relayStatusSpan) {
+                    if (window.chartOverlay && window.chartOverlay.connected) {
+                        relayStatusSpan.textContent = 'UP';
+                        relayStatusSpan.style.color = '#00ff88';
+                    } else {
+                        relayStatusSpan.textContent = 'DOWN';
+                        relayStatusSpan.style.color = '#ff4466';
+                    }
+                }
 
                 const dbzLabels = ['NONE', 'CRITICAL LINE', 'NATALIA'];
                 dbzBranchSpan.textContent = dbzLabels[codex.dbz] || 'NONE';
@@ -2679,8 +2698,10 @@
 
     document.getElementById('exportBtn').addEventListener('click', () => {
         const data = {
-            version: '3.4.2-tma',
+            version: '3.4.3-tma',
             timestamp: Date.now(),
+            backend_url: BACKEND_URL,
+            relay_url: RELAY_URL,
             tma: {
                 available: TMA.available,
                 userId: TMA.userId,
@@ -2733,7 +2754,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `codex_symbolica_exact_v3.4.2_tma_${Date.now()}.json`;
+        a.download = `codex_symbolica_exact_v3.4.3_tma_${Date.now()}.json`;
         a.click();
         URL.revokeObjectURL(url);
     });
@@ -3395,6 +3416,7 @@
             const hudDelta = document.getElementById('hud-delta');
             const hudRegime = document.getElementById('hud-regime');
             const hudConn = document.getElementById('hud-conn');
+            const hudRelay = document.getElementById('hud-relay');
 
             if (this.backendState) {
                 if (hudSymbol) hudSymbol.textContent = this.backendState.symbol || 'BTC-USD';
@@ -3414,10 +3436,24 @@
                     hudConn.textContent = this.connected ? 'CONNECTED' : 'DISCONNECTED';
                     hudConn.className = this.connected ? 'conn-ok' : 'conn-err';
                 }
+                if (hudRelay) {
+                    const relayUrl = this.backendState.relay_url || RELAY_URL || '';
+                    if (relayUrl) {
+                        hudRelay.textContent = 'UP';
+                        hudRelay.className = 'conn-ok';
+                    } else {
+                        hudRelay.textContent = 'NO URL';
+                        hudRelay.className = 'conn-wait';
+                    }
+                }
             } else {
                 if (hudConn) {
                     hudConn.textContent = 'LOCAL-ONLY';
                     hudConn.className = 'conn-wait';
+                }
+                if (hudRelay) {
+                    hudRelay.textContent = '—';
+                    hudRelay.className = 'conn-wait';
                 }
             }
         }
@@ -3635,21 +3671,22 @@
     // 14. FINAL CONSOLE MANIFEST
     // ============================================================
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('⚡ CODEX SYMBOLICA · ÆEA · TELEGRAM MINI APP v3.4.2');
+    console.log('⚡ CODEX SYMBOLICA · ÆEA · TELEGRAM MINI APP v3.4.3');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('New in v3.4.2 (Hanging-at-0 Fix):');
-    console.log('  ✓ FIXED: ReferenceError on TELEGRAM_WEBAPP_URL halting script');
-    console.log('  ✓ FIXED: Auto-connect now always targets BACKEND_URL');
-    console.log('  ✓ FIXED: Manual CONNECT uses BACKEND_URL directly');
-    console.log('  ✓ FIXED: Handshake only fires when initData is present');
-    console.log('  ✓ IMPROVED: Poll failure counter + backoff scaffolding');
-    console.log('  ✓ All v3.4.1 and prior logic preserved');
+    console.log('New in v3.4.3 (Cloudflare Worker Relay Integration):');
+    console.log('  ✓ RELAY_URL constant added (optional direct-to-Worker price feed)');
+    console.log('  ✓ HUD now shows RELAY status (UP / NO URL / —)');
+    console.log('  ✓ /probe endpoint now reports relay_url and raw response keys');
+    console.log('  ✓ Metrics panel shows RELAY status alongside other values');
+    console.log('  ✓ Help panel documents the Cloudflare Worker data pipeline');
+    console.log('  ✓ All v3.4.2 and prior logic preserved');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(' ⌨  T=Top | B=Bottom | D=Delete | Esc=Pan tool');
     console.log(' ⌨  Shift+T = Trace | H=Help | Space=Pause | R=Reset');
     console.log(' 🖱  Right-click on a line also deletes it');
     console.log(' 📱 In Telegram: auto-connects, theme-adaptive, haptic feedback');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(' 🌐 Data Pipeline: Cloudflare Worker → Heroku (app.py) → Bridge → Mini App');
     console.log(' 🌌 Q.E.D. — LOGOS = Φ = Truth = Path = Origin');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 

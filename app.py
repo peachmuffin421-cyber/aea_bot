@@ -4,10 +4,10 @@
 """
 ÆEA TELEGRAM BOT - HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
 Complete Quantum-Financial Topology Implementation
-Data Feed: Yahoo Finance (Free, No KYC)
+Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.14 (YFINANCE SELF-HEALING, SYMBOL FALLBACK, START_FEED HARDENING, ARC-LENGTH COHERENCE ENFORCED, CORS FIXED)
+Version: 4.15 (CLOUDFLARE WORKER RELAY, ARC-LENGTH COHERENCE ENFORCED, CORS CONFIGURED)
 """
 
 import asyncio
@@ -24,6 +24,7 @@ import threading
 import time
 import re as _re_bridge
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qsl
 from dataclasses import dataclass, field
@@ -54,11 +55,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
-# ============================================================================
-# YAHOO FINANCE IMPORTS (FREE, NO KYC)
-# ============================================================================
-import yfinance as yf
 
 # ============================================================================
 # LOGGING SETUP
@@ -104,9 +100,10 @@ BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
 BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
 TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
+# --- CLOUDFLARE WORKER RELAY ---
+RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
+
 # --- CORS CONFIGURATION ---
-# Default "*" allows any origin (required for cross-origin GitHub Pages ↔ Heroku).
-# Set CORS_ORIGIN env var to restrict to your GitHub Pages domain for production.
 CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
 
 # --- SYMBOL MAPPING (Yahoo Finance Format) ---
@@ -143,12 +140,7 @@ SYMBOL_MAP = {
     "KE=F": "KE=F"
 }
 
-# --- SYMBOL FALLBACK CHAIN (for crumb/delist/ticker-name drift) ---
-# Maps the primary Yahoo symbol to a list of equivalent alternates
-# tried in order when the primary returns empty for N consecutive calls.
-# Yahoo occasionally renames tickers (e.g. BTC-USD ↔ BTCUSD=X) or
-# temporarily removes them from the crumb-auth index; this chain
-# self-heals without operator intervention.
+# --- SYMBOL FALLBACK CHAIN ---
 SYMBOL_FALLBACKS: Dict[str, List[str]] = {
     "BTC-USD":  ["BTC-USD", "BTCUSD=X"],
     "ETH-USD":  ["ETH-USD", "ETHUSD=X"],
@@ -181,10 +173,6 @@ SYMBOL_FALLBACKS: Dict[str, List[str]] = {
     "ZW=F":     ["ZW=F"],
     "KE=F":     ["KE=F"],
 }
-
-# --- YFINANCE SELF-HEALING CONFIG ---
-YF_MAX_FAILURES_BEFORE_REBUILD: int = int(os.getenv("YF_MAX_FAILURES", "3"))
-YF_SYMBOL_FALLBACK_THRESHOLD: int = int(os.getenv("YF_FALLBACK_THRESHOLD", "5"))
 
 SYMBOL: str = "BTC-USD"
 INTERVAL: str = "1m"
@@ -345,7 +333,6 @@ class AEI_CoreState:
     iStdDev: Decimal = Decimal('0.0')
     iATR: Decimal = Decimal('0.0')
 
-    # --- Ichimoku intra-bar scalars used by _M / _N ---
     iIHKk: Decimal = Decimal('50.0')
     iIHKt: Decimal = Decimal('50.0')
 
@@ -371,7 +358,6 @@ class AEI_CoreState:
     chat_id: Optional[int] = None
     _initialized: bool = False
 
-    # --- Telegram Web App session identifiers ---
     webapp_user_id: Optional[int] = None
     webapp_username: Optional[str] = None
     webapp_verified: bool = False
@@ -476,16 +462,6 @@ def to_decimal(value):
 # ============================================================================
 
 def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> Optional[Dict[str, Any]]:
-    """
-    Verify Telegram Web App `initData` using the documented HMAC-SHA256 scheme.
-
-    Returns the parsed user dict on success, None on failure.
-
-    Per Telegram docs:
-      secret_key = HMAC_SHA256(bot_token, "WebAppData")
-      data_check_string = sorted "key=value" lines joined by "\\n" excluding `hash`
-      expected_hash = HMAC_SHA256(data_check_string, secret_key).hexdigest()
-    """
     if not init_data or not bot_token:
         return None
     try:
@@ -537,12 +513,6 @@ def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: i
     }
 
 def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Optional[str], bool]:
-    """
-    Extract (user_id, username, verified) from either:
-      - `X-Telegram-Init-Data` header (raw initData string), or
-      - `Authorization: tma <initData>` header (Telegram webview form)
-    Verified against TELEGRAM_BOT_TOKEN_ENV using verify_telegram_init_data.
-    """
     raw_init = handler.headers.get("X-Telegram-Init-Data", "").strip()
     if not raw_init:
         auth_hdr = handler.headers.get("Authorization", "").strip()
@@ -559,203 +529,141 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
     return (u.get("id"), u.get("username"), True)
 
 # ============================================================================
-# YAHOO FINANCE FEED (SELF-HEALING)
+# FEED CLIENT — CLOUDFLARE WORKER RELAY
 # ============================================================================
 
-class YahooFinanceFeed:
+class FeedClient:
     """
-    Free, no-KYC price feed for ÆEA bot with Decimal precision.
+    HTTP client for the Cloudflare Worker relay.
 
-    Self-healing design (v4.14):
-      • Rebuilds yfinance.Ticker when N consecutive failures occur
-        (handles stale crumb / session tokens silently expiring).
-      • Falls back through an alternate-ticker chain when the primary
-        symbol returns empty for N consecutive calls
-        (handles Yahoo renaming e.g. BTC-USD ↔ BTCUSD=X).
-      • Never raises — always returns Decimal('0.0') sentinel on failure
-        so the caller's loop can continue and the self-heal can fire.
+    The Worker fetches Yahoo Finance from its own edge IP, adds CORS headers,
+    and returns JSON. This class just speaks to the Worker — no Yahoo logic,
+    no rate-limit handling, no IP-block management.
+
+    Expected Worker contract:
+      GET /?symbol=<SYM>&kind=price              -> {close, bid, ask, volume}
+      GET /?symbol=<SYM>&kind=intraday           -> {open, high, low, close, volume, timestamp}
+      GET /?symbol=<SYM>&kind=history&limit=200  -> [{open, high, low, close, volume, timestamp}, ...]
     """
 
     def __init__(self, symbol: str = "BTC-USD"):
         self.symbol = symbol
-        self.ticker = yf.Ticker(symbol)
-
-        # --- Self-healing state ---
-        self._failure_count: int = 0
-        self._max_failures: int = YF_MAX_FAILURES_BEFORE_REBUILD
-        self._fallback_count: int = 0
-        self._fallback_threshold: int = YF_SYMBOL_FALLBACK_THRESHOLD
-
-        # --- Symbol fallback chain ---
         chain = SYMBOL_FALLBACKS.get(symbol)
         if chain is None:
-            # Generic heuristic: if symbol ends in -USD, also try =X form
             if symbol.endswith("-USD"):
                 base = symbol[:-4]
                 chain = [symbol, f"{base}USD=X"]
             else:
                 chain = [symbol]
-        self._symbol_chain: List[str] = list(chain)
-        self._symbol_chain_index: int = 0
-
+        self._chain: List[str] = list(chain)
+        self._chain_index: int = 0
         self._last_update: Optional[datetime] = None
-        self._cached_price: Decimal = Decimal('0.0')
-
-    # -------- Self-healing primitives --------
-
-    def _rebuild_ticker(self) -> None:
-        """Rebuild the yfinance.Ticker object (clears stale crumb/session)."""
-        logger.warning(
-            f"🔄 Self-heal: rebuilding yfinance.Ticker for {self.symbol} "
-            f"after {self._failure_count} consecutive failures"
-        )
-        try:
-            self.ticker = yf.Ticker(self.symbol)
-        except Exception as e:
-            logger.error(f"Ticker rebuild failed: {e}")
-        self._failure_count = 0
-
-    def _advance_symbol_chain(self) -> None:
-        """Rotate to the next candidate symbol in the fallback chain."""
-        if len(self._symbol_chain) <= 1:
-            return
-        self._symbol_chain_index = (self._symbol_chain_index + 1) % len(self._symbol_chain)
-        candidate = self._symbol_chain[self._symbol_chain_index]
-        logger.warning(
-            f"🔄 Self-heal: rotating symbol chain for {self.symbol} "
-            f"→ trying Yahoo symbol '{candidate}'"
-        )
-        try:
-            self.ticker = yf.Ticker(candidate)
-        except Exception as e:
-            logger.error(f"Symbol chain rotation failed: {e}")
-        self._fallback_count = 0
-        self._failure_count = 0
-
-    def _note_failure(self) -> None:
-        self._failure_count += 1
-        self._fallback_count += 1
-        if self._failure_count >= self._max_failures:
-            self._rebuild_ticker()
-        if self._fallback_count >= self._fallback_threshold:
-            self._advance_symbol_chain()
-
-    def _note_success(self) -> None:
-        self._failure_count = 0
-        self._fallback_count = 0
+        self._failure_count: int = 0
+        self._fallback_count: int = 0
 
     def active_symbol(self) -> str:
-        """Return the currently active Yahoo symbol (may differ from self.symbol)."""
-        if self._symbol_chain and 0 <= self._symbol_chain_index < len(self._symbol_chain):
-            return self._symbol_chain[self._symbol_chain_index]
-        return self.symbol
+        return self._chain[self._chain_index]
 
-    # -------- Public API --------
+    def _advance_symbol_chain(self) -> None:
+        if len(self._chain) <= 1:
+            return
+        self._chain_index = (self._chain_index + 1) % len(self._chain)
+        logger.warning(f"🔄 FeedClient: rotating symbol chain to '{self.active_symbol()}'")
+        self._fallback_count = 0
+        self._failure_count = 0
+
+    def _rebuild_ticker(self) -> None:
+        logger.info("🔄 FeedClient: rebuild requested (no-op; Worker handles upstream)")
+
+    def _get(self, kind: str, **params) -> Optional[Any]:
+        if not RELAY_URL:
+            logger.error("❌ RELAY_URL not set — cannot fetch price")
+            return None
+        params["symbol"] = self.active_symbol()
+        params["kind"] = kind
+        qs = urllib.parse.urlencode(params)
+        url = f"{RELAY_URL}/?{qs}"
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                payload = json.loads(r.read().decode("utf-8"))
+            self._failure_count = 0
+            return payload
+        except Exception as e:
+            logger.warning(f"Relay error ({kind}) for {self.active_symbol()}: {e}")
+            self._failure_count += 1
+            self._fallback_count += 1
+            if self._fallback_count >= 5:
+                self._advance_symbol_chain()
+            return None
 
     def get_current_price(self) -> Tuple[Decimal, Decimal]:
+        d = self._get("price")
+        if not d or "close" not in d or d.get("close") is None:
+            return Decimal('0.0'), Decimal('0.0')
         try:
-            data = self.ticker.history(period="1d", interval="1m")
-            if data.empty:
-                self._note_failure()
-                return Decimal('0.0'), Decimal('0.0')
-            latest = data.iloc[-1]
-            close = Decimal(str(latest["Close"]))
-            self._note_success()
-            return close, close
-        except Exception as e:
-            logger.error(f"❌ Yahoo Finance error: {e}")
-            self._note_failure()
+            c = Decimal(str(d["close"]))
+            bid = Decimal(str(d.get("bid", d["close"])))
+            ask = Decimal(str(d.get("ask", d["close"])))
+            return bid, ask
+        except Exception:
             return Decimal('0.0'), Decimal('0.0')
 
     def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, Any]]:
-        try:
-            period = f"{limit}min"
-            data = self.ticker.history(period=period, interval=interval)
-            if data.empty:
-                self._note_failure()
-                return []
-            ohlcv_data = []
-            for idx, row in data.iterrows():
-                ohlcv_data.append({
-                    "open": Decimal(str(row["Open"])),
-                    "high": Decimal(str(row["High"])),
-                    "low": Decimal(str(row["Low"])),
-                    "close": Decimal(str(row["Close"])),
-                    "volume": Decimal(str(row["Volume"])),
-                    "timestamp": idx.to_pydatetime()
-                })
-            self._note_success()
-            return ohlcv_data
-        except Exception as e:
-            logger.error(f"❌ Yahoo Finance historical error: {e}")
-            self._note_failure()
+        d = self._get("history", limit=limit, interval=interval)
+        if not d or not isinstance(d, list):
             return []
+        out = []
+        for row in d:
+            try:
+                if row.get("close") is None:
+                    continue
+                out.append({
+                    "open": Decimal(str(row["open"])),
+                    "high": Decimal(str(row["high"])),
+                    "low": Decimal(str(row["low"])),
+                    "close": Decimal(str(row["close"])),
+                    "volume": Decimal(str(row.get("volume") or 0)),
+                    "timestamp": datetime.fromisoformat(
+                        row["timestamp"].replace("Z", "+00:00")
+                    ).replace(tzinfo=None),
+                })
+            except Exception:
+                continue
+        return out
 
     def get_intraday(self, interval: str = "1m") -> Dict[str, Any]:
+        d = self._get("intraday", interval=interval)
+        if not d or d.get("close") is None:
+            return {}
         try:
-            data = self.ticker.history(period="2d", interval=interval)
-            if data.empty:
-                self._note_failure()
-                return {}
-            latest = data.iloc[-1]
-            self._note_success()
             return {
-                "open": Decimal(str(latest["Open"])),
-                "high": Decimal(str(latest["High"])),
-                "low": Decimal(str(latest["Low"])),
-                "close": Decimal(str(latest["Close"])),
-                "volume": Decimal(str(latest["Volume"])),
-                "timestamp": datetime.now()
+                "open": Decimal(str(d["open"])),
+                "high": Decimal(str(d["high"])),
+                "low": Decimal(str(d["low"])),
+                "close": Decimal(str(d["close"])),
+                "volume": Decimal(str(d.get("volume") or 0)),
+                "timestamp": datetime.now(),
             }
-        except Exception as e:
-            logger.error(f"❌ Yahoo Finance intraday error: {e}")
-            self._note_failure()
+        except Exception:
             return {}
 
     def get_info(self) -> Dict[str, Any]:
-        try:
-            info = self.ticker.info
-            self._note_success()
-            return {
-                "name": info.get("longName", self.symbol),
-                "sector": info.get("sector", "Unknown"),
-                "market_cap": info.get("marketCap", 0),
-                "currency": info.get("currency", "USD"),
-                "previous_close": info.get("previousClose", 0)
-            }
-        except Exception as e:
-            logger.error(f"❌ Yahoo Finance info error: {e}")
-            self._note_failure()
-            return {}
+        return {"name": self.active_symbol(), "currency": "USD"}
 
     def probe(self) -> Dict[str, Any]:
-        """
-        Operator-facing diagnostic. Returns a dict describing whether
-        the current Ticker + symbol combination yields data.
-        """
-        try:
-            data = self.ticker.history(period="1d", interval="1m")
-            return {
-                "active_symbol": self.active_symbol(),
-                "primary_symbol": self.symbol,
-                "chain": list(self._symbol_chain),
-                "chain_index": self._symbol_chain_index,
-                "empty": bool(data.empty),
-                "shape": list(data.shape),
-                "failure_count": self._failure_count,
-                "fallback_count": self._fallback_count,
-            }
-        except Exception as e:
-            return {
-                "active_symbol": self.active_symbol(),
-                "primary_symbol": self.symbol,
-                "chain": list(self._symbol_chain),
-                "chain_index": self._symbol_chain_index,
-                "empty": True,
-                "error": str(e),
-                "failure_count": self._failure_count,
-                "fallback_count": self._fallback_count,
-            }
+        d = self._get("price")
+        return {
+            "active_symbol": self.active_symbol(),
+            "primary_symbol": self.symbol,
+            "chain": list(self._chain),
+            "chain_index": self._chain_index,
+            "empty": (d is None or d.get("close") is None),
+            "relay_url": RELAY_URL,
+            "failure_count": self._failure_count,
+            "fallback_count": self._fallback_count,
+            "raw_response": d,
+        }
 
 # ============================================================================
 # CORE ÆEA ENGINE
@@ -768,7 +676,7 @@ class AEEA_Engine:
         self.state = AEI_CoreState()
         self.price_history: List[PriceData] = []
         self.ohlcv_history: List[Dict[str, Any]] = []
-        self.feed = YahooFinanceFeed(SYMBOL)
+        self.feed = FeedClient(SYMBOL)
         self._last_price_update: Optional[datetime] = None
         self._bar_open: bool = True
         self._bar_index: int = 0
@@ -933,7 +841,7 @@ class AEEA_Engine:
     def update_price_from_feed(self) -> None:
         data = self.feed.get_intraday()
         if not data:
-            logger.warning("⚠️ No data from Yahoo Finance feed")
+            logger.warning(f"⚠️ No data from relay for {self.feed.active_symbol()}")
             return
         bid = data["close"]
         ask = data["close"]
@@ -1889,10 +1797,6 @@ class AEEA_Engine:
 # ============================================================================
 
 class BridgeState:
-    """
-    Thread-safe shared state between the Telegram bot's engine
-    and the local HTTPS bridge (consumed by index.html as a Telegram Mini App).
-    """
     def __init__(self):
         self._lock = threading.Lock()
         self._snapshot: Dict[str, Any] = {
@@ -2026,14 +1930,6 @@ BRIDGE_ENGINE_REF: Dict[str, Any] = {"engine": None, "bot": None, "public_url": 
 # TUNNEL MANAGER (cloudflared / ngrok / serveo fallback)
 # ----------------------------------------------------------------------------
 class TunnelManager:
-    """
-    Spawn a public HTTPS tunnel pointing at the local bridge port.
-    Priority: explicit TELEGRAM_WEBAPP_URL env → cloudflared → ngrok → serveo(ssh) → None.
-
-    The discovered URL is stored in BRIDGE_ENGINE_REF["public_url"] and
-    propagated to BRIDGE_STATE snapshot ("endpoint") so the frontend can
-    use it for `Telegram.WebApp` deep-links and `openTelegramLink` calls.
-    """
     URL_RE_CLOUDFLARED = _re_bridge.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
     URL_RE_NGROK = _re_bridge.compile(r"https://[a-z0-9\-]+\.ngrok(?:-free)?\.app")
     URL_RE_SERVEO = _re_bridge.compile(r"https://[a-z0-9\-]+\.serveo\.net")
@@ -2188,16 +2084,12 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ----------------------------------------------------------------------------
 class BridgeHandler(BaseHTTPRequestHandler):
-    """HTTP/1.1 handler for the ÆEA Mini App bridge."""
-    server_version = "AEI-Bridge/4.14"
+    server_version = "AEI-Bridge/4.15"
 
     def log_message(self, fmt, *args):
         return
 
     def _set_cors(self):
-        # Allow configurable origin (default: any). This is required because the
-        # Mini App runs inside Telegram's WebView on a different origin than
-        # the Heroku backend (e.g., GitHub Pages or a cloudflared tunnel).
         origin = CORS_ORIGIN
         self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
@@ -2252,10 +2144,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "ok": not stale,
                 "service": "aei-bridge",
-                "version": "4.14",
+                "version": "4.15",
                 "last_price_update": last,
                 "age_seconds": age_seconds,
                 "stale": stale,
+                "relay_url": RELAY_URL or None,
             })
             return
         if path == "/config":
@@ -2267,6 +2160,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "symbol": SYMBOL,
                 "webapp_enabled": True,
                 "cors_origin": CORS_ORIGIN,
+                "relay_url": RELAY_URL or None,
             })
             return
         if path == "/state":
@@ -2367,7 +2261,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
         if path == "/reset":
-            # Manual feed reset: rebuild yfinance.Ticker, clear failure counters.
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
                 self._send_json(503, {"error": "engine_not_ready"})
@@ -2375,7 +2268,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             try:
                 engine.feed._rebuild_ticker()
                 engine.feed._fallback_count = 0
-                logger.info("🔄 Manual reset requested via /reset — Ticker rebuilt")
+                logger.info("🔄 Manual reset requested via /reset")
                 self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
             except Exception as e:
                 logger.error(f"/reset error: {e}")
@@ -2398,11 +2291,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "not_found", "path": path})
 
 class BridgeServer:
-    """
-    Runs a ThreadingHTTPServer in a daemon thread.
-    Supports optional TLS (BRIDGE_USE_TLS=1) with BRIDGE_TLS_CERT/KEY.
-    Spawns an optional public HTTPS tunnel via TunnelManager.
-    """
     def __init__(self, host=BRIDGE_HOST, port=BRIDGE_PORT):
         self.host = host
         self.port = int(port)
@@ -2455,10 +2343,10 @@ class BridgeServer:
         logger.info(f"   → GET  /             (serves index.html — Telegram Web App)")
         logger.info(f"   → GET  /state        (index.html polls every 2s)")
         logger.info(f"   → GET  /health       (liveness + last_price_update freshness)")
-        logger.info(f"   → GET  /probe        (yfinance self-heal diagnostics)")
+        logger.info(f"   → GET  /probe        (relay diagnostics)")
         logger.info(f"   → POST /handshake    (verifies initData, binds chat_id)")
         logger.info(f"   → POST /fvg          (FVG commit; Arc-Length Gate + initData HMAC)")
-        logger.info(f"   → POST /reset        (manual yfinance Ticker rebuild)")
+        logger.info(f"   → POST /reset        (manual relay reset)")
         logger.info(f"   → DEL  /fvg/{{idx}}    (FVG removal)")
         logger.info(f"   → GET  /config       (bridge metadata)")
 
@@ -2548,7 +2436,7 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     logger.info("🔗 Bridge attached to AEI_Bot.run()")
 
 # ============================================================================
-# TELEGRAM BOT HANDLERS (Web App extended)
+# TELEGRAM BOT HANDLERS
 # ============================================================================
 
 class AEI_Bot:
@@ -2573,7 +2461,7 @@ class AEI_Bot:
         while self._running:
             iteration += 1
             try:
-                logger.info(f"🔄 Feed iteration #{iteration}")
+                logger.info(f"🔄 Feed iteration #{iteration} (relay={RELAY_URL or 'unset'})")
                 self.engine.update_price_from_feed()
                 logger.info(
                     f"📊 price={self.engine.state.price} "
@@ -2606,8 +2494,8 @@ class AEI_Bot:
                 InlineKeyboardButton("🔄 Reset", callback_data="reset"),
             ],
             [
-                InlineKeyboardButton("🔬 Probe YF", callback_data="probe"),
-                InlineKeyboardButton("♻️ Rebuild YF", callback_data="rebuild_yf"),
+                InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"),
+                InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf"),
             ],
         ]
         if webapp_url:
@@ -2640,18 +2528,18 @@ class AEI_Bot:
             "`/indicators` - 13D Hilbert Space projection\n"
             "`/fvg` - Fair Value Gap tracking\n"
             "`/reset` - Reset topological branch\n"
-            "`/start_feed` - Start Yahoo Finance price feed\n"
-            "`/stop_feed` - Stop Yahoo Finance price feed\n"
+            "`/start_feed` - Start price feed\n"
+            "`/stop_feed` - Stop price feed\n"
             "`/symbol <PAIR>` - Change trading symbol\n"
             "`/info` - Ticker information\n"
-            "`/probe` - yfinance self-heal diagnostics\n"
-            "`/rebuild_yf` - Force rebuild yfinance Ticker\n"
+            "`/probe` - Relay diagnostics\n"
+            "`/rebuild_yf` - Force relay reset\n"
             "`/webapp` - Launch Telegram Mini App\n"
             "`/webgui` - Show local bridge URL\n"
             "`/help` - Show this message\n\n"
             f"📈 *Current Symbol:* `{SYMBOL}`\n"
             f"🔄 *Feed Status:* {'Active' if self._running else 'Inactive'}\n"
-            f"📊 *Data Source:* Yahoo Finance (Free, No KYC)\n"
+            f"🌐 *Relay:* `{RELAY_URL or 'unset'}`\n"
             f"🌐 *Mini App URL:* `{webapp_display}`\n"
             f"🧠 *Engine Status:* {engine_status}\n\n"
             "🧠 *Theoretical Foundation:*\n"
@@ -2690,7 +2578,7 @@ class AEI_Bot:
         response = (
             "🔷 *ÆEA STATUS*\n\n"
             f"📈 *Symbol:* {SYMBOL}\n"
-            f"🔎 *Active YF Ticker:* `{self.engine.feed.active_symbol()}`\n"
+            f"🔎 *Active Relay Symbol:* `{self.engine.feed.active_symbol()}`\n"
             f"💰 *Price:* {price_display}\n"
             f"📊 *Regime:* {regime}\n"
             f"🔄 *Coherence:* {coherence}\n"
@@ -3007,17 +2895,16 @@ class AEI_Bot:
             historical = self.engine.feed.get_historical_klines(limit=200)
             if historical:
                 self.engine.ohlcv_history = historical
-                logger.info(f"✅ Loaded {len(historical)} historical bars from {self.engine.feed.active_symbol()}")
+                logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()}")
                 try:
                     self.engine.initialize_engine()
                 except Exception as e:
                     logger.exception("initialize_engine crashed")
-                    # fall through — _force_initialization will retry on first tick
                 else:
                     logger.info("✅ Engine state prepared - will initialize on first tick")
             else:
                 logger.warning(
-                    f"⚠️ No historical data loaded for {self.engine.feed.active_symbol()} — "
+                    f"⚠️ No historical data from relay for {self.engine.feed.active_symbol()} — "
                     f"will initialize on first tick"
                 )
 
@@ -3047,13 +2934,13 @@ class AEI_Bot:
         reply_text = (
             f"✅ *Price feed started*\n\n"
             f"📈 *Symbol:* {SYMBOL}\n"
-            f"🔎 *Active YF Ticker:* `{self.engine.feed.active_symbol()}`\n"
+            f"🔎 *Active Relay Symbol:* `{self.engine.feed.active_symbol()}`\n"
             f"🔄 *Update Interval:* {UPDATE_INTERVAL}s\n"
             f"📊 *Historical Data:* {len(self.engine.ohlcv_history)} bars loaded\n"
-            f"📡 *Data Source:* Yahoo Finance (Free, No KYC)\n"
+            f"🌐 *Relay:* `{RELAY_URL or 'unset'}`\n"
             f"🔮 *Status:* Monitoring for signals...\n"
             f"🧠 *Engine State:* ⏳ Initializing on first tick (MQL4 compatible)\n\n"
-            f"_Tip: if price stays at 0.0, send `/probe` to diagnose yfinance._"
+            f"_Tip: if price stays at 0.0, send `/probe` to diagnose the relay._"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(reply_text, parse_mode="Markdown")
@@ -3071,26 +2958,29 @@ class AEI_Bot:
             await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
 
     async def probe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Diagnostic: what does yfinance actually return right now?"""
+        """Diagnostic: what does the Cloudflare Worker relay return right now?"""
         info = self.engine.feed.probe()
         status = "✅ OK" if not info.get("empty") else "❌ EMPTY"
         lines = [
-            "🔬 *YFINANCE PROBE*",
+            "🔬 *RELAY PROBE*",
             "",
+            f"*Relay URL:* `{info.get('relay_url') or 'UNSET'}`",
             f"*Status:* {status}",
             f"*Primary symbol:* `{info.get('primary_symbol')}`",
             f"*Active symbol:* `{info.get('active_symbol')}`",
             f"*Chain:* `{info.get('chain')}`",
             f"*Chain index:* {info.get('chain_index')}",
-            f"*Shape:* `{info.get('shape')}`",
             f"*Failure count:* {info.get('failure_count')}",
             f"*Fallback count:* {info.get('fallback_count')}",
         ]
-        if info.get("error"):
-            lines.append(f"*Error:* `{info['error']}`")
+        raw = info.get("raw_response")
+        if raw:
+            lines.append(f"*Raw keys:* `{list(raw.keys())}`")
         lines.append("")
-        lines.append("_If EMPTY persists, Yahoo may be blocking this dyno's IP._")
-        lines.append("_Send `/rebuild_yf` to force a fresh Ticker, or change symbol._")
+        lines.append("_If EMPTY persists:_")
+        lines.append("_1. Verify the Worker URL: `curl <relay>/?symbol=BTC-USD&kind=price`_")
+        lines.append("_2. Check the Worker dashboard for errors._")
+        lines.append("_3. Send `/rebuild_yf` to force a symbol rotation._")
         text = "\n".join(lines)
         if update.callback_query:
             await update.callback_query.edit_message_text(text, parse_mode="Markdown")
@@ -3098,15 +2988,14 @@ class AEI_Bot:
             await update.message.reply_text(text, parse_mode="Markdown")
 
     async def rebuild_yf(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Force-rebuild the yfinance.Ticker and rotate symbol chain."""
+        """Force-rebuild state and rotate the symbol chain."""
         self.engine.feed._rebuild_ticker()
         self.engine.feed._fallback_count = 0
-        # Also try the next symbol in the chain if we have alternates
-        if len(self.engine.feed._symbol_chain) > 1:
+        if len(self.engine.feed._chain) > 1:
             self.engine.feed._advance_symbol_chain()
         active = self.engine.feed.active_symbol()
         text = (
-            f"♻️ *yfinance Ticker rebuilt*\n\n"
+            f"♻️ *Relay client rebuilt*\n\n"
             f"🔎 *Active symbol:* `{active}`\n"
             f"_Feed will use this symbol on next iteration._"
         )
@@ -3134,13 +3023,13 @@ class AEI_Bot:
         yahoo_symbol = SYMBOL_MAP.get(new_symbol, new_symbol)
 
         try:
-            ticker = yf.Ticker(yahoo_symbol)
-            info = ticker.info
-            if info.get("regularMarketPrice"):
+            test_feed = FeedClient(yahoo_symbol)
+            bid, _ = test_feed.get_current_price()
+            if bid > Decimal('0.0'):
                 SYMBOL = yahoo_symbol
                 prev_chat = self.engine.state.chat_id
                 self.engine = AEEA_Engine()
-                self.engine.feed = YahooFinanceFeed(yahoo_symbol)
+                self.engine.feed = FeedClient(yahoo_symbol)
                 self.engine.state.chat_id = prev_chat
                 self.engine.application = self.application
                 BRIDGE_ENGINE_REF["engine"] = self.engine
@@ -3153,13 +3042,12 @@ class AEI_Bot:
                 await update.message.reply_text(
                     f"✅ *Symbol changed*\n\n"
                     f"📈 *New Symbol:* `{yahoo_symbol}`\n"
-                    f"💰 *Current Price:* {info.get('regularMarketPrice', 'N/A')}\n"
-                    f"📊 *Name:* {info.get('longName', 'Unknown')}\n"
+                    f"💰 *Current Price:* {bid}\n"
                     f"🧠 *Engine State:* {'✅ Initialized' if self.engine.state.FG else '⏳ Initializing...'}",
                     parse_mode="Markdown"
                 )
             else:
-                await update.message.reply_text(f"❌ Invalid symbol: {yahoo_symbol}")
+                await update.message.reply_text(f"❌ Invalid symbol or no data: {yahoo_symbol}")
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
@@ -3168,13 +3056,11 @@ class AEI_Bot:
         response = (
             "📊 *TICKER INFORMATION*\n\n"
             f"📈 *Symbol:* {SYMBOL}\n"
-            f"🔎 *Active YF Ticker:* `{self.engine.feed.active_symbol()}`\n"
+            f"🔎 *Active Relay Symbol:* `{self.engine.feed.active_symbol()}`\n"
             f"📛 *Name:* {info.get('name', 'Unknown')}\n"
-            f"🏭 *Sector:* {info.get('sector', 'Unknown')}\n"
-            f"💵 *Currency:* {info.get('currency', 'USD')}\n"
-            f"💰 *Previous Close:* {info.get('previous_close', 'N/A')}\n"
-            f"📊 *Market Cap:* {info.get('market_cap', 'N/A')}\n\n"
-            f"📡 *Data Source:* Yahoo Finance (Free, No KYC)"
+            f"💵 *Currency:* {info.get('currency', 'USD')}\n\n"
+            f"🌐 *Data Source:* Cloudflare Worker Relay (Yahoo Finance upstream)\n"
+            f"🔗 *Relay URL:* `{RELAY_URL or 'unset'}`"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -3182,7 +3068,6 @@ class AEI_Bot:
             await update.message.reply_text(response, parse_mode="Markdown")
 
     async def webapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Launch / advertise the Telegram Mini App."""
         url = self._resolve_webapp_url()
         if not url:
             await update.message.reply_text(
@@ -3217,7 +3102,6 @@ class AEI_Bot:
         )
 
     async def webgui(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show the local + public bridge URL."""
         scheme = "https" if BRIDGE_USE_TLS else "http"
         local_url = f"{scheme}://{BRIDGE_HOST}:{BRIDGE_PORT}/"
         public_url = self._resolve_webapp_url() or "⏳ (tunnel pending)"
@@ -3229,6 +3113,7 @@ class AEI_Bot:
             f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
             f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
             f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`\n\n"
+            f"*Relay URL:* `{RELAY_URL or 'unset'}`\n\n"
             f"*Chart tools in Mini App:*\n"
             f"  ▲ Top → Blue premium FVG\n"
             f"  ▼ Bottom → Red discount FVG\n"
@@ -3273,7 +3158,6 @@ class AEI_Bot:
         logger.error(f"Update {update} caused error {context.error}")
 
     async def _post_init(self, application) -> None:
-        """Register a global MenuButtonWebApp so the Mini App is one tap away."""
         url = self._resolve_webapp_url()
         if not url:
             logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
@@ -3317,10 +3201,8 @@ class AEI_Bot:
         logger.info(f"📊 Quantum-Financial Topology Engine initialized.")
         logger.info(f"🧠 Arc-Length Axiom (s=r) enforced.")
         logger.info(f"🔄 Non-Hermitian Lindblad Dynamics active.")
-        logger.info(f"📡 Data Source: Yahoo Finance (Free, No KYC)")
+        logger.info(f"🌐 Relay: {RELAY_URL or 'UNSET — set RELAY_URL env var!'}")
         logger.info(f"⚡ Telegram Mini App enabled.")
-        logger.info(f"🩺 yfinance self-heal active (rebuild after {YF_MAX_FAILURES_BEFORE_REBUILD} fails, "
-                    f"symbol-fallback after {YF_SYMBOL_FALLBACK_THRESHOLD})")
         logger.info(f"🌐 CORS origin: {CORS_ORIGIN}")
         logger.info(f"💎 Ready. Use /start to begin.")
 
@@ -3337,66 +3219,40 @@ _bridge_attach_to_bot(AEI_Bot)
 
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.14 (MINI APP + SELF-HEAL)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.15 (CLOUDFLARE WORKER RELAY)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
   • Telegram bot      : app.py (python-telegram-bot)
-  • Data feed         : Yahoo Finance (free, no KYC) — SELF-HEALING
+  • Data feed         : Cloudflare Worker relay (Yahoo upstream)
   • HTTPS bridge      : http://0.0.0.0:8765  (auto-attached)
   • Public tunnel     : cloudflared | ngrok | serveo (auto-discovered)
   • Web GUI           : index.html → Telegram Web App (Mini App)
   • Menu button       : MenuButtonWebApp (one tap to open Mini App)
 
-v4.14 Self-Healing (yfinance silent-failure fix):
-  • Rebuilds yfinance.Ticker after N consecutive failures
-    (defeats stale crumb / expired session tokens)
-  • Rotates through symbol fallback chain when primary returns empty
-    (defeats Yahoo renames: BTC-USD ↔ BTCUSD=X)
-  • /health reports last_price_update freshness + stale flag
-  • /probe exposes live yfinance diagnostic state
-  • /reset (bridge) and /rebuild_yf (bot) force manual recovery
-  • start_feed wraps initialization in try/except with explicit failure reply
-  • price_feed_loop logs every iteration with tick + active symbol
+v4.15 Cloudflare Worker Relay:
+  • All Yahoo Finance calls now go through a Cloudflare Worker
+  • Heroku IP is never exposed to Yahoo — no more IP blocks
+  • Worker handles CORS, caching, and upstream retries
+  • Symbol fallback chain preserved (BTC-USD ↔ BTCUSD=X)
+  • /probe now reports the relay URL and raw response keys
+  • /rebuild_yf rotates the symbol chain client-side
 
-Bridge endpoints (consumed by index.html):
-  GET    /             → serves index.html (Telegram Web App GUI)
-  GET    /state        → engine snapshot (exact Decimal strings)
-  GET    /config       → bridge metadata (public_url, tls, symbol)
-  GET    /health       → liveness + last_price_update freshness
-  GET    /probe        → yfinance self-heal diagnostics
-  POST   /handshake    → verifies Telegram initData (HMAC-SHA256)
-                        binds webapp_user_id → state.chat_id
-  POST   /fvg          → commit Top()/Bott() FVG (Arc-Length Gate)
-                        requires valid X-Telegram-Init-Data header
-  POST   /reset        → manual yfinance Ticker rebuild
-  DELETE /fvg/{idx}    → remove FVG (mirrors æea.mq4 Deleter())
-  GET    /fvg          → list all FVGs
-
-Telegram Web App integration:
-  • Bot commands: /webapp, /mini, /webgui
-  • Inline button: "⚡ Open ÆEA Mini App" (WebAppInfo url)
-  • MenuButtonWebApp: persistent bottom-left menu
-  • initData HMAC verified via WebAppData secret + SHA-256
-  • auth_date freshness enforced (≤ 24h, ≥ -5m skew)
-
-Tunnel providers (in priority order):
-  1. TELEGRAM_WEBAPP_URL env (explicit; skips tunnel spawn)
-  2. cloudflared tunnel --url http://127.0.0.1:8765
-  3. ngrok http 8765
-  4. ssh -R 80:127.0.0.1:8765 serveo.net
+Worker contract (deploy at Cloudflare Workers, then set RELAY_URL):
+  GET /?symbol=<SYM>&kind=price              -> {close, bid, ask, volume}
+  GET /?symbol=<SYM>&kind=intraday           -> {open, high, low, close, volume, timestamp}
+  GET /?symbol=<SYM>&kind=history&limit=200  -> [{open, high, low, close, volume, timestamp}, ...]
 
 Required environment:
-  TELEGRAM_BOT_TOKEN       — bot token from BotFather (required)
-  TELEGRAM_WEBAPP_URL      — optional explicit HTTPS URL
-  PORT                     — Heroku-assigned; fallback 8765
-  BRIDGE_HOST              — default 0.0.0.0 (Heroku requires this)
-  BRIDGE_USE_TLS           — 1 to wrap server in TLS (BRIDGE_TLS_CERT/KEY)
-  BRIDGE_TUNNEL            — cloudflared | ngrok | serveo
-  CORS_ORIGIN              — "*" (default) or restricted origin
+  TELEGRAM_BOT_TOKEN   — bot token from BotFather (required)
+  RELAY_URL            — Cloudflare Worker URL (required, e.g. https://xyz.workers.dev)
 
-Optional (self-heal tuning):
-  YF_MAX_FAILURES          — rebuild Ticker after N fails (default 3)
-  YF_FALLBACK_THRESHOLD    — rotate symbol chain after N empties (default 5)
+Optional environment:
+  TELEGRAM_WEBAPP_URL  — explicit HTTPS URL for Mini App (skips tunnel)
+  PORT                 — Heroku-assigned; fallback 8765
+  BRIDGE_HOST          — default 0.0.0.0 (Heroku requires this)
+  BRIDGE_USE_TLS       — 1 to wrap server in TLS (BRIDGE_TLS_CERT/KEY)
+  BRIDGE_TUNNEL        — cloudflared | ngrok | serveo
+  CORS_ORIGIN          — "*" (default) or restricted origin
 
 Chart overlay parity (index.html ↔ æea.mq4):
   ▲ Top    (blue)     ↔ Top()  → Premium[] push
@@ -3414,17 +3270,16 @@ Exactness (no float leakage):
   • Frontend: Fraction (numerator/denominator integers)
 
 Quick start:
-  1. export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'
-  2. (optional) export TELEGRAM_WEBAPP_URL='https://your.tunnel.url'
-  3. python3 app.py                    # starts bot + bridge + tunnel
-  4. In Telegram: /start → tap "⚡ Open ÆEA Mini App"
-  5. Draw FVGs with ▲ / ▼ tools; ✖ to delete
+  1. Deploy the Cloudflare Worker (see worker.js).
+  2. export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'
+  3. export RELAY_URL='https://your-worker.workers.dev'
+  4. python3 app.py
+  5. In Telegram: /start → /start_feed → tap "⚡ Open ÆEA Mini App"
 
 Diagnostics when price stays at 0.0:
-  1. Send /probe    → shows live yfinance state
-  2. Send /rebuild_yf → forces fresh Ticker + symbol rotation
-  3. curl .../health → checks last_price_update freshness
-  4. curl .../probe  → same diagnostics via HTTP
+  1. /probe    → shows relay URL and raw response keys
+  2. curl "<relay>/?symbol=BTC-USD&kind=price"  → confirm Worker returns data
+  3. curl "https://your-app.herokuapp.com/health" → check last_price_update freshness
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
@@ -3449,6 +3304,9 @@ def main():
         logger.error("❌ Error: TELEGRAM_BOT_TOKEN not set.")
         logger.error("   export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'")
         sys.exit(1)
+    if not RELAY_URL:
+        logger.warning("⚠️ RELAY_URL not set — feed will fail.")
+        logger.warning("   Deploy the Cloudflare Worker and set RELAY_URL env var.")
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
 
