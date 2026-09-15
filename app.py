@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.16 (MQL4 PARITY: ORGANIC FIRST-TICK INITIALIZATION + ROBUST RELAY ERROR HANDLING)
+Version: 4.17 (AUDIT PATCH: ENGINE GUARD + STATE SYNC + RELAY ROBUSTNESS + COHERENCE LOCK)
 """
 import asyncio
 import hashlib
@@ -100,6 +100,8 @@ TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
 # --- CLOUDFLARE WORKER RELAY ---
 RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
+RELAY_TIMEOUT: int = int(os.getenv("RELAY_TIMEOUT", "10"))
+RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
 
 # --- CORS CONFIGURATION ---
 CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
@@ -455,35 +457,83 @@ class FeedClient:
         params["kind"] = kind
         qs = urllib.parse.urlencode(params)
         url = f"{RELAY_URL}/?{qs}"
-        try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "AEI-Bridge/4.16"})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                payload = json.loads(r.read().decode("utf-8"))
-                self._failure_count = 0
-                return payload
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode('utf-8', errors='ignore')
-            logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()}: {error_body}")
-            self._failure_count += 1
-            self._fallback_count += 1
-            if self._fallback_count >= 5: self._advance_symbol_chain()
-            return None
-        except Exception as e:
-            logger.warning(f"Relay error ({kind}) for {self.active_symbol()}: {e}")
-            self._failure_count += 1
-            self._fallback_count += 1
-            if self._fallback_count >= 5: self._advance_symbol_chain()
-            return None
+        last_error = None
+        for attempt in range(RELAY_MAX_RETRIES):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "Accept": "application/json",
+                        "User-Agent": "AEI-Bridge/4.17",
+                        "Cache-Control": "no-cache",
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=RELAY_TIMEOUT) as r:
+                    raw = r.read().decode("utf-8")
+                    payload = json.loads(raw)
+                    if isinstance(payload, dict) and payload.get("error"):
+                        logger.warning(f"Relay returned error for {self.active_symbol()}: {payload.get('error')} ({payload.get('status', '?')})")
+                        self._failure_count += 1
+                        self._fallback_count += 1
+                        if self._fallback_count >= 5:
+                            self._advance_symbol_chain()
+                        return None
+                    self._failure_count = 0
+                    self._fallback_count = 0
+                    self._last_update = datetime.now()
+                    return payload
+            except urllib.error.HTTPError as e:
+                try:
+                    error_body = e.read().decode('utf-8', errors='ignore')
+                except Exception:
+                    error_body = '<unreadable>'
+                last_error = f"HTTP {e.code}: {error_body[:200]}"
+                logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
+                if e.code in (403, 429) and attempt < RELAY_MAX_RETRIES - 1:
+                    time.sleep(1 + attempt * 2)
+                    continue
+                break
+            except urllib.error.URLError as e:
+                last_error = f"URLError: {e.reason}"
+                logger.warning(f"Relay URLError for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e.reason}")
+                if attempt < RELAY_MAX_RETRIES - 1:
+                    time.sleep(1 + attempt * 2)
+                    continue
+                break
+            except json.JSONDecodeError as e:
+                last_error = f"JSONDecodeError: {e}"
+                logger.warning(f"Relay returned invalid JSON for {self.active_symbol()}: {e}")
+                break
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"Relay error ({kind}) for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e}")
+                if attempt < RELAY_MAX_RETRIES - 1:
+                    time.sleep(1 + attempt * 2)
+                    continue
+                break
+        self._failure_count += 1
+        self._fallback_count += 1
+        if self._fallback_count >= 5:
+            self._advance_symbol_chain()
+        if last_error:
+            logger.warning(f"Relay exhausted retries for {kind}: {last_error}")
+        return None
 
     def get_current_price(self) -> Tuple[Decimal, Decimal]:
         d = self._get("price")
-        if not d or "close" not in d or d.get("close") is None: return Decimal('0.0'), Decimal('0.0')
+        if not d or "close" not in d or d.get("close") is None:
+            return Decimal('0.0'), Decimal('0.0')
         try:
             c = Decimal(str(d["close"]))
-            bid = Decimal(str(d.get("bid", d["close"])))
-            ask = Decimal(str(d.get("ask", d["close"])))
+            if c <= Decimal('0.0'):
+                logger.warning(f"Relay returned non-positive price: {c}")
+                return Decimal('0.0'), Decimal('0.0')
+            bid = Decimal(str(d.get("bid") or d["close"]))
+            ask = Decimal(str(d.get("ask") or d["close"]))
             return bid, ask
-        except Exception: return Decimal('0.0'), Decimal('0.0')
+        except Exception as e:
+            logger.warning(f"Failed to parse relay price: {e}")
+            return Decimal('0.0'), Decimal('0.0')
 
     def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, Any]]:
         d = self._get("history", limit=limit, interval=interval)
@@ -492,9 +542,11 @@ class FeedClient:
         for row in d:
             try:
                 if row.get("close") is None: continue
+                c = Decimal(str(row["close"]))
+                if c <= Decimal('0.0'): continue
                 out.append({
                     "open": Decimal(str(row["open"])), "high": Decimal(str(row["high"])),
-                    "low": Decimal(str(row["low"])), "close": Decimal(str(row["close"])),
+                    "low": Decimal(str(row["low"])), "close": c,
                     "volume": Decimal(str(row.get("volume") or 0)),
                     "timestamp": datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None),
                 })
@@ -505,12 +557,18 @@ class FeedClient:
         d = self._get("intraday", interval=interval)
         if not d or d.get("close") is None: return {}
         try:
+            c = Decimal(str(d["close"]))
+            if c <= Decimal('0.0'):
+                logger.warning(f"Relay returned non-positive intraday close: {c}")
+                return {}
             return {
                 "open": Decimal(str(d["open"])), "high": Decimal(str(d["high"])),
-                "low": Decimal(str(d["low"])), "close": Decimal(str(d["close"])),
+                "low": Decimal(str(d["low"])), "close": c,
                 "volume": Decimal(str(d.get("volume") or 0)), "timestamp": datetime.now(),
             }
-        except Exception: return {}
+        except Exception as e:
+            logger.warning(f"Failed to parse intraday: {e}")
+            return {}
 
     def get_info(self) -> Dict[str, Any]: return {"name": self.active_symbol(), "currency": "USD"}
 
@@ -521,6 +579,7 @@ class FeedClient:
             "chain": list(self._chain), "chain_index": self._chain_index,
             "empty": (d is None or d.get("close") is None), "relay_url": RELAY_URL,
             "failure_count": self._failure_count, "fallback_count": self._fallback_count,
+            "last_update": self._last_update.isoformat() if self._last_update else None,
             "raw_response": d,
         }
 
@@ -546,13 +605,17 @@ class AEEA_Engine:
         self._tick_log_counter: int = 0
         self._price_update_counter: int = 0
         self._bridge_publish_callback = None
+        self._last_relay_warn: Optional[datetime] = None
+        self._consecutive_zero_prices: int = 0
 
     def _verify_arc_length_coherence(self, price: Decimal, signal: Decimal) -> Dict[str, Any]:
         state = self.state
+        if price <= Decimal('0.0'):
+            return {"coherent": False, "arc_sq": Decimal('0'), "radius_sq": Decimal('0'), "deviation": Decimal('0'), "initialized": False}
         arc_sq = Decimal(str(state.tick if state.tick > 0 else 0))
         radius_sq = abs(price - signal) * Decimal('1000') if signal != Decimal('0.0') else arc_sq
         diff = abs(arc_sq - radius_sq)
-        return {"coherent": diff < Decimal('0.01'), "arc_sq": arc_sq, "radius_sq": radius_sq, "deviation": diff}
+        return {"coherent": diff < Decimal('0.01'), "arc_sq": arc_sq, "radius_sq": radius_sq, "deviation": diff, "initialized": True}
 
     def initialize_engine(self) -> None:
         state = self.state
@@ -637,7 +700,10 @@ class AEEA_Engine:
     def _force_initialization(self) -> None:
         state = self.state
         if state.FG: return
-        logger.info("🚀 First tick detected. Forcing engine initialization (MQL4 style)...")
+        if state.price <= Decimal('0.0'):
+            logger.warning("⏳ Cannot force-init: price not yet available")
+            return
+        logger.info("🚀 First valid tick detected. Forcing engine initialization (MQL4 style)...")
         
         if not state.signature:
             state.D = state.price
@@ -684,22 +750,41 @@ class AEEA_Engine:
             if all(state.U): state.R = False
         state.FG = True
         state._initialized = True
-        logger.info("✅ Engine initialized on first tick (MQL4 style)")
+        logger.info(f"✅ Engine initialized on first tick (MQL4 style) at price={state.price:.5f}")
 
     def update_price_from_feed(self) -> None:
         data = self.feed.get_intraday()
         if not data:
-            # FIXED: Was incorrectly referencing self.engine.feed
-            logger.warning(f"⚠️ No data from relay for {self.feed.active_symbol()}")
+            self._consecutive_zero_prices += 1
+            now = datetime.now()
+            if self._last_relay_warn is None or (now - self._last_relay_warn).seconds >= 60:
+                self._last_relay_warn = now
+                logger.warning(f"⚠️ No data from relay for {self.feed.active_symbol()} (consecutive={self._consecutive_zero_prices})")
             return
         bid = data["close"]
         ask = data["close"]
+        if bid <= Decimal('0.0'):
+            self._consecutive_zero_prices += 1
+            now = datetime.now()
+            if self._last_relay_warn is None or (now - self._last_relay_warn).seconds >= 60:
+                self._last_relay_warn = now
+                logger.warning(f"⚠️ Relay returned non-positive bid for {self.feed.active_symbol()}")
+            return
         volume = data.get("volume", Decimal('0.0'))
         timestamp = data.get("timestamp", datetime.now())
+        self._consecutive_zero_prices = 0
         self.update_price(bid, ask, volume, timestamp)
 
     def update_price(self, bid, ask, volume=Decimal('0.0'), timestamp=None) -> None:
         if timestamp is None: timestamp = datetime.now()
+        if bid <= Decimal('0.0'):
+            logger.warning(f"update_price rejected non-positive bid: {bid}")
+            return
+        # STATE SYNC FIX: ensure state.price is updated unconditionally before any branching
+        self.state.price = bid
+        self.state.Price = (bid + ask) / Decimal('2.0')
+        self._price_update_counter += 1
+
         price_data = PriceData(
             bid=bid, ask=ask, close=(bid + ask) / Decimal('2.0'),
             open=bid, high=max(bid, ask), low=min(bid, ask),
@@ -989,16 +1074,22 @@ class AEEA_Engine:
 
     def _on_tick(self, price_data):
         state = self.state
-        state.tick += 1
+        # STATE SYNC: price already synced in update_price, but re-affirm here
         state.price = price_data.bid
         state.Price = price_data.close
+        state.tick += 1
         self._tick_log_counter += 1
         if self._tick_log_counter >= 100:
             self._tick_log_counter = 0
-            logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}")
+            logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}, FG={state.FG}")
+
+        # CRITICAL GUARD: refuse to evolve arc-length coherence on null price
+        if state.price <= Decimal('0.0'):
+            logger.warning(f"⚠️ Tick with non-positive price: {state.price}. Skipping coherence check.")
+            return
+
         arc_check = self._verify_arc_length_coherence(state.price, state.signal)
         if not arc_check["coherent"] and state.tick > 1:
-            logger.warning(f"⚠️ Arc-Length Deviation detected at tick #{state.tick}: {arc_check['deviation']:.6f}")
             if arc_check['deviation'] > Decimal('1.0'):
                 logger.info("🔧 Large deviation detected - forcing stabilization")
                 self._on_reinit()
@@ -1006,7 +1097,7 @@ class AEEA_Engine:
         if not state.FG:
             self._force_initialization()
         if not state.FG:
-            logger.error("❌ Engine initialization failed!")
+            logger.warning("⏳ Engine not yet initialized (FG=false), waiting for valid tick...")
             return
         if len(self.ohlcv_history) >= 2:
             state.iopen = self.ohlcv_history[-2]["open"]
@@ -1316,6 +1407,9 @@ class AEEA_Engine:
 
     def _signal(self):
         state = self.state
+        if state.price <= Decimal('0.0'):
+            logger.warning("_signal suppressed: no valid price")
+            return
         state.ab = not state.ba
         state.count = 0
         state.toll = 0
@@ -1465,6 +1559,8 @@ class AEEA_Engine:
 
     def _check_coherence(self):
         state = self.state
+        if state.price <= Decimal('0.0'):
+            return "⏳ AWAITING PRICE"
         arc_sq = Decimal(str(state.tick if state.tick > 0 else 0))
         radius_sq = abs(state.price - state.signal) * Decimal('1000') if state.signal != Decimal('0.0') else arc_sq
         diff = abs(arc_sq - radius_sq)
@@ -1495,6 +1591,7 @@ class BridgeState:
             "regime": "Unknown", "tick": 0, "m_count": 0, "n_count": 0, "coherent": True,
             "arc_sq": "0", "radius_sq": "0", "deviation": "0", "timestamp": datetime.now().isoformat(),
             "endpoint": None, "webapp_user_id": None, "webapp_username": None, "last_price_update": None,
+            "engine_initialized": False, "consecutive_zero_prices": 0,
         }
         self._fvgs: Dict[int, Dict[str, str]] = {}
         self._next_fvg_idx = 0
@@ -1536,6 +1633,13 @@ class BridgeState:
         if price_dec <= Decimal('0.0'): raise ValueError("price must be > 0")
         with self._lock:
             snap = self._snapshot
+            # COHERENCE LOCK: reject FVG on null price
+            try:
+                snap_price = Decimal(str(snap.get("price", "0")))
+                if snap_price <= Decimal('0.0'):
+                    raise ValueError("COHERENCE LOCK: no valid price available")
+            except ValueError: raise
+            except Exception: pass
             try:
                 arc_sq = Decimal(str(snap.get("arc_sq", "0")))
                 radius_sq = Decimal(str(snap.get("radius_sq", "0")))
@@ -1693,7 +1797,7 @@ class TunnelManager:
         logger.info("🌐 Tunnel stopped")
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.16"
+    server_version = "AEI-Bridge/4.17"
 
     def log_message(self, fmt, *args): return
 
@@ -1746,10 +1850,29 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - datetime.fromisoformat(last)).total_seconds()
                     stale = age_seconds > 60
                 except Exception: pass
-            self._send_json(200, {"ok": not stale, "service": "aei-bridge", "version": "4.16", "last_price_update": last, "age_seconds": age_seconds, "stale": stale, "relay_url": RELAY_URL or None})
+            self._send_json(200, {
+                "ok": not stale,
+                "service": "aei-bridge",
+                "version": "4.17",
+                "last_price_update": last,
+                "age_seconds": age_seconds,
+                "stale": stale,
+                "relay_url": RELAY_URL or None,
+                "engine_initialized": snap.get("engine_initialized", False),
+            })
             return
         if path == "/config":
-            self._send_json(200, {"public_url": BRIDGE_ENGINE_REF.get("public_url"), "tls": BRIDGE_USE_TLS, "port": BRIDGE_PORT, "host": BRIDGE_HOST, "symbol": SYMBOL, "webapp_enabled": True, "cors_origin": CORS_ORIGIN, "relay_url": RELAY_URL or None})
+            self._send_json(200, {
+                "public_url": BRIDGE_ENGINE_REF.get("public_url"),
+                "tls": BRIDGE_USE_TLS,
+                "port": BRIDGE_PORT,
+                "host": BRIDGE_HOST,
+                "symbol": SYMBOL,
+                "webapp_enabled": True,
+                "cors_origin": CORS_ORIGIN,
+                "relay_url": RELAY_URL or None,
+                "version": "4.17",
+            })
             return
         if path == "/state":
             snap = BRIDGE_STATE.get_snapshot()
@@ -1838,6 +1961,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             try:
                 engine.feed._rebuild_ticker()
                 engine.feed._fallback_count = 0
+                engine._consecutive_zero_prices = 0
                 logger.info("🔄 Manual reset requested via /reset")
                 self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
             except Exception as e:
@@ -1938,6 +2062,8 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "timestamp": datetime.now().isoformat(), "endpoint": BRIDGE_ENGINE_REF.get("public_url"),
                 "webapp_user_id": st.webapp_user_id, "webapp_username": st.webapp_username,
                 "last_price_update": datetime.now().isoformat(),
+                "engine_initialized": bool(st.FG),
+                "consecutive_zero_prices": int(getattr(engine, "_consecutive_zero_prices", 0)),
             }
             BRIDGE_STATE.publish(snapshot)
         except Exception as e: logger.warning(f"Bridge publish failed: {e}")
@@ -2295,6 +2421,7 @@ class AEI_Bot:
         state.iH = saved_iH
         state.iL = saved_iL
         state.tick = saved_tick
+        self.engine._consecutive_zero_prices = 0
         if len(self.engine.ohlcv_history) >= 2:
             iH = self.engine.ohlcv_history[-2]["high"]
             iL = self.engine.ohlcv_history[-2]["low"]
@@ -2323,7 +2450,8 @@ class AEI_Bot:
             "• k/l signal flags cleared\n"
             "• Tracking variables reset to initial state\n"
             "• ✨ Historical price data preserved via F() initialization\n"
-            f"• 🔄 Tick count preserved: {state.tick}\n\n"
+            f"• 🔄 Tick count preserved: {state.tick}\n"
+            f"• 🧹 Zero-price counter reset\n\n"
             "📊 *Ready for new regime classification...*"
         )
         if update.callback_query: await update.callback_query.edit_message_text(reset_msg, parse_mode="Markdown")
@@ -2335,6 +2463,7 @@ class AEI_Bot:
             return
         self._running = True
         self.engine._running = True
+        self.engine._consecutive_zero_prices = 0
         
         historical = []
         try:
@@ -2396,6 +2525,8 @@ class AEI_Bot:
             f"*Chain index:* {info.get('chain_index')}",
             f"*Failure count:* {info.get('failure_count')}",
             f"*Fallback count:* {info.get('fallback_count')}",
+            f"*Last update:* {info.get('last_update') or 'never'}",
+            f"*Consecutive zero prices:* {getattr(self.engine, '_consecutive_zero_prices', 0)}",
         ]
         raw = info.get("raw_response")
         if raw:
@@ -2412,6 +2543,7 @@ class AEI_Bot:
     async def rebuild_yf(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.engine.feed._rebuild_ticker()
         self.engine.feed._fallback_count = 0
+        self.engine._consecutive_zero_prices = 0
         if len(self.engine.feed._chain) > 1: self.engine.feed._advance_symbol_chain()
         active = self.engine.feed.active_symbol()
         text = f"♻️ *Relay client rebuilt*\n🔎 *Active symbol:* `{active}`\n_Feed will use this symbol on next iteration._"
@@ -2609,7 +2741,7 @@ _bridge_attach_to_bot(AEI_Bot)
 # ============================================================================
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.16 (MQL4 PARITY)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.17 (AUDIT PATCH)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
 • Telegram bot      : app.py (python-telegram-bot)
@@ -2619,13 +2751,15 @@ Architecture:
 • Web GUI           : index.html → Telegram Web App (Mini App)
 • Menu button       : MenuButtonWebApp (one tap to open Mini App)
 
-v4.16 MQL4 Parity Update:
-• Engine no longer requires historical data on initialization
-• State is determined "in time" organically on the first tick
-• D and E signal thresholds anchored to first tick price
-• Arrays seeded dynamically as bars arrive (exact MQL4 FG==false logic)
-• Historical data is optional pre-seeding, not a prerequisite
-• ROBUST RELAY HANDLING: Catches Yahoo 403s and logs exact JSON errors
+v4.17 AUDIT PATCH — KEY FIXES:
+• ENGINE GUARD: refuse to process ticks with non-positive price
+• STATE SYNC: state.price is unconditionally set in update_price()
+• RELAY ROBUSTNESS: 3-retry loop with backoff on HTTP 403/429/URLError
+• COHERENCE LOCK: FVG commits rejected when snapshot price is zero
+• ZERO-PRICE COUNTER: tracks consecutive failed relay fetches
+• ENGINE_INITIALIZED flag exposed via /health and /state
+• /reset clears _consecutive_zero_prices
+• Detailed relay HTTPError body logging for Worker diagnostics
 
 Quick start:
 1. Deploy the Cloudflare Worker (see worker.js).
