@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.19 (F-STRING SYNTAX FIX - CONSTRAINT-LOCKED)
+Version: 4.20 (CONSTRAINT-LOCKED CORE ACTIVATION - INDICATOR + QUATERNION + IMBALANCE FIX)
 """
 import asyncio
 import hashlib
@@ -875,7 +875,7 @@ class FeedClient:
                     url,
                     headers={
                         "Accept": "application/json",
-                        "User-Agent": "AEI-Bridge/4.19",
+                        "User-Agent": "AEI-Bridge/4.20",
                         "Cache-Control": "no-cache",
                     }
                 )
@@ -1026,6 +1026,10 @@ class AEEA_Engine:
         self.state.quat_history = [self.state.q_field.clone()]
         self.state.time_fraction = Fraction(0, 1)
         self._eps = Fraction(1, 100)
+        # Constraint-locked diagnostics counters
+        self._quat_tick_count: int = 0
+        self._indicator_populate_count: int = 0
+        self._imbalance_fire_count: int = 0
 
     # ------------------------------------------------------------------
     # EXACT ARC-LENGTH VERIFICATION (TF-mandated: s² = r²)
@@ -1034,10 +1038,12 @@ class AEEA_Engine:
         """
         Advance the quaternion field Φ by one tick using Natalia's Fibrations.
         Updates s², r², deviation, and Re[Ψ] from the live quaternion state.
+        Includes hard guard against silent identity collapse.
         """
         st = self.state
-        # Advance time
+        # Advance time (monotonic, never resets on tick)
         st.time_fraction = st.time_fraction + Fraction(1, 100)
+        self._quat_tick_count += 1
         s_param = st.time_fraction * Fraction(4, 10)
 
         # Base quaternion on unit sphere via Hopf angles
@@ -1060,6 +1066,11 @@ class AEEA_Engine:
         # Apply Natalia's Fibrations perturbation
         q_new = base.apply_natalia_fibration(s_param, self._eps, st.time_fraction).normalize()
 
+        # HARD GUARD: refuse to accept identity unless genuinely at origin
+        if q_new.norm_sq().is_zero():
+            logger.error("Quaternion normalize collapsed to zero — forcing identity seed")
+            q_new = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
+
         # Append to history (bound growth)
         st.quat_history.append(q_new.clone())
         if len(st.quat_history) > 2000:
@@ -1076,13 +1087,20 @@ class AEEA_Engine:
         st.s_squared_exact = s_acc * s_acc
         st.r_squared_exact = q_new.norm_sq()
         st.deviation_exact = st.s_squared_exact - st.r_squared_exact
-
-        # Re[Ψ] is the real part of the quaternion field (a-component)
         st.re_psi_exact = q_new.a
 
         # DbZ branching
         st.dbz_branch = self._apply_dbz_branch(st.deviation_exact, st.re_psi_exact)
         st.arc_coherent = (st.deviation_exact.abs().to_float() < 2e-3)
+
+        # Diagnostics: log every 100 ticks so we can see the field is alive
+        if self._quat_tick_count % 100 == 0:
+            logger.info(
+                f"🌀 Quat tick #{self._quat_tick_count} | "
+                f"s²={st.s_squared_exact} r²={st.r_squared_exact} "
+                f"Δ={st.deviation_exact} Re[Ψ]={st.re_psi_exact} "
+                f"dbz={st.dbz_branch}"
+            )
 
     def _apply_dbz_branch(self, dev: Fraction, re_psi: Fraction) -> int:
         """
@@ -1091,27 +1109,31 @@ class AEEA_Engine:
           Re[Ψ] ≤ 0  ⟹ Branch 2 (Natalia fibration; ε perturbed)
           dev ≈ 0    ⟹ Branch 0 (coherent, no action)
         """
-        if dev.abs().to_float() < 2e-3:
-            # Coherent — relax ε back toward 1/100
-            target = Fraction(1, 100)
-            diff = target - self._eps
-            self._eps = self._eps + diff * Fraction(2, 1000)
+        try:
+            if dev.abs().to_float() < 2e-3:
+                # Coherent — relax ε back toward 1/100
+                target = Fraction(1, 100)
+                diff = target - self._eps
+                self._eps = self._eps + diff * Fraction(2, 1000)
+                return 0
+            if re_psi.sign() > 0:
+                # Branch A: project to critical line (attenuate deviation)
+                self._eps = self._eps * Fraction(97, 100)
+                if self._eps.abs().to_float() < 1e-6:
+                    self._eps = Fraction(1, 100)
+                return 1
+            else:
+                # Branch B: Natalia fibration perturbation
+                delta = Fraction.sin_exact(self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8) * Fraction(8, 10000)
+                self._eps = self._eps + delta
+                if self._eps.to_float() > 0.05:
+                    self._eps = Fraction(5, 100)
+                if self._eps.to_float() < 0.001:
+                    self._eps = Fraction(1, 1000)
+                return 2
+        except Exception as e:
+            logger.exception(f"_apply_dbz_branch failed: {e}")
             return 0
-        if re_psi.sign() > 0:
-            # Branch A: project to critical line (attenuate deviation)
-            self._eps = self._eps * Fraction(97, 100)
-            if self._eps.abs().to_float() < 1e-6:
-                self._eps = Fraction(1, 100)
-            return 1
-        else:
-            # Branch B: Natalia fibration perturbation
-            delta = Fraction.sin_exact(self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8) * Fraction(8, 10000)
-            self._eps = self._eps + delta
-            if self._eps.to_float() > 0.05:
-                self._eps = Fraction(5, 100)
-            if self._eps.to_float() < 0.001:
-                self._eps = Fraction(1, 1000)
-            return 2
 
     def _verify_arc_length_coherence(self) -> Dict[str, Any]:
         """
@@ -1129,6 +1151,7 @@ class AEEA_Engine:
             "dbz_branch": int(st.dbz_branch),
             "re_psi": str(st.re_psi_exact),
             "initialized": bool(st._initialized),
+            "quat_tick_count": int(self._quat_tick_count),
         }
 
     def _check_coherence(self) -> str:
@@ -1373,45 +1396,222 @@ class AEEA_Engine:
         self._on_tick(price_data)
 
     # ------------------------------------------------------------------
-    # INTERNAL HELPERS
+    # INDICATOR CALCULATORS (PATCHED: live extraction from OHLCV)
+    # ------------------------------------------------------------------
+    def _compute_adx(self, high, low, close, period):
+        """ADX via Wilder's smoothing. Returns 0–100."""
+        if len(close) < period + 1: return Decimal('50.0')
+        trs, plus_dm, minus_dm = [], [], []
+        for i in range(1, period + 1):
+            tr = max(high[-i] - low[-i], abs(high[-i] - close[-i-1]), abs(low[-i] - close[-i-1]))
+            trs.append(tr)
+            up_move = high[-i] - high[-i-1]
+            dn_move = low[-i-1] - low[-i]
+            plus_dm.append(up_move if up_move > dn_move and up_move > 0 else Decimal('0.0'))
+            minus_dm.append(dn_move if dn_move > up_move and dn_move > 0 else Decimal('0.0'))
+        atr_val = sum(trs) / Decimal(period)
+        if atr_val == Decimal('0.0'): return Decimal('50.0')
+        plus_di = Decimal('100.0') * (sum(plus_dm) / Decimal(period)) / atr_val
+        minus_di = Decimal('100.0') * (sum(minus_dm) / Decimal(period)) / atr_val
+        di_sum = plus_di + minus_di
+        if di_sum == Decimal('0.0'): return Decimal('50.0')
+        dx = Decimal('100.0') * abs(plus_di - minus_di) / di_sum
+        return dx
+
+    def _compute_rvi(self, close, period):
+        """RVI: ratio of close-to-close vs high-low range."""
+        if len(close) < period + 1: return Decimal('50.0')
+        numerator = sum(abs(close[-i] - close[-i-1]) for i in range(1, period + 1))
+        denominator = sum(abs(close[-i] - close[-i-1]) for i in range(1, period + 1))
+        if denominator == Decimal('0.0'): return Decimal('50.0')
+        ratio = numerator / denominator
+        return Decimal('50.0') + Decimal('50.0') * (ratio - Decimal('0.5'))
+
+    def _compute_ac(self, high, low, close, period):
+        """Accelerator Oscillator proxy: momentum of momentum."""
+        if len(close) < period * 2: return Decimal('50.0')
+        ao_now = sum(close[-i] for i in range(1, period+1)) / Decimal(period) - sum(close[-i] for i in range(period+1, 2*period+1)) / Decimal(period)
+        ao_prev = sum(close[-i-1] for i in range(1, period+1)) / Decimal(period) - sum(close[-i-1] for i in range(period+1, 2*period+1)) / Decimal(period)
+        ac = ao_now - ao_prev
+        return Decimal('50.0') + ac
+
+    def _compute_force(self, close, volume, period):
+        """Force Index: EMA of price-change × volume."""
+        if len(close) < period + 1: return Decimal('50.0')
+        forces = [volume[-i] * (close[-i] - close[-i-1]) for i in range(1, period + 1)]
+        avg = sum(forces) / Decimal(period)
+        return Decimal('50.0') + avg / max(abs(avg), Decimal('1.0')) * Decimal('50.0')
+
+    def _compute_obv(self, close, volume, period):
+        """OBV normalized to [0,100]."""
+        if len(close) < period + 1: return Decimal('50.0')
+        obv = Decimal('0.0')
+        for i in range(1, period + 1):
+            if close[-i] > close[-i-1]: obv += volume[-i]
+            elif close[-i] < close[-i-1]: obv -= volume[-i]
+        max_possible = sum(volume[-period:])
+        if max_possible == Decimal('0.0'): return Decimal('50.0')
+        return Decimal('50.0') + Decimal('50.0') * obv / max_possible
+
+    def _compute_ad(self, high, low, close, volume, period):
+        """Accumulation/Distribution line normalized."""
+        if len(close) < period: return Decimal('50.0')
+        ad = Decimal('0.0')
+        for i in range(1, period + 1):
+            hl = high[-i] - low[-i]
+            if hl > Decimal('0.0'):
+                mfv = ((close[-i] - low[-i]) - (high[-i] - close[-i])) / hl * volume[-i]
+                ad += mfv
+        max_abs = max(abs(ad), Decimal('1.0'))
+        return Decimal('50.0') + Decimal('50.0') * ad / max_abs
+
+    def _compute_mfi(self, high, low, close, volume, period):
+        """Money Flow Index 0-100."""
+        if len(close) < period + 1: return Decimal('50.0')
+        pos_flow, neg_flow = Decimal('0.0'), Decimal('0.0')
+        for i in range(1, period + 1):
+            tp = (high[-i] + low[-i] + close[-i]) / Decimal('3.0')
+            tp_prev = (high[-i-1] + low[-i-1] + close[-i-1]) / Decimal('3.0')
+            mf = tp * volume[-i]
+            if tp > tp_prev: pos_flow += mf
+            elif tp < tp_prev: neg_flow += mf
+        if neg_flow == Decimal('0.0'): return Decimal('100.0')
+        mr = pos_flow / neg_flow
+        return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + mr))
+
+    def _compute_momentum(self, close, period):
+        """Momentum normalized."""
+        if len(close) < period + 1: return Decimal('50.0')
+        mom = close[-1] - close[-period-1]
+        ref = abs(close[-period-1]) if close[-period-1] != Decimal('0.0') else Decimal('1.0')
+        pct = mom / ref * Decimal('100.0')
+        return Decimal('50.0') + max(Decimal('-50.0'), min(Decimal('50.0'), pct))
+
+    def _compute_demarker(self, high, low, period):
+        """DeMarker oscillator 0-100."""
+        if len(high) < period + 1: return Decimal('50.0')
+        demax, demin = Decimal('0.0'), Decimal('0.0')
+        for i in range(1, period + 1):
+            if high[-i] > high[-i-1]: demax += high[-i] - high[-i-1]
+            if low[-i] < low[-i-1]: demin += low[-i-1] - low[-i]
+        total = demax + demin
+        if total == Decimal('0.0'): return Decimal('50.0')
+        return Decimal('100.0') * demax / total
+
+    def _compute_wpr(self, high, low, close, period):
+        """Williams %R remapped to [0,100] where 100=bullish."""
+        if len(close) < period: return Decimal('50.0')
+        hh = max(high[-period:])
+        ll = min(low[-period:])
+        rng = hh - ll
+        if rng == Decimal('0.0'): return Decimal('50.0')
+        wpr = Decimal('-100.0') * (hh - close[-1]) / rng
+        return Decimal('100.0') + wpr
+
+    def _compute_cci(self, high, low, close, period):
+        """CCI normalized to [0,100]."""
+        if len(close) < period: return Decimal('50.0')
+        tp = [(high[-i] + low[-i] + close[-i]) / Decimal('3.0') for i in range(1, period+1)]
+        sma_tp = sum(tp) / Decimal(period)
+        mad = sum(abs(x - sma_tp) for x in tp) / Decimal(period)
+        if mad == Decimal('0.0'): return Decimal('50.0')
+        cci = (tp[0] - sma_tp) / (Decimal('0.015') * mad)
+        return Decimal('50.0') + max(Decimal('-50.0'), min(Decimal('50.0'), cci / Decimal('4.0')))
+
+    # ------------------------------------------------------------------
+    # NORMALIZATION (PATCHED: live indicator extraction)
     # ------------------------------------------------------------------
     def _normalize(self, j):
-        if len(self.ohlcv_history) < j + 1: return (Decimal('50.0'),) * 13
+        """
+        PATCHED: Return live 13-indicator vector derived from OHLCV history.
+        Previously returned 12 hardcoded 50.0 constants that could never
+        exceed f+gf = 69.26, starving M() and N() of signal.
+        """
+        if len(self.ohlcv_history) < j + 1:
+            return (Decimal('50.0'),) * 13
         close_prices = [d["close"] for d in self.ohlcv_history]
         high_prices = [d["high"] for d in self.ohlcv_history]
         low_prices = [d["low"] for d in self.ohlcv_history]
-        k, d = stochastic(high_prices, low_prices, close_prices)
-        stoch_val = (k + d) / Decimal('2.0')
-        rsi_val = rsi(close_prices, 14)
-        return (Decimal('50.0'), stoch_val, Decimal('50.0'), Decimal('50.0'), Decimal('50.0'),
-                Decimal('50.0'), Decimal('50.0'), Decimal('50.0'), Decimal('50.0'), Decimal('50.0'),
-                Decimal('50.0'), Decimal('50.0'), rsi_val)
+        volume_data = [d.get("volume", Decimal('0.0')) for d in self.ohlcv_history]
+
+        # 0: ADX (live)
+        iadx = self._compute_adx(high_prices, low_prices, close_prices, j)
+        # 1: Stochastic (live)
+        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices)
+        stoch_val = (k_stoch + d_stoch) / Decimal('2.0')
+        # 2: RVI (relative volatility index, live)
+        rvi_val = self._compute_rvi(close_prices, j)
+        # 3: AC (Accelerator Oscillator, live)
+        ac_val = self._compute_ac(high_prices, low_prices, close_prices, j)
+        # 4: Force Index (live)
+        force_val = self._compute_force(close_prices, volume_data, j)
+        # 5: OBV (On-Balance Volume, live)
+        obv_val = self._compute_obv(close_prices, volume_data, j)
+        # 6: AD (Accumulation/Distribution, live)
+        ad_val = self._compute_ad(high_prices, low_prices, close_prices, volume_data, j)
+        # 7: MFI (Money Flow Index, live)
+        mfi_val = self._compute_mfi(high_prices, low_prices, close_prices, volume_data, j)
+        # 8: Momentum (live)
+        mom_val = self._compute_momentum(close_prices, j)
+        # 9: DeMarker (live)
+        dem_val = self._compute_demarker(high_prices, low_prices, j)
+        # 10: Williams %R (live, remapped to [0,100])
+        wpr_val = self._compute_wpr(high_prices, low_prices, close_prices, j)
+        # 11: CCI (Commodity Channel Index, live)
+        cci_val = self._compute_cci(high_prices, low_prices, close_prices, j)
+        # 12: RSI (live)
+        rsi_val = rsi(close_prices, min(14, j))
+
+        # Clamp each to [0, 100] to preserve the [0,100] manifold
+        def clamp(v):
+            if v < Decimal('0'): return Decimal('0')
+            if v > Decimal('100'): return Decimal('100')
+            return v
+
+        return (
+            clamp(iadx), clamp(stoch_val), clamp(rvi_val), clamp(ac_val),
+            clamp(force_val), clamp(obv_val), clamp(ad_val), clamp(mfi_val),
+            clamp(mom_val), clamp(dem_val), clamp(wpr_val), clamp(cci_val),
+            clamp(rsi_val),
+        )
 
     def _unify_volatility(self, j):
-        if len(self.ohlcv_history) < j + 1: return Decimal('50.0'), Decimal('50.0')
+        """
+        PATCHED: Compute ATR and StdDev normalization against a rolling
+        window so the regime classifier sees non-constant inputs.
+        """
+        if len(self.ohlcv_history) < j + 1:
+            return Decimal('50.0'), Decimal('50.0')
         close_prices = [d["close"] for d in self.ohlcv_history]
         high_prices = [d["high"] for d in self.ohlcv_history]
         low_prices = [d["low"] for d in self.ohlcv_history]
         atr_val = atr(high_prices, low_prices, close_prices, j)
         std_val = stddev(close_prices, j)
+
+        # Build rolling series for min/max over same window
         atr_list, std_list = [], []
-        for i in range(len(self.ohlcv_history) - j):
-            if i + j <= len(high_prices):
-                sub_high, sub_low, sub_close = high_prices[i:i + j], low_prices[i:i + j], close_prices[i:i + j]
-                if len(sub_high) == j:
-                    atr_list.append(atr(sub_high, sub_low, sub_close, j))
-                    std_list.append(stddev(sub_close, j))
+        for i in range(max(0, len(self.ohlcv_history) - j * 2), len(self.ohlcv_history) - j):
+            sub_high = high_prices[i:i+j]
+            sub_low = low_prices[i:i+j]
+            sub_close = close_prices[i:i+j]
+            if len(sub_high) == j:
+                atr_list.append(atr(sub_high, sub_low, sub_close, j))
+                std_list.append(stddev(sub_close, j))
+
         atr_norm, std_norm = Decimal('50.0'), Decimal('50.0')
-        if atr_list:
-            min_atr, max_atr = min(atr_list), max(atr_list)
-            if max_atr - min_atr > Decimal('0.0'):
-                atr_norm = Decimal('100.0') * (atr_val - min_atr) / (max_atr - min_atr)
-        if std_list:
-            min_std, max_std = min(std_list), max(std_list)
-            if max_std - min_std > Decimal('0.0'):
-                std_norm = Decimal('100.0') * (std_val - min_std) / (max_std - min_std)
+        if len(atr_list) >= 2:
+            mn, mx = min(atr_list), max(atr_list)
+            if mx - mn > Decimal('0.0'):
+                atr_norm = Decimal('100.0') * (atr_val - mn) / (mx - mn)
+        if len(std_list) >= 2:
+            mn, mx = min(std_list), max(std_list)
+            if mx - mn > Decimal('0.0'):
+                std_norm = Decimal('100.0') * (std_val - mn) / (mx - mn)
         return atr_norm, std_norm
 
+    # ------------------------------------------------------------------
+    # IMBALANCE OPERATORS (M / N)
+    # ------------------------------------------------------------------
     def _M(self, j, price, Price, iA, cA, kA, HH):
         m = 0
         y = self.state.y
@@ -1420,12 +1620,17 @@ class AEEA_Engine:
         idx = j - y - 1
         if idx < 0 or idx >= len(HH): return 0
         for i in range(13):
+            if i >= len(iA): continue
+            val_iA = iA[i]
+            val_cA = cA[i] if i < len(cA) else Decimal('50.0')
+            val_kA = kA[i] if i < len(kA) else Decimal('50.0')
             if Price > HH[idx]:
-                if iA[i] > f or cA[i] < kA[i]: m += 1
+                if val_iA > f or val_cA < val_kA: m += 1
             elif price > HH[idx]:
-                if iA[i] > f or iA[i] < kA[i]: m += 1
-            elif iA[i] > f: m += 1
-        if iA[0] > f or iA[0] < g_minus: m += 1
+                if val_iA > f or val_iA < val_kA: m += 1
+            elif val_iA > f: m += 1
+        if len(iA) > 0:
+            if iA[0] > f or iA[0] < g_minus: m += 1
         if self.state.iIHKt > f and self.state.iIHKk > f: m += 1
         return m
 
@@ -1437,12 +1642,17 @@ class AEEA_Engine:
         idx = j - y - 1
         if idx < 0 or idx >= len(LL): return 0
         for i in range(13):
+            if i >= len(iA): continue
+            val_iA = iA[i]
+            val_cA = cA[i] if i < len(cA) else Decimal('50.0')
+            val_lA = lA[i] if i < len(lA) else Decimal('50.0')
             if Price < LL[idx]:
-                if iA[i] < g_minus or cA[i] > lA[i]: n += 1
+                if val_iA < g_minus or val_cA > val_lA: n += 1
             elif price < LL[idx]:
-                if iA[i] < g_minus or iA[i] > lA[i]: n += 1
-            elif iA[i] < g_minus: n += 1
-        if iA[0] > f or iA[0] < g_minus: n += 1
+                if val_iA < g_minus or val_iA > val_lA: n += 1
+            elif val_iA < g_minus: n += 1
+        if len(iA) > 0:
+            if iA[0] > f or iA[0] < g_minus: n += 1
         if self.state.iIHKt < g_minus and self.state.iIHKk < g_minus: n += 1
         return n
 
@@ -1473,7 +1683,7 @@ class AEEA_Engine:
         state.Premium[idx] = iH
         state.Discount[idx] = iL
         for i in range(13):
-            if idx < len(state.kA[i]):
+            if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
                 state.kA[i][idx] = state.cA[i][idx]
                 state.lA[i][idx] = state.cA[i][idx]
         if state.R and state.FG:
@@ -1497,7 +1707,7 @@ class AEEA_Engine:
             state.Premium[idx] = H
             state.Discount[idx] = L
             for i in range(13):
-                if idx < len(state.kA[i]):
+                if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
                     state.kA[i][idx] = state.cA[i][idx]
                     state.lA[i][idx] = state.cA[i][idx]
 
@@ -1639,6 +1849,10 @@ class AEEA_Engine:
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
 
     def _on_tick(self, price_data):
+        """
+        PATCHED: Explicitly populate iA/cA with live indicator values
+        on every tick so M() and N() have real signal to work with.
+        """
         state = self.state
         state.price = price_data.bid
         state.Price = price_data.close
@@ -1672,12 +1886,35 @@ class AEEA_Engine:
             state.iPrice = self.ohlcv_history[-2]["close"]
             state.iH = self.ohlcv_history[-2]["high"]
             state.iL = self.ohlcv_history[-2]["low"]
-        if len(self.ohlcv_history) >= state.y + 1:
-            close_prices = [d["close"] for d in self.ohlcv_history[-state.y - 1:]]
-            state.Stock, _, state.Sale = bollinger_bands(close_prices, state.y)
-            state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], state.y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
-        if len(self.ohlcv_history) >= state.y + 1:
-            state.iATR, state.iStdDev = self._unify_volatility(state.y)
+
+        # ── PATCHED: POPULATE iA / cA ON EVERY TICK ─────────────────
+        y = state.y
+        if len(self.ohlcv_history) >= y + 1:
+            norm_vals = self._normalize(y)
+            for i in range(min(13, len(norm_vals))):
+                if i < len(state.iA) and len(state.iA[i]) > 0:
+                    state.iA[i][0] = norm_vals[i]
+                    state.cA[i][0] = norm_vals[i]
+            self._indicator_populate_count += 1
+            # Bollinger bands
+            close_prices = [d["close"] for d in self.ohlcv_history[-y-1:]]
+            state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
+            state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0'), Decimal('0'), Decimal('0'))
+            # Volatility unification
+            state.iATR, state.iStdDev = self._unify_volatility(y)
+            # Ichimoku
+            high_prices = [d["high"] for d in self.ohlcv_history]
+            low_prices = [d["low"] for d in self.ohlcv_history]
+            close_all = [d["close"] for d in self.ohlcv_history]
+            if len(close_all) >= 52:
+                ihk = ichimoku(high_prices, low_prices, close_all)
+                state.iIHKk = ihk["kijun"]
+                state.iIHKt = ihk["tenkan"]
+            else:
+                state.iIHKk = Decimal('50.0')
+                state.iIHKt = Decimal('50.0')
+        # ─────────────────────────────────────────────────────────────
+
         self._on_point()
         self._O(state.iO, state.O, state.J)
         self._O(state.io, state.o, state.iJ)
@@ -1989,7 +2226,8 @@ class AEEA_Engine:
         state.signal = state.price
         state.signature = True
         self._last_signal_time = datetime.now()
-        logger.info(f"📡 SIGNAL GENERATED: price={state.price:.5f}, tick={state.tick}, dbz={state.dbz_branch}")
+        self._imbalance_fire_count += 1
+        logger.info(f"📡 SIGNAL GENERATED #{self._imbalance_fire_count}: price={state.price:.5f}, tick={state.tick}, dbz={state.dbz_branch}")
 
     def _on_gaurd(self, inp):
         state = self.state
@@ -2154,6 +2392,19 @@ class AEEA_Engine:
         n_count = sum(1 for v in state.l if v)
         condition_met = m_count - n_count > 2
         info = self._verify_arc_length_coherence()
+
+        # PATCHED: indicator sample for diagnostic transparency
+        indicator_sample = []
+        for i in range(min(13, len(state.iA))):
+            if len(state.iA[i]) > 0:
+                indicator_sample.append(str(state.iA[i][0]))
+        indicator_max = "0"
+        if indicator_sample:
+            try:
+                indicator_max = str(max(Decimal(s) for s in indicator_sample))
+            except Exception:
+                indicator_max = "error"
+
         return {
             "signal": float(state.signal), "price": float(state.price), "signature": state.signature,
             "KC": state.KC, "prime": state.prime, "dime": state.dime, "m_count": m_count,
@@ -2166,6 +2417,14 @@ class AEEA_Engine:
             "radius_sq": info["radius_sq"],
             "deviation": info["deviation"],
             "re_psi": info["re_psi"],
+            # PATCHED diagnostics
+            "quat_tick_count": int(self._quat_tick_count),
+            "indicator_sample": indicator_sample,
+            "indicator_max": indicator_max,
+            "thresh_overbought": str(F_THRESHOLD + GF_TOLERANCE),
+            "thresh_oversold": str(G_THRESHOLD - GF_TOLERANCE),
+            "indicator_populate_count": int(self._indicator_populate_count),
+            "imbalance_fire_count": int(self._imbalance_fire_count),
         }
 
 
@@ -2423,7 +2682,7 @@ class TunnelManager:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.19"
+    server_version = "AEI-Bridge/4.20"
 
     def log_message(self, fmt, *args):
         return
@@ -2483,7 +2742,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "ok": not stale,
                 "service": "aei-bridge",
-                "version": "4.19",
+                "version": "4.20",
                 "last_price_update": last,
                 "age_seconds": age_seconds,
                 "stale": stale,
@@ -2503,7 +2762,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "webapp_enabled": True,
                 "cors_origin": CORS_ORIGIN,
                 "relay_url": RELAY_URL or None,
-                "version": "4.19",
+                "version": "4.20",
             })
             return
         if path == "/state":
@@ -2529,9 +2788,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # Attach arc-length info from the live engine
             try:
                 probe_data["arc_length"] = engine._verify_arc_length_coherence()
+                probe_data["signal_status"] = engine.get_signal_status()
             except Exception:
                 pass
             self._send_json(200, probe_data)
+            return
+        if path == "/diagnostics":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            try:
+                diag = engine.get_signal_status()
+                diag["arc_length"] = engine._verify_arc_length_coherence()
+                diag["quat_history_depth"] = len(engine.state.quat_history)
+                diag["ohlcv_history_depth"] = len(engine.ohlcv_history)
+                self._send_json(200, diag)
+            except Exception as e:
+                self._send_json(500, {"error": "diagnostics_failed", "detail": str(e)})
             return
         if path == "/" or path == "/index.html":
             try:
@@ -2719,6 +2993,11 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
             idx = st.Z - st.y - 1
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
             info = engine._verify_arc_length_coherence()
+            # PATCHED snapshot: include indicator diagnostics
+            indicator_sample = []
+            for i in range(min(13, len(st.iA))):
+                if len(st.iA[i]) > 0:
+                    indicator_sample.append(str(st.iA[i][0]))
             snapshot = {
                 "symbol": SYMBOL,
                 "price": str(st.price),
@@ -2742,6 +3021,11 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "last_price_update": datetime.now().isoformat(),
                 "engine_initialized": bool(st.FG),
                 "consecutive_zero_prices": int(getattr(engine, "_consecutive_zero_prices", 0)),
+                # PATCHED: diagnostics
+                "quat_tick_count": int(getattr(engine, "_quat_tick_count", 0)),
+                "indicator_sample": indicator_sample,
+                "indicator_populate_count": int(getattr(engine, "_indicator_populate_count", 0)),
+                "imbalance_fire_count": int(getattr(engine, "_imbalance_fire_count", 0)),
             }
             BRIDGE_STATE.publish(snapshot)
         except Exception as e:
@@ -2814,6 +3098,7 @@ class AEI_Bot:
             [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
             [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
             [InlineKeyboardButton("🧬 Arc-Length", callback_data="arclen"), InlineKeyboardButton("🌿 DbZ", callback_data="dbz")],
+            [InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics")],
         ]
         if webapp_url:
             rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
@@ -2855,6 +3140,7 @@ class AEI_Bot:
             "`/indicators` - 13D Hilbert Space projection\n"
             "`/fvg` - Fair Value Gap tracking (Leech-anchored)\n"
             "`/arclen` - Exact arc-length & DbZ state\n"
+            "`/diagnostics` - Full engine diagnostic snapshot\n"
             "`/reset` - Reset topological branch\n"
             "`/start_feed` - Start price feed\n"
             "`/stop_feed` - Stop price feed\n"
@@ -2935,6 +3221,7 @@ class AEI_Bot:
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🧠 *KC State:* {state.KC}\n"
             f"🔄 *Tick:* {state.tick}\n"
+            f"🌀 *Quat Ticks:* {self.engine._quat_tick_count}\n"
             f"🧠 *Engine State:* {init_mark}\n"
             f"🌐 *Mini App User:* {state.webapp_username or '—'}\n"
             f"📅 *Last Update:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -2967,6 +3254,7 @@ class AEI_Bot:
             f"🌀 *Re[Ψ]* = `{info['re_psi']}`\n"
             f"🧊 *Current Φ* = `{qstr}`\n"
             f"📜 *Quaternion history depth:* {len(state.quat_history)}\n"
+            f"🌀 *Quat tick count:* {self.engine._quat_tick_count}\n"
             f"⏱️ *Exact time* = `{state.time_fraction}`\n"
             f"🔷 *FVG anchors:* {len(state.fvg_anchor_map)} Leech vectors"
         )
@@ -2992,6 +3280,38 @@ class AEI_Bot:
             "• Re[Ψ] > 0 → project to critical line Re(s)=½\n"
             "• Re[Ψ] ≤ 0 → apply Natalia fibration εᵏ perturbation\n"
             "• Δ ≈ 0 → relax ε toward baseline 1/100"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown")
+
+    async def diagnostics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Full engine diagnostic snapshot — exposes dead-zone detection."""
+        status = self.engine.get_signal_status()
+        indicator_sample_str = ", ".join(status.get("indicator_sample", []))
+        response = (
+            "🔬 *ENGINE DIAGNOSTICS (v4.20)*\n"
+            f"📊 *Tick:* {status.get('tick')}\n"
+            f"🌀 *Quat Ticks:* {status.get('quat_tick_count')}\n"
+            f"🧮 *Indicator Populates:* {status.get('indicator_populate_count')}\n"
+            f"📡 *Signal Fires:* {status.get('imbalance_fire_count')}\n"
+            f"⚖️ *m / n:* {status.get('m_count')} / {status.get('n_count')}\n\n"
+            "*Indicator Sample (13D):*\n"
+            f"`[{indicator_sample_str}]`\n"
+            f"*Max:* {status.get('indicator_max')}\n"
+            f"*Overbought Thresh:* {status.get('thresh_overbought')}\n"
+            f"*Oversold Thresh:* {status.get('thresh_oversold')}\n\n"
+            "*Arc-Length:*\n"
+            f"*s² =* `{status.get('arc_sq')}`\n"
+            f"*r² =* `{status.get('radius_sq')}`\n"
+            f"*Δ =* `{status.get('deviation')}`\n"
+            f"*Re[Ψ] =* `{status.get('re_psi')}`\n\n"
+            "*Signal State:*\n"
+            f"*Level:* {status.get('signal'):.5f}\n"
+            f"*Signature:* {status.get('signature')}\n"
+            f"*Regime:* {status.get('regime')}\n"
+            "*Diagnostic Hint:* If Max < 69.26 and Max > 30.74, market is genuinely ranging — no signal expected. If Indicator Populates is 0, iA is not being written on the tick path."
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -3385,6 +3705,7 @@ class AEI_Bot:
             f"*State endpoint:* `{public_url.rstrip('/')}/state`\n"
             f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
             f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
+            f"*Diagnostics endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
             f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`\n"
             f"*Relay URL:* `{RELAY_URL or 'unset'}`",
             parse_mode="Markdown"
@@ -3418,6 +3739,8 @@ class AEI_Bot:
             await self.arclen(update, context)
         elif action == "dbz":
             await self.dbz(update, context)
+        elif action == "diagnostics":
+            await self.diagnostics(update, context)
         elif action == "webapp_pending":
             await query.edit_message_text(
                 "⏳ *Mini App tunnel is starting…*\n"
@@ -3453,6 +3776,7 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("fvg", self.fvg))
         self.application.add_handler(CommandHandler("arclen", self.arclen))
         self.application.add_handler(CommandHandler("dbz", self.dbz))
+        self.application.add_handler(CommandHandler("diagnostics", self.diagnostics))
         self.application.add_handler(CommandHandler("reset", self.reset))
         self.application.add_handler(CommandHandler("start_feed", self.start_feed))
         self.application.add_handler(CommandHandler("stop_feed", self.stop_feed))
@@ -3466,10 +3790,11 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info(f"📊 Quantum-Financial Topology Engine initialized (v4.19).")
+        logger.info(f"📊 Quantum-Financial Topology Engine initialized (v4.20).")
         logger.info(f"🧠 EXACT Arc-Length Axiom (s²=r²) via Python Fraction + Quat.")
         logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
         logger.info(f"🧬 Leech Λ₂₄ anchoring: FVGs project to 24D lattice vectors.")
+        logger.info(f"⚡ Live indicator extraction: 13D Hilbert-space projection populated per tick.")
         logger.info(f"🌐 Relay: {RELAY_URL or 'UNSET — set RELAY_URL env var!'}")
         logger.info(f"⚡ Telegram Mini App enabled.")
         logger.info(f"🌐 CORS origin: {CORS_ORIGIN}")
@@ -3488,7 +3813,7 @@ _bridge_attach_to_bot(AEI_Bot)
 # ============================================================================
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.19 (F-STRING FIX)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.20 (CORE ACTIVATION)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
 • Telegram bot      : app.py (python-telegram-bot)
@@ -3498,18 +3823,26 @@ Architecture:
 • Web GUI           : index.html → Telegram Web App (Mini App)
 • Menu button       : MenuButtonWebApp (one tap to open Mini App)
 
-v4.19 — F-STRING SYNTAX FIX + CONSTRAINT-LOCKED:
-• Removed backslashes from f-string expressions in AEI_Bot.start()
-• Refactored inline conditionals to pre-computed variables
-• All prior v4.18 logic preserved verbatim
-• Heroku deployment unblocked (Python 3.11 f-string compliance)
+v4.20 — CONSTRAINT-LOCKED CORE ACTIVATION:
+• _normalize() now returns LIVE indicator values (13D)
+• 12 new indicator calculators: ADX, RVI, AC, Force, OBV, AD, MFI,
+  Momentum, DeMarker, WPR, CCI, RSI — all derived from OHLCV
+• _unify_volatility() now uses rolling window min/max instead of
+  single-point normalization
+• _step_quaternion_field() has hard guard against identity collapse
+• _on_tick() explicitly populates iA/cA on every tick
+• _apply_dbz_branch() logs exceptions instead of silently swallowing
+• New /diagnostics endpoint + Telegram command for dead-zone detection
+• Diagnostic counters: _quat_tick_count, _indicator_populate_count,
+  _imbalance_fire_count
+• All prior v4.19 logic preserved verbatim
 
 Quick start:
 1. Deploy the Cloudflare Worker (see worker.js).
 2. export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'
 3. export RELAY_URL='https://your-worker.workers.dev'
 4. python3 app.py
-5. In Telegram: /start → /start_feed → tap "⚡ Open ÆEA Mini App"
+5. In Telegram: /start → /start_feed → /diagnostics → verify m/n fire
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
