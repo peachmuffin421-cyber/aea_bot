@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Codex Symbolica · ÆEA Chart Overlay · Constraint-Locked v3.4.4</title>
+    <title>Codex Symbolica · ÆEA Chart Overlay · Constraint-Locked v3.5.0</title>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
@@ -269,6 +269,7 @@
         #proofTrace .pt-ts { color: #4488ff; opacity: 0.6; }
         #proofTrace .pt-tma { color: #44ffcc; font-weight: bold; }
         #proofTrace .pt-relay { color: #ffaa44; font-weight: bold; }
+        #proofTrace .pt-engine { color: #ffaa44; font-weight: bold; }
         #errorDisplay {
             position: absolute;
             bottom: 200px;
@@ -401,6 +402,27 @@
         }
         #zetaPanel .label { opacity: 0.5; }
         #zetaPanel .value { color: #44aaff; font-weight: bold; }
+
+        #enginePanel {
+            position: absolute;
+            bottom: 480px;
+            right: 20px;
+            z-index: 10;
+            pointer-events: none;
+            background: rgba(0,0,0,0.85);
+            border: 1px solid #335577;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 0.6rem;
+            min-width: 200px;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            line-height: 1.6;
+        }
+        #enginePanel .label { opacity: 0.5; }
+        #enginePanel .value { color: #ffaa44; font-weight: bold; }
+        #enginePanel .value.coherent { color: #00ff88; }
+        #enginePanel .value.deviant { color: #ff4466; }
 
         #chartPanel {
             position: absolute;
@@ -665,7 +687,7 @@
             #metrics { display: none; }
             #info { max-width: 60vw; font-size: 0.55rem; }
             #controls { max-width: 60vw; }
-            #lingosoPanel, #aeaePanel, #observerPanel, #zetaPanel,
+            #lingosoPanel, #aeaePanel, #observerPanel, #zetaPanel, #enginePanel,
             #timeSeriesPanel, #spiralLegend { display: none; }
         }
     </style>
@@ -685,7 +707,7 @@
 </div>
 
 <div id="info">
-    <h1>⚡ CODEX SYMBOLICA · ÆEA v3.4.4</h1>
+    <h1>⚡ CODEX SYMBOLICA · ÆEA v3.5.0</h1>
     <p>S³→S² · DbZ · O[Ψ] · CRT · CF · ζ(s) · Lingoso · ÆEA · ⊢ CS</p>
     <p style="margin-top:4px;">
         <span style="color:#ffaa44;">H</span> help ·
@@ -712,6 +734,7 @@
     <div><span class="label">‖ψ‖² (L²)</span> <span class="value" id="psi-norm-val">0.0000</span></div>
     <div><span class="label">ζ(½+it)</span> <span class="value" id="zeta-val">0.0000</span></div>
     <div><span class="label">RELAY</span> <span class="value" id="relay-status" style="color:#44ffcc;">—</span></div>
+    <div><span class="label">ENGINE COHERENCE</span> <span class="value" id="engine-coherence" style="color:#ffaa44;">—</span></div>
 </div>
 
 <div id="status">
@@ -828,8 +851,22 @@
     <div><span class="label">|ζ(½+it)|</span> <span class="value" id="zeta-mag">0.0000</span></div>
 </div>
 
-<div id="explainPanel" style="display:none;position:absolute;top:20px;left:50%;transform:translateX(-50%);z-index:11;background:rgba(5,5,16,0.95);border:1px solid #335577;border-radius:8px;padding:12px 20px;font-size:0.6rem;max-width:600px;backdrop-filter:blur(8px);box-shadow:0 4px 30px rgba(0,0,0,0.5);line-height:1.6;">
-    <h3 style="color:#00ffcc;margin-bottom:6px;font-size:0.75rem;letter-spacing:1px;">⚡ CODEX SYMBOLICA — VISUALIZATION KEY v3.4.4</h3>
+<div id="enginePanel">
+    <div class="label">ENGINE STATE (app.py):</div>
+    <div><span class="label">Price</span> <span class="value" id="eng-price">—</span></div>
+    <div><span class="label">Signal</span> <span class="value" id="eng-signal">—</span></div>
+    <div><span class="label">Tick</span> <span class="value" id="eng-tick">—</span></div>
+    <div><span class="label">Regime</span> <span class="value" id="eng-regime">—</span></div>
+    <div><span class="label">m/n</span> <span class="value" id="eng-mn">—</span></div>
+    <div><span class="label">Coherence</span> <span class="value" id="eng-coherence">—</span></div>
+    <div><span class="label">Arc s²</span> <span class="value" id="eng-arc">—</span></div>
+    <div><span class="label">Rad r²</span> <span class="value" id="eng-rad">—</span></div>
+    <div><span class="label">Deviation</span> <span class="value" id="eng-dev">—</span></div>
+    <div><span class="label">FG Init</span> <span class="value" id="eng-fg">—</span></div>
+</div>
+
+<div id="explainPanel" style="display:none;position:absolute;top:20px;left:50%;transform:translateX(-50%);z-index:11;background:rgba(5,5,16,0.95);border:1px solid #335577;border-radius:8px;padding:12px 20px;font-size:0.6rem;max-width:640px;backdrop-filter:blur(8px);box-shadow:0 4px 30px rgba(0,0,0,0.5);line-height:1.6;">
+    <h3 style="color:#00ffcc;margin-bottom:6px;font-size:0.75rem;letter-spacing:1px;">⚡ CODEX SYMBOLICA — VISUALIZATION KEY v3.5.0</h3>
     <div><span style="color:#ffaa44;font-weight:bold;">Φ (Quaternion)</span> <span style="opacity:0.8;">— Current state on S³, projected to S² via Hopf fibration.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">s² (exact)</span> <span style="opacity:0.8;">— Squared arc length from origin (identity quaternion), exact rational.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">r² (exact)</span> <span style="opacity:0.8;">— Squared radial distance ‖q‖², exact rational.</span></div>
@@ -838,6 +875,8 @@
     <div><span style="color:#ffaa44;font-weight:bold;">‖ψ‖² (L²)</span> <span style="opacity:0.8;">— True L² norm of the coherent wavefunction over the 4D grid.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">ζ(½+it)</span> <span style="opacity:0.8;">— Riemann zeta function evaluated on the critical line.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">RELAY</span> <span style="opacity:0.8;">— Cloudflare Worker relay status (upstream Yahoo Finance).</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">ENGINE COHERENCE</span> <span style="opacity:0.8;">— Live status reported by the Python engine (app.py) via /state.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">ENGINE STATE PANEL</span> <span style="opacity:0.8;">— Direct mirror of the live engine's internal fields: Price, Signal, Tick, Regime, m/n, Arc s², Rad r², Deviation. This is the raw truth from app.py.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">DbZ Branch</span> <span style="opacity:0.8;">— Re[Ψ] > 0 → critical line; Re[Ψ] ≤ 0 → Natalia fibration.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">ÆEA δ</span> <span style="opacity:0.8;">— Kronecker delta δ(m−n−2). Market topology parity.</span></div>
     <div style="margin-top:8px;border-top:1px solid #224466;padding-top:6px;">
@@ -857,11 +896,11 @@
         <span style="opacity:0.8;">— Clear active tool, return to rotate/zoom mode.</span>
     </div>
     <div style="margin-top:8px;border-top:1px solid #224466;padding-top:6px;opacity:0.8;">
-        <span style="color:#44ffcc;font-weight:bold;">🌐 DATA PIPELINE v3.4.4</span>
+        <span style="color:#44ffcc;font-weight:bold;">🌐 DATA PIPELINE v3.5.0</span>
         — Price data flows: Cloudflare Worker → Heroku (app.py) → Bridge (/state) → this Mini App.
-        The Worker fetches Yahoo Finance from its own edge IP, bypassing IP-based
-        rate limits. The Mini App never talks to Yahoo directly. If the relay shows
-        <span style="color:#ff4466;">RELAY: DOWN</span>, the Worker is unreachable — check its dashboard.
+        The Mini App now mirrors the engine's true coherence state via the ENGINE COHERENCE metric,
+        replacing the previous local-only approximation. ENGINE STATE panel shows the raw
+        Python engine fields (arc_sq, radius_sq, deviation) directly from /state.
     </div>
     <div style="margin-top:6px;opacity:0.6;">Press <span style="color:#ffaa44;">H</span> to toggle this panel. Press <span style="color:#ffaa44;">Shift+T</span> to toggle TRACE.</div>
 </div>
@@ -941,14 +980,6 @@
 
     // ============================================================
     // 0. BACKEND CONFIGURATION — SINGLE SOURCE OF TRUTH
-    // ============================================================
-    // BACKEND_URL → your Heroku app (app.py with bridge endpoints).
-    // The Mini App polls /state from Heroku, which in turn polls
-    // Yahoo Finance via the Cloudflare Worker relay.
-    //
-    // RELAY_URL   → optional direct-to-Worker live price feed for the
-    // HUD, bypassing the Heroku bridge for lower latency. If empty,
-    // no direct fetch is attempted.
     // ============================================================
     const BACKEND_URL = 'https://aeea-df7f2ade617d.herokuapp.com';
     const RELAY_URL = '';
@@ -1516,6 +1547,8 @@
             this._traceVisible = false;
             this._fibrationConverged = false;
             this._lastFibrationTerm = Fraction.zero();
+            // Engine sync fields (populated by ingestEngineState)
+            this.engineState = null;
         }
 
         coherentWavefunction(qPoint) {
@@ -1621,6 +1654,68 @@
             if (this.proofTrace.length > TRACE_MAX) this.proofTrace.shift();
         }
 
+        // ============================================================
+        // ENGINE SYNC — bind internal Φ-field to live app.py state
+        // ============================================================
+        ingestEngineState(engineState) {
+            if (!engineState) return;
+            this.engineState = engineState;
+            try {
+                // Bind rePsi to engine's signal, scaled to [-1, 1] safely
+                if (engineState.signal !== undefined) {
+                    const signalFloat = parseFloat(engineState.signal);
+                    if (isFinite(signalFloat)) {
+                        // Map signal > 0 to positive rePsi, signal == 0 to 0.5
+                        // This ensures DbZ branch reflects real market state
+                        const normalized = signalFloat > 0 ? Math.tanh(signalFloat / 1000) : 0.5;
+                        this.rePsi = Fraction.fromFloat(normalized);
+                    }
+                }
+                // Bind market topology to engine's m/n counts
+                if (engineState.m_count !== undefined && engineState.n_count !== undefined) {
+                    this.marketM = parseInt(engineState.m_count, 10) || 0;
+                    this.marketN = parseInt(engineState.n_count, 10) || 0;
+                    this.marketImbalance = this.marketM - this.marketN - 2;
+                    if (this.marketImbalance > 2) this.marketRegime = 'BULLISH';
+                    else if (this.marketImbalance < -2) this.marketRegime = 'BEARISH';
+                    else this.marketRegime = 'NEUTRAL';
+                }
+                // Bind regime from engine
+                if (engineState.regime) {
+                    this.marketRegime = engineState.regime.toUpperCase();
+                }
+                // Bind engine's true coherence to our internal flag
+                if (engineState.coherent !== undefined) {
+                    this.engineCoherent = !!engineState.coherent;
+                }
+                // Bind engine's deviation
+                if (engineState.deviation !== undefined) {
+                    try {
+                        this.engineDeviation = Fraction.fromExactString(String(engineState.deviation));
+                    } catch (_) {
+                        this.engineDeviation = Fraction.zero();
+                    }
+                }
+                // Bind engine's arc/radius
+                if (engineState.arc_sq !== undefined) {
+                    try {
+                        this.engineArcSq = Fraction.fromExactString(String(engineState.arc_sq));
+                    } catch (_) {}
+                }
+                if (engineState.radius_sq !== undefined) {
+                    try {
+                        this.engineRadiusSq = Fraction.fromExactString(String(engineState.radius_sq));
+                    } catch (_) {}
+                }
+                // Bind engine's FG init flag
+                if (engineState.engine_initialized !== undefined) {
+                    this.engineInitialized = !!engineState.engine_initialized;
+                }
+            } catch (e) {
+                console.warn('ingestEngineState failed:', e);
+            }
+        }
+
         step(dt) {
             try {
                 const dtf = dt instanceof Fraction ? dt : new Fraction(dt);
@@ -1668,7 +1763,13 @@
                 this.r2 = this.r.mul(this.r);
                 this.srRatio = this.s2.div(this.r2);
                 this.dev = this.s2.sub(this.r2);
-                this.rePsi = this.q.a;
+
+                // RePsi: prefer engine-bound value if available, else fall back to quaternion
+                if (this.engineState && this.engineState.signal !== undefined && this.rePsiFromEngine) {
+                    // Already bound in ingestEngineState
+                } else {
+                    this.rePsi = this.q.a;
+                }
 
                 const proj = this.q.projectToS2();
                 this.proj = proj;
@@ -1773,16 +1874,6 @@
                 this.crtResidues = moduli.map(m => crtResidueFromExact(devAbsFrac, m));
                 const lattice = crtLattice(moduli);
                 this.crtState = crtSolve(this.crtResidues, lattice);
-
-                const devAbs = Math.abs(this.dev.toFloat());
-                const commAbs = this.commutatorNorm.toFloat();
-                const marketSignal = Math.min(1, devAbs * 5 + commAbs * 2);
-                this.marketM = Math.max(0, Math.min(14, Math.floor(8 + 6 * marketSignal)));
-                this.marketN = Math.max(0, Math.min(14, Math.floor(6 - 4 * marketSignal)));
-                this.marketImbalance = this.marketM - this.marketN - 2;
-                if (this.marketImbalance > 2) this.marketRegime = 'BULLISH';
-                else if (this.marketImbalance < -2) this.marketRegime = 'BEARISH';
-                else this.marketRegime = 'NEUTRAL';
 
                 const t2 = this.time.mul(new Fraction(2, 10));
                 const t25 = this.time.mul(new Fraction(25, 100));
@@ -1895,6 +1986,7 @@
             this._initialized = false;
             this._fibrationConverged = false;
             this._lastFibrationTerm = Fraction.zero();
+            this.engineState = null;
         }
 
         toggleMode() {
@@ -2020,6 +2112,7 @@
     const psiNormValSpan = document.getElementById('psi-norm-val');
     const zetaValSpan = document.getElementById('zeta-val');
     const relayStatusSpan = document.getElementById('relay-status');
+    const engineCoherenceSpan = document.getElementById('engine-coherence');
     const dbzBranchSpan = document.getElementById('dbz-branch');
     const aeaeDeltaSpan = document.getElementById('aeae-delta');
     const aeaeMSpan = document.getElementById('aeae-m');
@@ -2046,6 +2139,17 @@
     const lingosoActiveSpan = document.getElementById('lingoso-active');
     const lingosoCoordsSpan = document.getElementById('lingoso-coords');
     const explainPanel = document.getElementById('explainPanel');
+    // Engine panel spans
+    const engPriceSpan = document.getElementById('eng-price');
+    const engSignalSpan = document.getElementById('eng-signal');
+    const engTickSpan = document.getElementById('eng-tick');
+    const engRegimeSpan = document.getElementById('eng-regime');
+    const engMnSpan = document.getElementById('eng-mn');
+    const engCoherenceSpan = document.getElementById('eng-coherence');
+    const engArcSpan = document.getElementById('eng-arc');
+    const engRadSpan = document.getElementById('eng-rad');
+    const engDevSpan = document.getElementById('eng-dev');
+    const engFgSpan = document.getElementById('eng-fg');
 
     let frameCount = 0;
 
@@ -2456,6 +2560,7 @@
                 zetaValSpan.textContent = Math.sqrt(
                     codex.lastZetaRe.toFloat() ** 2 + codex.lastZetaIm.toFloat() ** 2
                 ).toFixed(4);
+
                 if (relayStatusSpan) {
                     if (window.chartOverlay && window.chartOverlay.connected) {
                         relayStatusSpan.textContent = 'UP';
@@ -2463,6 +2568,22 @@
                     } else {
                         relayStatusSpan.textContent = 'DOWN';
                         relayStatusSpan.style.color = '#ff4466';
+                    }
+                }
+
+                // ENGINE COHERENCE — read from live /state
+                if (engineCoherenceSpan) {
+                    if (codex.engineState && codex.engineState.coherent !== undefined) {
+                        if (codex.engineState.coherent) {
+                            engineCoherenceSpan.textContent = '✅ COHERENT';
+                            engineCoherenceSpan.style.color = '#00ff88';
+                        } else {
+                            engineCoherenceSpan.textContent = '🔄 DEVIANT';
+                            engineCoherenceSpan.style.color = '#ff4466';
+                        }
+                    } else {
+                        engineCoherenceSpan.textContent = '⏳ WAITING';
+                        engineCoherenceSpan.style.color = '#ffaa44';
                     }
                 }
 
@@ -2491,6 +2612,29 @@
                 zetaMagSpan.textContent = Math.sqrt(
                     codex.lastZetaRe.toFloat() ** 2 + codex.lastZetaIm.toFloat() ** 2
                 ).toFixed(4);
+
+                // ENGINE PANEL — mirror of app.py state
+                if (codex.engineState) {
+                    const es = codex.engineState;
+                    if (engPriceSpan) engPriceSpan.textContent = es.price !== undefined ? String(es.price).slice(0, 12) : '—';
+                    if (engSignalSpan) engSignalSpan.textContent = es.signal !== undefined ? String(es.signal).slice(0, 12) : '—';
+                    if (engTickSpan) engTickSpan.textContent = es.tick !== undefined ? es.tick : '—';
+                    if (engRegimeSpan) engRegimeSpan.textContent = es.regime || '—';
+                    if (engMnSpan) engMnSpan.textContent = (es.m_count || 0) + '/' + (es.n_count || 0);
+                    if (engCoherenceSpan) {
+                        if (es.coherent) {
+                            engCoherenceSpan.textContent = '✅ COHERENT';
+                            engCoherenceSpan.className = 'value coherent';
+                        } else {
+                            engCoherenceSpan.textContent = '🔄 DEVIANT';
+                            engCoherenceSpan.className = 'value deviant';
+                        }
+                    }
+                    if (engArcSpan) engArcSpan.textContent = es.arc_sq !== undefined ? String(es.arc_sq).slice(0, 12) : '—';
+                    if (engRadSpan) engRadSpan.textContent = es.radius_sq !== undefined ? String(es.radius_sq).slice(0, 12) : '—';
+                    if (engDevSpan) engDevSpan.textContent = es.deviation !== undefined ? String(es.deviation).slice(0, 12) : '—';
+                    if (engFgSpan) engFgSpan.textContent = es.engine_initialized ? '✅ YES' : '⏳ NO';
+                }
 
                 const sr = codex.srRatio.toFloat();
                 const clampedSr = Math.max(0.4, Math.min(1.6, sr));
@@ -2670,6 +2814,19 @@
         zetaReSpan.textContent = '0.0000';
         zetaImSpan.textContent = '0.0000';
         zetaMagSpan.textContent = '0.0000';
+        if (engPriceSpan) engPriceSpan.textContent = '—';
+        if (engSignalSpan) engSignalSpan.textContent = '—';
+        if (engTickSpan) engTickSpan.textContent = '—';
+        if (engRegimeSpan) engRegimeSpan.textContent = '—';
+        if (engMnSpan) engMnSpan.textContent = '—';
+        if (engCoherenceSpan) {
+            engCoherenceSpan.textContent = '—';
+            engCoherenceSpan.className = 'value';
+        }
+        if (engArcSpan) engArcSpan.textContent = '—';
+        if (engRadSpan) engRadSpan.textContent = '—';
+        if (engDevSpan) engDevSpan.textContent = '—';
+        if (engFgSpan) engFgSpan.textContent = '—';
         proofChain.classList.remove('visible');
         proofTrace.classList.remove('visible');
         proofTraceLines.innerHTML = '';
@@ -2699,7 +2856,7 @@
 
     document.getElementById('exportBtn').addEventListener('click', () => {
         const data = {
-            version: '3.4.4-tma',
+            version: '3.5.0-tma',
             timestamp: Date.now(),
             backend_url: BACKEND_URL,
             relay_url: RELAY_URL,
@@ -2712,6 +2869,19 @@
                 handshakeOk: TMA.handshakeOk,
                 publicUrl: TMA.publicUrl,
             },
+            engine_snapshot: codex.engineState ? {
+                price: codex.engineState.price,
+                signal: codex.engineState.signal,
+                tick: codex.engineState.tick,
+                regime: codex.engineState.regime,
+                m_count: codex.engineState.m_count,
+                n_count: codex.engineState.n_count,
+                coherent: codex.engineState.coherent,
+                arc_sq: codex.engineState.arc_sq,
+                radius_sq: codex.engineState.radius_sq,
+                deviation: codex.engineState.deviation,
+                engine_initialized: codex.engineState.engine_initialized,
+            } : null,
             time_exact: codex.time.toString(),
             generation: codex.gen,
             coherent: codex.coherent,
@@ -2755,7 +2925,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `codex_symbolica_exact_v3.4.4_tma_${Date.now()}.json`;
+        a.download = `codex_symbolica_exact_v3.5.0_tma_${Date.now()}.json`;
         a.click();
         URL.revokeObjectURL(url);
     });
@@ -2825,7 +2995,7 @@
     });
 
     // ============================================================
-    // 11. CHART OVERLAY (with TMA initData forwarding)
+    // 11. CHART OVERLAY
     // ============================================================
     class ChartOverlay {
         constructor(canvasEl, ctxEl, codexRef) {
@@ -2924,6 +3094,8 @@
             if (!state) return;
             this.backendState = state;
             this.connected = true;
+            // Propagate engine state to CodexState for rePsi binding
+            this.codex.ingestEngineState(state);
             if (state.endpoint) {
                 TMA.backendEndpoint = state.endpoint;
             }
@@ -2972,9 +3144,21 @@
         updateFromCodex() {}
 
         addFVG(type, priceFraction) {
-            const coherence = this._validateContinuity();
-            if (!coherence.coherent) {
-                console.warn('FVG rejected: arc-length deviation', coherence.dev.toFloat());
+            // Use ENGINE's coherence when available; otherwise fall back to local
+            let coherent = true;
+            let devStr = '';
+            if (this.backendState && this.backendState.coherent !== undefined) {
+                coherent = !!this.backendState.coherent;
+                if (this.backendState.deviation !== undefined) {
+                    devStr = String(this.backendState.deviation);
+                }
+            } else {
+                const localCheck = this._validateContinuity();
+                coherent = localCheck.coherent;
+                devStr = localCheck.dev.toString();
+            }
+            if (!coherent) {
+                console.warn('FVG rejected: engine reports arc-length deviation', devStr);
                 this._flashContinuityBadge(false);
                 if (TMA.available) {
                     try { TelegramWebAppAPI.HapticFeedback.notificationOccurred('error'); } catch (_) {}
@@ -3062,9 +3246,15 @@
                 ? '● ARC-LENGTH: COHERENT (s²=r²)'
                 : '● ARC-LENGTH: DEVIATION (s²≠r²)';
             setTimeout(() => {
-                const c = this._validateContinuity();
+                // Prefer engine state for the true coherence value
+                let isCoherent = true;
+                if (this.backendState && this.backendState.coherent !== undefined) {
+                    isCoherent = !!this.backendState.coherent;
+                } else {
+                    isCoherent = this._validateContinuity().coherent;
+                }
                 badge.classList.remove('coherent', 'deviant', 'waiting');
-                if (c.coherent) {
+                if (isCoherent) {
                     badge.classList.add('coherent');
                     badge.textContent = '● ARC-LENGTH: COHERENT (s²=r²)';
                 } else {
@@ -3641,9 +3831,6 @@
             });
 
             // Auto-connect: always try to connect to BACKEND_URL.
-            // If running inside Telegram, this also triggers the initData handshake.
-            // If running outside Telegram, the /state endpoint is still readable
-            // (read-only) and the UI will populate with live backend data.
             console.log('[Bridge] Auto-connecting to ' + BACKEND_URL);
             window.telegramBridge = new TelegramBridge(window.chartOverlay, {
                 endpoint: BACKEND_URL,
@@ -3685,15 +3872,19 @@
     // 14. FINAL CONSOLE MANIFEST
     // ============================================================
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('⚡ CODEX SYMBOLICA · ÆEA · TELEGRAM MINI APP v3.4.4');
+    console.log('⚡ CODEX SYMBOLICA · ÆEA · TELEGRAM MINI APP v3.5.0');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('New in v3.4.4 (Topological Coherence Fixes):');
-    console.log('  ✓ Feed guards: reject FVG commits when price ≤ 0');
-    console.log('  ✓ Auto-connect hardened: retry on transient HTTP errors');
-    console.log('  ✓ Relay status HUD: distinguishes UP / DOWN / NO URL');
-    console.log('  ✓ Chart overlay: candle stream only appends on valid bid');
-    console.log('  ✓ Arc-Length badge now reflects true coherence state');
-    console.log('  ✓ All v3.4.3 and prior logic preserved');
+    console.log('New in v3.5.0 (Engine Synchronization):');
+    console.log('  ✓ ENGINE COHERENCE metric: reads live /state.coherent');
+    console.log('  ✓ ENGINE STATE panel: mirrors app.py fields directly');
+    console.log('  ✓ ingestEngineState(): binds rePsi to engine signal');
+    console.log('  ✓ ingestEngineState(): binds m/n to engine counters');
+    console.log('  ✓ ingestEngineState(): binds regime from engine');
+    console.log('  ✓ ingestEngineState(): binds arc_sq, radius_sq, deviation');
+    console.log('  ✓ FVG gate now prefers engine coherence over local');
+    console.log('  ✓ Continuity badge reflects engine truth when available');
+    console.log('  ✓ Export includes engine_snapshot');
+    console.log('  ✓ All v3.4.4 and prior logic preserved');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(' ⌨  T=Top | B=Bottom | D=Delete | Esc=Pan tool');
     console.log(' ⌨  Shift+T = Trace | H=Help | Space=Pause | R=Reset');

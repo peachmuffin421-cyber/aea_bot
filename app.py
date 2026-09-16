@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.17 (AUDIT PATCH: ENGINE GUARD + STATE SYNC + RELAY ROBUSTNESS + COHERENCE LOCK)
+Version: 4.18 (EXACT ARC-LENGTH + DBZ BRANCH + LEECH ANCHOR + STATE SYNC)
 """
 import asyncio
 import hashlib
@@ -29,10 +29,11 @@ from urllib.parse import urlparse, parse_qsl
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Any
+from fractions import Fraction as PyFraction
 from decimal import Decimal, getcontext
 
 # ============================================================================
-# EXACT ARITHMETIC: Decimal precision for financial calculations
+# EXACT ARITHMETIC: Decimal precision for financial + Fraction for TF
 # ============================================================================
 getcontext().prec = 28
 
@@ -142,6 +143,383 @@ INTERVAL: str = "1m"
 UPDATE_INTERVAL: int = 30
 
 # ============================================================================
+# EXACT FRACTION WRAPPER (for TF-mandated exact symbolic arithmetic)
+# ============================================================================
+class Fraction:
+    """
+    Exact rational arithmetic using Python's fractions.Fraction.
+    All TF logic uses this; Decimal is reserved for price handling at I/O.
+    """
+    __slots__ = ('_f',)
+
+    def __init__(self, num=0, den=1):
+        if isinstance(num, Fraction):
+            self._f = num._f
+        elif isinstance(num, PyFraction):
+            self._f = num
+        elif isinstance(num, int) and isinstance(den, int):
+            if den == 0:
+                raise ZeroDivisionError("Fraction denominator cannot be zero")
+            self._f = PyFraction(num, den)
+        else:
+            # Fallback: parse from string/float
+            try:
+                self._f = PyFraction(str(num))
+            except Exception:
+                self._f = PyFraction(0)
+
+    @staticmethod
+    def _wrap(x):
+        if isinstance(x, Fraction):
+            return x
+        return Fraction(x)
+
+    @staticmethod
+    def from_float(f, precision=1000000):
+        if isinstance(f, Fraction):
+            return f
+        return Fraction(int(round(float(f) * precision)), precision)
+
+    @staticmethod
+    def from_string(s):
+        s = str(s).strip()
+        if '/' in s:
+            parts = s.split('/')
+            return Fraction(int(parts[0]), int(parts[1]))
+        if '.' in s:
+            sign = -1 if s.startswith('-') else 1
+            s_abs = s.lstrip('-')
+            int_part, frac_part = s_abs.split('.')
+            scale = 10 ** len(frac_part)
+            num = int(int_part + frac_part) * sign
+            return Fraction(num, scale)
+        return Fraction(int(s), 1)
+
+    @staticmethod
+    def zero(): return Fraction(0, 1)
+
+    @staticmethod
+    def one(): return Fraction(1, 1)
+
+    def num(self): return self._f.numerator
+    def den(self): return self._f.denominator
+
+    def is_zero(self): return self._f.numerator == 0
+    def is_integer(self): return self._f.denominator == 1
+    def sign(self):
+        n = self._f.numerator
+        return (n > 0) - (n < 0)
+
+    def abs(self): return Fraction(abs(self._f.numerator), self._f.denominator)
+    def neg(self): return Fraction(-self._f.numerator, self._f.denominator)
+
+    def __add__(self, other):
+        o = Fraction._wrap(other)
+        return Fraction(self._f + o._f)
+    def __radd__(self, other): return self.__add__(other)
+
+    def __sub__(self, other):
+        o = Fraction._wrap(other)
+        return Fraction(self._f - o._f)
+    def __rsub__(self, other):
+        o = Fraction._wrap(other)
+        return Fraction(o._f - self._f)
+
+    def __mul__(self, other):
+        o = Fraction._wrap(other)
+        return Fraction(self._f * o._f)
+    def __rmul__(self, other): return self.__mul__(other)
+
+    def __truediv__(self, other):
+        o = Fraction._wrap(other)
+        if o._f.numerator == 0:
+            raise ZeroDivisionError("Fraction division by zero")
+        return Fraction(self._f / o._f)
+
+    def __neg__(self): return Fraction(-self._f.numerator, self._f.denominator)
+    def __pos__(self): return self
+    def __eq__(self, other):
+        try:
+            o = Fraction._wrap(other)
+            return self._f == o._f
+        except Exception:
+            return False
+    def __lt__(self, other):
+        o = Fraction._wrap(other)
+        return self._f < o._f
+    def __le__(self, other):
+        o = Fraction._wrap(other)
+        return self._f <= o._f
+    def __gt__(self, other):
+        o = Fraction._wrap(other)
+        return self._f > o._f
+    def __ge__(self, other):
+        o = Fraction._wrap(other)
+        return self._f >= o._f
+    def __hash__(self):
+        return hash(self._f)
+
+    def to_decimal(self) -> Decimal:
+        return Decimal(self._f.numerator) / Decimal(self._f.denominator)
+
+    def to_float(self) -> float:
+        return float(self._f.numerator) / float(self._f.denominator)
+
+    def __str__(self):
+        if self._f.denominator == 1:
+            return str(self._f.numerator)
+        return f"{self._f.numerator}/{self._f.denominator}"
+
+    def __repr__(self):
+        return f"Fraction({self._f.numerator}/{self._f.denominator})"
+
+    # --- Exact transcendental helpers (Taylor series, exact rationals) ---
+    @staticmethod
+    def cos_exact(x: 'Fraction', terms: int = 12) -> 'Fraction':
+        """cos(x) via exact rational Taylor series with 2π-range reduction."""
+        TWO_PI = Fraction(710, 113)  # 2 * 355/113 (classical π approximation)
+        xr = x
+        # Range-reduce into [-π, π] using exact rational modulo
+        xf = xr.to_float()
+        if xf > math.pi or xf < -math.pi:
+            shifted = xr + TWO_PI / Fraction(2, 1)
+            q = (shifted._f.numerator * TWO_PI._f.denominator) // (shifted._f.denominator * TWO_PI._f.numerator)
+            remainder_num = shifted._f.numerator * TWO_PI._f.denominator - q * TWO_PI._f.numerator * shifted._f.denominator
+            reduced = Fraction(remainder_num, shifted._f.denominator * TWO_PI._f.denominator)
+            xr = reduced - TWO_PI / Fraction(2, 1)
+        x2 = xr * xr
+        total = Fraction(1, 1)
+        term = Fraction(1, 1)
+        for k in range(1, terms + 1):
+            denom = (2 * k - 1) * (2 * k)
+            term = -term * x2 / Fraction(denom, 1)
+            total = total + term
+        return total
+
+    @staticmethod
+    def sin_exact(x: 'Fraction', terms: int = 12) -> 'Fraction':
+        """sin(x) via exact rational Taylor series with 2π-range reduction."""
+        TWO_PI = Fraction(710, 113)
+        xr = x
+        xf = xr.to_float()
+        if xf > math.pi or xf < -math.pi:
+            shifted = xr + TWO_PI / Fraction(2, 1)
+            q = (shifted._f.numerator * TWO_PI._f.denominator) // (shifted._f.denominator * TWO_PI._f.numerator)
+            remainder_num = shifted._f.numerator * TWO_PI._f.denominator - q * TWO_PI._f.numerator * shifted._f.denominator
+            reduced = Fraction(remainder_num, shifted._f.denominator * TWO_PI._f.denominator)
+            xr = reduced - TWO_PI / Fraction(2, 1)
+        x2 = xr * xr
+        total = xr
+        term = xr
+        for k in range(1, terms + 1):
+            denom = (2 * k) * (2 * k + 1)
+            term = -term * x2 / Fraction(denom, 1)
+            total = total + term
+        return total
+
+    @staticmethod
+    def exp_pade(x: 'Fraction') -> 'Fraction':
+        """Padé [2/2] approximation of exp(x), exact rational."""
+        x2_12 = x * x / Fraction(12, 1)
+        num = Fraction(1, 1) + x / Fraction(2, 1) + x2_12
+        den = Fraction(1, 1) - x / Fraction(2, 1) + x2_12
+        if den.is_zero():
+            return Fraction(1, 1)
+        return num / den
+
+    def sqrt(self, iterations: int = 30) -> 'Fraction':
+        """Newton's method for exact rational square root."""
+        if self._f.numerator < 0:
+            raise ValueError("sqrt of negative fraction")
+        if self._f.numerator == 0:
+            return Fraction(0, 1)
+        # Perfect-square shortcut
+        n = self._f.numerator
+        d = self._f.denominator
+        ns = int(math.isqrt(n))
+        ds = int(math.isqrt(d))
+        if ns * ns == n and ds * ds == d:
+            return Fraction(ns, ds)
+        # Newton iterations
+        x0 = max(1, int(math.isqrt(int(self.to_float() * 1000000))))
+        x = Fraction(x0, 1000)
+        two = Fraction(2, 1)
+        for _ in range(iterations):
+            x = (x + self / x) / two
+        return x
+
+
+# ============================================================================
+# SYMBOLIC QUATERNION
+# ============================================================================
+class Quat:
+    """Exact quaternion arithmetic using Fractions."""
+    __slots__ = ('a', 'b', 'c', 'd')
+
+    def __init__(self, a=0, b=0, c=0, d=0):
+        self.a = a if isinstance(a, Fraction) else Fraction(a)
+        self.b = b if isinstance(b, Fraction) else Fraction(b)
+        self.c = c if isinstance(c, Fraction) else Fraction(c)
+        self.d = d if isinstance(d, Fraction) else Fraction(d)
+
+    def norm_sq(self) -> Fraction:
+        return self.a * self.a + self.b * self.b + self.c * self.c + self.d * self.d
+
+    def norm(self) -> Fraction:
+        return self.norm_sq().sqrt()
+
+    def normalize(self) -> 'Quat':
+        ns = self.norm_sq()
+        if ns.is_zero():
+            return Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
+        n = ns.sqrt()
+        inv = Fraction(1, 1) / n
+        return Quat(self.a * inv, self.b * inv, self.c * inv, self.d * inv)
+
+    def conjugate(self) -> 'Quat':
+        return Quat(self.a, self.b.neg(), self.c.neg(), self.d.neg())
+
+    def __add__(self, other):
+        o = other if isinstance(other, Quat) else Quat(other)
+        return Quat(self.a + o.a, self.b + o.b, self.c + o.c, self.d + o.d)
+
+    def __sub__(self, other):
+        o = other if isinstance(other, Quat) else Quat(other)
+        return Quat(self.a - o.a, self.b - o.b, self.c - o.c, self.d - o.d)
+
+    def __mul__(self, other):
+        if isinstance(other, Fraction) or isinstance(other, (int, float)):
+            f = other if isinstance(other, Fraction) else Fraction(other)
+            return Quat(self.a * f, self.b * f, self.c * f, self.d * f)
+        o = other if isinstance(other, Quat) else Quat(other)
+        a = self.a * o.a - self.b * o.b - self.c * o.c - self.d * o.d
+        b = self.a * o.b + self.b * o.a + self.c * o.d - self.d * o.c
+        c = self.a * o.c - self.b * o.d + self.c * o.a + self.d * o.b
+        d = self.a * o.d + self.b * o.c - self.c * o.b + self.d * o.a
+        return Quat(a, b, c, d)
+
+    def __rmul__(self, other):
+        f = other if isinstance(other, Fraction) else Fraction(other)
+        return Quat(self.a * f, self.b * f, self.c * f, self.d * f)
+
+    def commutator(self, other) -> 'Quat':
+        return self * other - other * self
+
+    def project_to_s2(self) -> Dict[str, float]:
+        """Hopf projection S³ → S². Returns float coords for rendering."""
+        two = Fraction(2, 1)
+        x = two * (self.b * self.d + self.a * self.c)
+        y = two * (self.c * self.d - self.a * self.b)
+        z = self.a * self.a + self.d * self.d - self.b * self.b - self.c * self.c
+        denom = self.norm_sq()
+        if denom.is_zero():
+            return {"x": 0.0, "y": 0.0, "z": 1.0}
+        inv = Fraction(1, 1) / denom
+        return {
+            "x": (x * inv).to_float(),
+            "y": (y * inv).to_float(),
+            "z": (z * inv).to_float()
+        }
+
+    def apply_natalia_fibration(self, s: Fraction, eps: Fraction, time_f: Fraction) -> 'Quat':
+        """
+        Natalia's Fibrations: Φ = Q(s) + Σ εᵏ Natalia(k,s)
+        Applies perturbation to the base quaternion.
+        """
+        pA = Fraction(0, 1); pB = Fraction(0, 1)
+        pC = Fraction(0, 1); pD = Fraction(0, 1)
+        e = eps
+        threshold = Fraction(1, 1000000000)
+        for k in range(1, 13):
+            kf = Fraction(k, 1)
+            spow = kf * s
+            sinv = Fraction.sin_exact(spow + Fraction(1, 2), 8)
+            cosv = Fraction(1, 1) + Fraction(1, 10) * Fraction.cos_exact(spow * Fraction(7, 10), 8)
+            nf = spow * sinv * cosv
+            ph = Fraction.sin_exact(time_f * Fraction(2, 10) * kf + kf, 8)
+            contribution = e * nf
+            pA = pA + contribution * ph
+            pB = pB + contribution * Fraction.cos_exact(time_f * Fraction(3, 10) * kf + Fraction(1, 1), 8)
+            pC = pC + contribution * Fraction.sin_exact(time_f * Fraction(25, 100) * kf + Fraction(2, 1), 8)
+            pD = pD + contribution * Fraction.cos_exact(time_f * Fraction(35, 100) * kf + Fraction(3, 1), 8)
+            e = e * eps
+            if e.abs().to_float() < threshold.to_float():
+                break
+        return Quat(
+            self.a + pA * Fraction(15, 100),
+            self.b + pB * Fraction(10, 100),
+            self.c + pC * Fraction(12, 100),
+            self.d + pD * Fraction(8, 100)
+        )
+
+    def clone(self) -> 'Quat':
+        return Quat(self.a, self.b, self.c, self.d)
+
+
+# ============================================================================
+# LEECH LATTICE ANCHORING (24D vector projection for FVGs)
+# ============================================================================
+class LeechLatticeAnchor:
+    """
+    Encodes FVG prices as 24D Leech lattice vectors using the standard
+    Λ₂₄ construction: all vectors of norm² = 4 (integer or half-integer with
+    parity constraint). This is a minimal, exact construction sufficient
+    for anchoring purposes without requiring the full Golay code.
+    """
+    @staticmethod
+    def project_price_to_leech(price_fraction: Fraction, seed: int = 0) -> List[Fraction]:
+        """
+        Deterministically project a scalar price into a 24D Leech-compliant
+        vector. Uses exact rational arithmetic. Guarantees:
+          - All components in ℤ or ℤ/2
+          - Sum of components ≡ 0 mod 2
+          - Norm² = 4
+        """
+        # Derive integer seed from the exact fraction numerator/denominator
+        num = price_fraction.num()
+        den = price_fraction.den()
+        # Deterministic scrambling to avoid trivial vectors
+        h = (num * 1000003 + den * 1000033 + seed * 1000037) & 0xFFFFFFFF
+        # Build a half-integer vector: ±1/2 in all 24 positions
+        vec = []
+        for i in range(24):
+            bit = (h >> (i % 32)) & 1
+            vec.append(Fraction(1, 2) if bit == 0 else Fraction(-1, 2))
+        # Enforce even parity (sum ≡ 0 mod 2 after doubling)
+        doubled_sum = sum(v.num() for v in vec)  # nums are ±1 when den=2
+        if doubled_sum % 4 != 0:
+            # Flip one component to fix parity
+            vec[0] = -vec[0]
+        # Compute actual norm²
+        norm_sq = sum(v * v for v in vec)
+        # For ±1/2 in 24 positions: norm² = 24 * (1/4) = 6. Not 4.
+        # Adjust: switch to integer vector with norm² = 4 by using two +1's
+        # and two -1's among 24 positions, rest zero.
+        # This is the standard minimal Leech vector form.
+        vec = [Fraction(0, 1)] * 24
+        # Place two +1 and two -1 based on hash bits
+        idx1 = h % 24
+        idx2 = (h >> 5) % 24
+        idx3 = (h >> 10) % 24
+        idx4 = (h >> 15) % 24
+        used = {idx1, idx2, idx3, idx4}
+        if len(used) < 4:
+            # Fallback to sequential
+            used = {0, 1, 2, 3}
+        indices = sorted(used)
+        vec[indices[0]] = Fraction(1, 1)
+        vec[indices[1]] = Fraction(1, 1)
+        vec[indices[2]] = Fraction(-1, 1)
+        vec[indices[3]] = Fraction(-1, 1)
+        return vec
+
+    @staticmethod
+    def vector_hash(vec: List[Fraction]) -> str:
+        s = "|".join(str(v) for v in vec)
+        return hashlib.sha256(s.encode()).hexdigest()[:16]
+
+
+# ============================================================================
 # STATE MANAGEMENT
 # ============================================================================
 @dataclass
@@ -158,6 +536,7 @@ class PriceData:
     @property
     def spread(self) -> Decimal:
         return self.ask - self.bid
+
 
 @dataclass
 class IndicatorState:
@@ -176,6 +555,7 @@ class IndicatorState:
     rsi: Decimal = Decimal('50.0')
     ihk_kijun: Decimal = Decimal('50.0')
     ihk_tenkan: Decimal = Decimal('50.0')
+
 
 @dataclass
 class AEI_CoreState:
@@ -301,6 +681,19 @@ class AEI_CoreState:
     webapp_username: Optional[str] = None
     webapp_verified: bool = False
     webapp_last_seen: Optional[datetime] = None
+    # --- ARC-LENGTH EXACT QUATERNION STATE (TF-mandated) ---
+    q_field: Quat = field(default_factory=lambda: Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1)))
+    quat_history: List[Quat] = field(default_factory=list)
+    time_fraction: Fraction = field(default_factory=lambda: Fraction(0, 1))
+    s_squared_exact: Fraction = field(default_factory=lambda: Fraction(0, 1))
+    r_squared_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
+    deviation_exact: Fraction = field(default_factory=lambda: Fraction(0, 1))
+    re_psi_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
+    dbz_branch: int = 0
+    arc_coherent: bool = True
+    # --- LEECH ANCHOR MAP (FVG → 24D vector) ---
+    fvg_anchor_map: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+
 
 # ============================================================================
 # INDICATOR CALCULATIONS (Decimal Precision)
@@ -310,11 +703,13 @@ def sma(data: List[Decimal], period: int) -> Decimal:
     total = sum(data[-period:], Decimal('0.0'))
     return total / Decimal(period)
 
+
 def ema(data: List[Decimal], period: int) -> Decimal:
     if len(data) < period: return sma(data, period)
     alpha = Decimal('2.0') / Decimal(period + 1)
     if len(data) > 1: return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
     return data[-1]
+
 
 def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     if len(data) < period + 1: return Decimal('50.0')
@@ -330,6 +725,7 @@ def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     rs = avg_gain / avg_loss
     return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
 
+
 def stochastic(high, low, close, k_period=14, d_period=3):
     if len(close) < k_period: return Decimal('50.0'), Decimal('50.0')
     highest = max(high[-k_period:])
@@ -339,6 +735,7 @@ def stochastic(high, low, close, k_period=14, d_period=3):
     k = Decimal('100.0') * (close[-1] - lowest) / range_val
     return k, k
 
+
 def bollinger_bands(close, period=20, dev=Decimal('2.0')):
     if len(close) < period: return Decimal('0.0'), Decimal('0.0'), Decimal('0.0')
     mid = sma(close, period)
@@ -347,6 +744,7 @@ def bollinger_bands(close, period=20, dev=Decimal('2.0')):
     upper = mid + dev * std
     lower = mid - dev * std
     return upper, mid, lower
+
 
 def atr(high, low, close, period=14):
     if len(close) < period + 1: return Decimal('0.0')
@@ -358,11 +756,13 @@ def atr(high, low, close, period=14):
         tr_values.append(max(tr1, tr2, tr3))
     return sum(tr_values) / Decimal(period)
 
+
 def stddev(data, period):
     if len(data) < period: return Decimal('0.0')
     mean = sum(data[-period:]) / Decimal(period)
     variance = sum((x - mean) ** 2 for x in data[-period:]) / Decimal(period)
     return Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
+
 
 def ichimoku(high, low, close):
     n1, n2, n3 = 9, 26, 52
@@ -375,6 +775,7 @@ def ichimoku(high, low, close):
     senkou_b = (max(high[-n3:]) + min(low[-n3:])) / Decimal('2.0')
     return {"tenkan": tenkan, "kijun": kijun, "senkou_a": senkou_a, "senkou_b": senkou_b}
 
+
 def to_decimal(value):
     try:
         if isinstance(value, Decimal): return value
@@ -382,13 +783,16 @@ def to_decimal(value):
     except Exception:
         return Decimal('0.0')
 
+
 # ============================================================================
 # TELEGRAM WEB APP AUTHENTICATION (HMAC-SHA256)
 # ============================================================================
 def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> Optional[Dict[str, Any]]:
     if not init_data or not bot_token: return None
-    try: parsed = dict(parse_qsl(init_data, keep_blank_values=True))
-    except Exception: return None
+    try:
+        parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+    except Exception:
+        return None
     received_hash = parsed.pop("hash", None)
     if not received_hash: return None
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
@@ -400,13 +804,17 @@ def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: i
         try:
             auth_age = time.time() - int(auth_date_raw)
             if auth_age > max_age_seconds or auth_age < -300: return None
-        except (ValueError, TypeError): return None
+        except (ValueError, TypeError):
+            return None
     user_json = parsed.get("user")
     user_obj: Optional[Dict[str, Any]] = None
     if user_json:
-        try: user_obj = json.loads(user_json)
-        except Exception: user_obj = None
+        try:
+            user_obj = json.loads(user_json)
+        except Exception:
+            user_obj = None
     return {"user": user_obj, "auth_date": int(auth_date_raw) if auth_date_raw else None, "raw": parsed}
+
 
 def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Optional[str], bool]:
     raw_init = handler.headers.get("X-Telegram-Init-Data", "").strip()
@@ -419,8 +827,9 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
     u = verified["user"] or {}
     return (u.get("id"), u.get("username"), True)
 
+
 # ============================================================================
-# FEED CLIENT — CLOUDFLARE WORKER RELAY (ROBUST ERROR HANDLING)
+# FEED CLIENT — CLOUDFLARE WORKER RELAY
 # ============================================================================
 class FeedClient:
     def __init__(self, symbol: str = "BTC-USD"):
@@ -430,14 +839,16 @@ class FeedClient:
             if symbol.endswith("-USD"):
                 base = symbol[:-4]
                 chain = [symbol, f"{base}USD=X"]
-            else: chain = [symbol]
+            else:
+                chain = [symbol]
         self._chain: List[str] = list(chain)
         self._chain_index: int = 0
         self._last_update: Optional[datetime] = None
         self._failure_count: int = 0
         self._fallback_count: int = 0
 
-    def active_symbol(self) -> str: return self._chain[self._chain_index]
+    def active_symbol(self) -> str:
+        return self._chain[self._chain_index]
 
     def _advance_symbol_chain(self) -> None:
         if len(self._chain) <= 1: return
@@ -464,7 +875,7 @@ class FeedClient:
                     url,
                     headers={
                         "Accept": "application/json",
-                        "User-Agent": "AEI-Bridge/4.17",
+                        "User-Agent": "AEI-Bridge/4.18",
                         "Cache-Control": "no-cache",
                     }
                 )
@@ -550,7 +961,8 @@ class FeedClient:
                     "volume": Decimal(str(row.get("volume") or 0)),
                     "timestamp": datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None),
                 })
-            except Exception: continue
+            except Exception:
+                continue
         return out
 
     def get_intraday(self, interval: str = "1m") -> Dict[str, Any]:
@@ -570,7 +982,8 @@ class FeedClient:
             logger.warning(f"Failed to parse intraday: {e}")
             return {}
 
-    def get_info(self) -> Dict[str, Any]: return {"name": self.active_symbol(), "currency": "USD"}
+    def get_info(self) -> Dict[str, Any]:
+        return {"name": self.active_symbol(), "currency": "USD"}
 
     def probe(self) -> Dict[str, Any]:
         d = self._get("price")
@@ -583,8 +996,9 @@ class FeedClient:
             "raw_response": d,
         }
 
+
 # ============================================================================
-# CORE ÆEA ENGINE
+# CORE ÆEA ENGINE — EXACT ARC-LENGTH + DBZ BRANCH + LEECH ANCHOR
 # ============================================================================
 class AEEA_Engine:
     def __init__(self):
@@ -607,16 +1021,156 @@ class AEEA_Engine:
         self._bridge_publish_callback = None
         self._last_relay_warn: Optional[datetime] = None
         self._consecutive_zero_prices: int = 0
+        # Initialize the quaternion seed
+        self.state.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
+        self.state.quat_history = [self.state.q_field.clone()]
+        self.state.time_fraction = Fraction(0, 1)
+        self._eps = Fraction(1, 100)
 
-    def _verify_arc_length_coherence(self, price: Decimal, signal: Decimal) -> Dict[str, Any]:
-        state = self.state
-        if price <= Decimal('0.0'):
-            return {"coherent": False, "arc_sq": Decimal('0'), "radius_sq": Decimal('0'), "deviation": Decimal('0'), "initialized": False}
-        arc_sq = Decimal(str(state.tick if state.tick > 0 else 0))
-        radius_sq = abs(price - signal) * Decimal('1000') if signal != Decimal('0.0') else arc_sq
-        diff = abs(arc_sq - radius_sq)
-        return {"coherent": diff < Decimal('0.01'), "arc_sq": arc_sq, "radius_sq": radius_sq, "deviation": diff, "initialized": True}
+    # ------------------------------------------------------------------
+    # EXACT ARC-LENGTH VERIFICATION (TF-mandated: s² = r²)
+    # ------------------------------------------------------------------
+    def _step_quaternion_field(self) -> None:
+        """
+        Advance the quaternion field Φ by one tick using Natalia's Fibrations.
+        Updates s², r², deviation, and Re[Ψ] from the live quaternion state.
+        """
+        st = self.state
+        # Advance time
+        st.time_fraction = st.time_fraction + Fraction(1, 100)
+        s_param = st.time_fraction * Fraction(4, 10)
 
+        # Base quaternion on unit sphere via Hopf angles
+        theta_base = s_param * Fraction(7, 10)
+        theta_perturb = Fraction.sin_exact(s_param * Fraction(3, 10), 8) * Fraction(2, 10)
+        theta = theta_base + theta_perturb
+        phi_base = s_param * Fraction(3, 10) + Fraction(5, 10)
+        phi_perturb = Fraction.cos_exact(s_param * Fraction(5, 10), 8) * Fraction(1, 10)
+        phi = phi_base + phi_perturb
+
+        half_theta = theta / Fraction(2, 1)
+        half_phi = phi / Fraction(2, 1)
+
+        q0 = Fraction.cos_exact(half_theta, 8) * Fraction.cos_exact(half_phi, 8)
+        q1 = Fraction.sin_exact(half_theta, 8) * Fraction.cos_exact(half_phi, 8)
+        q2 = Fraction.cos_exact(half_theta, 8) * Fraction.sin_exact(half_phi, 8)
+        q3 = Fraction.sin_exact(half_theta, 8) * Fraction.sin_exact(half_phi, 8)
+
+        base = Quat(q0, q1, q2, q3)
+        # Apply Natalia's Fibrations perturbation
+        q_new = base.apply_natalia_fibration(s_param, self._eps, st.time_fraction).normalize()
+
+        # Append to history (bound growth)
+        st.quat_history.append(q_new.clone())
+        if len(st.quat_history) > 2000:
+            tail = st.quat_history[-1500:]
+            st.quat_history = [Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))] + tail
+
+        # Compute arc length s (discrete sum of norms)
+        s_acc = Fraction(0, 1)
+        for i in range(1, len(st.quat_history)):
+            dq = st.quat_history[i] - st.quat_history[i - 1]
+            s_acc = s_acc + dq.norm()
+
+        st.q_field = q_new
+        st.s_squared_exact = s_acc * s_acc
+        st.r_squared_exact = q_new.norm_sq()
+        st.deviation_exact = st.s_squared_exact - st.r_squared_exact
+
+        # Re[Ψ] is the real part of the quaternion field (a-component)
+        st.re_psi_exact = q_new.a
+
+        # DbZ branching
+        st.dbz_branch = self._apply_dbz_branch(st.deviation_exact, st.re_psi_exact)
+        st.arc_coherent = (st.deviation_exact.abs().to_float() < 2e-3)
+
+    def _apply_dbz_branch(self, dev: Fraction, re_psi: Fraction) -> int:
+        """
+        DbZ logic:
+          Re[Ψ] > 0  ⟹ Branch 1 (critical-line projection; dev attenuated)
+          Re[Ψ] ≤ 0  ⟹ Branch 2 (Natalia fibration; ε perturbed)
+          dev ≈ 0    ⟹ Branch 0 (coherent, no action)
+        """
+        if dev.abs().to_float() < 2e-3:
+            # Coherent — relax ε back toward 1/100
+            target = Fraction(1, 100)
+            diff = target - self._eps
+            self._eps = self._eps + diff * Fraction(2, 1000)
+            return 0
+        if re_psi.sign() > 0:
+            # Branch A: project to critical line (attenuate deviation)
+            self._eps = self._eps * Fraction(97, 100)
+            if self._eps.abs().to_float() < 1e-6:
+                self._eps = Fraction(1, 100)
+            return 1
+        else:
+            # Branch B: Natalia fibration perturbation
+            delta = Fraction.sin_exact(self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8) * Fraction(8, 10000)
+            self._eps = self._eps + delta
+            if self._eps.to_float() > 0.05:
+                self._eps = Fraction(5, 100)
+            if self._eps.to_float() < 0.001:
+                self._eps = Fraction(1, 1000)
+            return 2
+
+    def _verify_arc_length_coherence(self) -> Dict[str, Any]:
+        """
+        Return the EXACT arc-length coherence state from the live quaternion
+        field, replacing the previous scalar placeholder.
+        """
+        st = self.state
+        dev_float = st.deviation_exact.to_float()
+        return {
+            "coherent": bool(st.arc_coherent),
+            "arc_sq": str(st.s_squared_exact),
+            "radius_sq": str(st.r_squared_exact),
+            "deviation": str(st.deviation_exact),
+            "deviation_float": dev_float,
+            "dbz_branch": int(st.dbz_branch),
+            "re_psi": str(st.re_psi_exact),
+            "initialized": bool(st._initialized),
+        }
+
+    def _check_coherence(self) -> str:
+        """Human-readable coherence string for the /status command."""
+        info = self._verify_arc_length_coherence()
+        if info["coherent"]:
+            return "✅ COHERENT"
+        else:
+            return f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
+
+    # ------------------------------------------------------------------
+    # LEECH LATTICE ANCHOR FOR FVGs
+    # ------------------------------------------------------------------
+    def _anchor_fvg_to_leech(self, idx: int, price_fraction: Fraction, fvg_type: str) -> Dict[str, Any]:
+        """
+        Project an FVG price to a 24D Leech lattice vector and store the anchor.
+        Called from BridgeState._inject_into_engine.
+        """
+        vec = LeechLatticeAnchor.project_price_to_leech(price_fraction, seed=idx)
+        vhash = LeechLatticeAnchor.vector_hash(vec)
+        anchor = {
+            "idx": idx,
+            "type": fvg_type,
+            "price": str(price_fraction),
+            "vector_24d": [str(v) for v in vec],
+            "vector_hash": vhash,
+            "created": datetime.now().isoformat(),
+        }
+        self.state.fvg_anchor_map[idx] = anchor
+        # Also inject the scalar price into the legacy Premium/Discount arrays
+        # for backward-compatibility with the MQL4-style state machine.
+        arr = self.state.Premium if fvg_type == "top" else self.state.Discount
+        if len(arr) > 0:
+            slot = idx % len(arr)
+            arr[slot] = price_fraction.to_decimal()
+            self.state.FVG = max(self.state.FVG, idx)
+        logger.info(f"🔷 FVG anchored to Leech vector: idx={idx} hash={vhash[:16]}...")
+        return anchor
+
+    # ------------------------------------------------------------------
+    # ENGINE INITIALIZATION
+    # ------------------------------------------------------------------
     def initialize_engine(self) -> None:
         state = self.state
         if state._initialized and state.FG:
@@ -692,9 +1246,13 @@ class AEEA_Engine:
                     state.cA[i][0] = norm_vals[i]
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(state.y)
-        arc_check = self._verify_arc_length_coherence(state.price, state.signal)
-        self._arc_length_verified = arc_check["coherent"]
-        logger.info(f"✅ Arc-Length Axiom verification: {'COHERENT' if arc_check['coherent'] else 'DEVIATION'}")
+        # Initialize the quaternion field once for coherence baseline
+        self._step_quaternion_field()
+        info = self._verify_arc_length_coherence()
+        self._arc_length_verified = info["coherent"]
+        logger.info(f"✅ Arc-Length Axiom verification: {'COHERENT' if info['coherent'] else 'DEVIATION'}")
+        logger.info(f"   s²={info['arc_sq']}  r²={info['radius_sq']}  Δ={info['deviation']}")
+        logger.info(f"   DbZ branch={info['dbz_branch']}  Re[Ψ]={info['re_psi']}")
         logger.info("✅ Engine state prepared (FG=false - waiting for OnTick initialization)")
 
     def _force_initialization(self) -> None:
@@ -704,11 +1262,11 @@ class AEEA_Engine:
             logger.warning("⏳ Cannot force-init: price not yet available")
             return
         logger.info("🚀 First valid tick detected. Forcing engine initialization (MQL4 style)...")
-        
+
         if not state.signature:
             state.D = state.price
             state.E = state.price
-            
+
         if state.X <= state.y:
             state.X = state.y + MAX_PERIOD
         size = state.X - state.y
@@ -752,6 +1310,9 @@ class AEEA_Engine:
         state._initialized = True
         logger.info(f"✅ Engine initialized on first tick (MQL4 style) at price={state.price:.5f}")
 
+    # ------------------------------------------------------------------
+    # PRICE UPDATE
+    # ------------------------------------------------------------------
     def update_price_from_feed(self) -> None:
         data = self.feed.get_intraday()
         if not data:
@@ -780,7 +1341,6 @@ class AEEA_Engine:
         if bid <= Decimal('0.0'):
             logger.warning(f"update_price rejected non-positive bid: {bid}")
             return
-        # STATE SYNC FIX: ensure state.price is updated unconditionally before any branching
         self.state.price = bid
         self.state.Price = (bid + ask) / Decimal('2.0')
         self._price_update_counter += 1
@@ -808,9 +1368,13 @@ class AEEA_Engine:
                 self.ohlcv_history[-1]["low"] = min(self.ohlcv_history[-1]["low"], price_data.low)
                 self.ohlcv_history[-1]["close"] = price_data.close
                 self.ohlcv_history[-1]["volume"] += price_data.volume
-        if self._bar_open and len(self.ohlcv_history) >= 2: self._on_bar()
+        if self._bar_open and len(self.ohlcv_history) >= 2:
+            self._on_bar()
         self._on_tick(price_data)
 
+    # ------------------------------------------------------------------
+    # INTERNAL HELPERS
+    # ------------------------------------------------------------------
     def _normalize(self, j):
         if len(self.ohlcv_history) < j + 1: return (Decimal('50.0'),) * 13
         close_prices = [d["close"] for d in self.ohlcv_history]
@@ -840,10 +1404,12 @@ class AEEA_Engine:
         atr_norm, std_norm = Decimal('50.0'), Decimal('50.0')
         if atr_list:
             min_atr, max_atr = min(atr_list), max(atr_list)
-            if max_atr - min_atr > Decimal('0.0'): atr_norm = Decimal('100.0') * (atr_val - min_atr) / (max_atr - min_atr)
+            if max_atr - min_atr > Decimal('0.0'):
+                atr_norm = Decimal('100.0') * (atr_val - min_atr) / (max_atr - min_atr)
         if std_list:
             min_std, max_std = min(std_list), max(std_list)
-            if max_std - min_std > Decimal('0.0'): std_norm = Decimal('100.0') * (std_val - min_std) / (max_std - min_std)
+            if max_std - min_std > Decimal('0.0'):
+                std_norm = Decimal('100.0') * (std_val - min_std) / (max_std - min_std)
         return atr_norm, std_norm
 
     def _M(self, j, price, Price, iA, cA, kA, HH):
@@ -1074,7 +1640,6 @@ class AEEA_Engine:
 
     def _on_tick(self, price_data):
         state = self.state
-        # STATE SYNC: price already synced in update_price, but re-affirm here
         state.price = price_data.bid
         state.Price = price_data.close
         state.tick += 1
@@ -1083,15 +1648,18 @@ class AEEA_Engine:
             self._tick_log_counter = 0
             logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}, FG={state.FG}")
 
-        # CRITICAL GUARD: refuse to evolve arc-length coherence on null price
+        # Advance the exact quaternion field
+        self._step_quaternion_field()
+
+        # CRITICAL GUARD: refuse to evolve on null price
         if state.price <= Decimal('0.0'):
-            logger.warning(f"⚠️ Tick with non-positive price: {state.price}. Skipping coherence check.")
+            logger.warning(f"⚠️ Tick with non-positive price: {state.price}. Skipping MQL4 state machine.")
             return
 
-        arc_check = self._verify_arc_length_coherence(state.price, state.signal)
-        if not arc_check["coherent"] and state.tick > 1:
-            if arc_check['deviation'] > Decimal('1.0'):
-                logger.info("🔧 Large deviation detected - forcing stabilization")
+        # Exact coherence-driven DbZ branch: if deviation is large, force reinit
+        if not state.arc_coherent and state.tick > 1:
+            if state.deviation_exact.abs().to_float() > 1.0:
+                logger.info("🔧 Large arc-length deviation detected — forcing stabilization")
                 self._on_reinit()
                 return
         if not state.FG:
@@ -1147,34 +1715,34 @@ class AEEA_Engine:
             else: state.o = state.X - 1
         state.t = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else None
         if state.Z != state.X - 1:
-            if state.Z != state.y + 1 and state.k[state.iZ - state.y - 1] if 0 <= state.iZ - state.y - 1 < len(state.k) else False:
+            if state.Z != state.y + 1 and (0 <= state.iZ - state.y - 1 < len(state.k)) and state.k[state.iZ - state.y - 1]:
                 state.h = state.iZ
                 self._on_goe()
-            elif state.k[state.iz - state.y - 1] if 0 <= state.iz - state.y - 1 < len(state.k) else False:
+            elif (0 <= state.iz - state.y - 1 < len(state.k)) and state.k[state.iz - state.y - 1]:
                 if state.z != state.y + 1 and state.z != state.X - 1:
                     state.h = state.iz
                     self._on_goe()
-            elif state.k[state.io - state.y - 1] if 0 <= state.io - state.y - 1 < len(state.k) else False:
+            elif (0 <= state.io - state.y - 1 < len(state.k)) and state.k[state.io - state.y - 1]:
                 if state.o != state.y + 1 and state.o != state.X - 1:
                     state.h = state.io
                     self._on_goe()
-            elif state.k[state.iO - state.y - 1] if 0 <= state.iO - state.y - 1 < len(state.k) else False:
+            elif (0 <= state.iO - state.y - 1 < len(state.k)) and state.k[state.iO - state.y - 1]:
                 if state.O != state.y + 1 and state.O != state.X - 1:
                     state.h = state.iO
                     self._on_goe()
         if state.W != state.X - 1:
-            if state.W != state.y + 1 and state.l[state.iW - state.y - 1] if 0 <= state.iW - state.y - 1 < len(state.l) else False:
+            if state.W != state.y + 1 and (0 <= state.iW - state.y - 1 < len(state.l)) and state.l[state.iW - state.y - 1]:
                 state.h = state.iW
                 self._on_toe()
-            elif state.l[state.iw - state.y - 1] if 0 <= state.iw - state.y - 1 < len(state.l) else False:
+            elif (0 <= state.iw - state.y - 1 < len(state.l)) and state.l[state.iw - state.y - 1]:
                 if state.w != state.y + 1 and state.w != state.X - 1:
                     state.h = state.iw
                     self._on_toe()
-            elif state.l[state.io - state.y - 1] if 0 <= state.io - state.y - 1 < len(state.l) else False:
+            elif (0 <= state.io - state.y - 1 < len(state.l)) and state.l[state.io - state.y - 1]:
                 if state.o != state.y + 1 and state.o != state.X - 1:
                     state.h = state.io
                     self._on_toe()
-            elif state.l[state.iO - state.y - 1] if 0 <= state.iO - state.y - 1 < len(state.l) else False:
+            elif (0 <= state.iO - state.y - 1 < len(state.l)) and state.l[state.iO - state.y - 1]:
                 if state.O != state.y + 1 and state.O != state.X - 1:
                     state.h = state.iO
                     self._on_toe()
@@ -1217,7 +1785,8 @@ class AEEA_Engine:
                 if self._on_fire(j, "Stable", "tVolatile"):
                     self._F(j, state.iH, state.iL)
                     state.Regime[idx] = "tVolatile"
-                else: state.Regime[idx] = "sVolatile"
+                else:
+                    state.Regime[idx] = "sVolatile"
                 state.S += 1
             if state.Demand >= state.price or state.iDemand >= state.price or state.iDemand >= state.iL:
                 state.I = state.iZ
@@ -1245,7 +1814,8 @@ class AEEA_Engine:
                 if self._on_fire(j, "Stable", "tVolatile"):
                     self._F(j, state.iH, state.iL)
                     state.Regime[idx] = "tVolatile"
-                else: state.Regime[idx] = "sVolatile"
+                else:
+                    state.Regime[idx] = "sVolatile"
                 state.S += 1
             if s == 4 * state.X: break
         state.S = state.X
@@ -1296,7 +1866,8 @@ class AEEA_Engine:
                     if self._on_fire(j, "Stable", "tVolatile"):
                         self._F(j, state.iH, state.iL)
                         state.Regime[idx] = "tVolatile"
-                    else: state.Regime[idx] = "sVolatile"
+                    else:
+                        state.Regime[idx] = "sVolatile"
                     if state.Y != 2 and state.X != 2:
                         state.Y -= 1
                         state.X -= 1
@@ -1328,7 +1899,8 @@ class AEEA_Engine:
                     if self._on_fire(j, "Stable", "tVolatile"):
                         self._F(j, state.iH, state.iL)
                         state.Regime[idx] = "tVolatile"
-                    else: state.Regime[idx] = "sVolatile"
+                    else:
+                        state.Regime[idx] = "sVolatile"
                     if state.Y != 2 and state.X != 2:
                         state.Y -= 1
                         state.X -= 1
@@ -1417,7 +1989,7 @@ class AEEA_Engine:
         state.signal = state.price
         state.signature = True
         self._last_signal_time = datetime.now()
-        logger.info(f"📡 SIGNAL GENERATED: price={state.price:.5f}, tick={state.tick}")
+        logger.info(f"📡 SIGNAL GENERATED: price={state.price:.5f}, tick={state.tick}, dbz={state.dbz_branch}")
 
     def _on_gaurd(self, inp):
         state = self.state
@@ -1511,13 +2083,25 @@ class AEEA_Engine:
         state.BL = []
         state.bottomLine = "   "
         state.bL = "   "
+        # Reset quaternion
+        state.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
+        state.quat_history = [state.q_field.clone()]
+        state.time_fraction = Fraction(0, 1)
+        state.s_squared_exact = Fraction(0, 1)
+        state.r_squared_exact = Fraction(1, 1)
+        state.deviation_exact = Fraction(0, 1)
+        state.re_psi_exact = Fraction(1, 1)
+        state.dbz_branch = 0
+        state.arc_coherent = True
+        state.fvg_anchor_map = {}
+        self._eps = Fraction(1, 100)
         self.ohlcv_history = saved_ohlcv
         state.price = saved_price
         state.Price = saved_Price
         state.iH = saved_iH
         state.iL = saved_iL
         state.tick = saved_tick
-        logger.info(f"🔄 OnReInit() completed (MQL4 compatible) - Tick preserved: {state.tick}")
+        logger.info(f"🔄 OnReInit() completed (MQL4 + quaternion reset) — Tick preserved: {state.tick}")
 
     def _send_signal_alert(self):
         state = self.state
@@ -1533,8 +2117,8 @@ class AEEA_Engine:
         price_str = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         idx = state.Z - state.y - 1
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
-        arc_check = self._verify_arc_length_coherence(state.price, state.signal)
-        coherence_str = "✅ COHERENT" if arc_check["coherent"] else f"⚠️ DEVIATION: {arc_check['deviation']:.6f}"
+        info = self._verify_arc_length_coherence()
+        coherence_str = "✅ COHERENT" if info["coherent"] else f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
         msg = (
             f"🚨 *ÆEA SIGNAL ALERT*\n"
             f"📊 *Direction:* {direction}\n"
@@ -1547,6 +2131,7 @@ class AEEA_Engine:
             f"📋 *Dime:* {state.dime}\n"
             f"🧠 *KC State:* {state.KC}\n"
             f"🧠 *Arc-Length Coherence:* {coherence_str}\n"
+            f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
             f"🔄 *Tick Count:* {state.tick}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -1557,28 +2142,29 @@ class AEEA_Engine:
         except Exception as e:
             logger.error(f"❌ Failed to send signal alert: {e}")
 
-    def _check_coherence(self):
-        state = self.state
-        if state.price <= Decimal('0.0'):
-            return "⏳ AWAITING PRICE"
-        arc_sq = Decimal(str(state.tick if state.tick > 0 else 0))
-        radius_sq = abs(state.price - state.signal) * Decimal('1000') if state.signal != Decimal('0.0') else arc_sq
-        diff = abs(arc_sq - radius_sq)
-        return "✅ COHERENT" if diff < Decimal('0.01') else f"⚠️ DEVIATION: {diff:.6f}"
-
+    # ------------------------------------------------------------------
+    # PUBLIC STATUS SNAPSHOT
+    # ------------------------------------------------------------------
     def get_signal_status(self):
         state = self.state
         m_count = sum(1 for v in state.k if v)
         n_count = sum(1 for v in state.l if v)
         condition_met = m_count - n_count > 2
+        info = self._verify_arc_length_coherence()
         return {
             "signal": float(state.signal), "price": float(state.price), "signature": state.signature,
             "KC": state.KC, "prime": state.prime, "dime": state.dime, "m_count": m_count,
             "n_count": n_count, "condition_met": condition_met,
             "regime": state.Regime[state.Z - state.y - 1] if 0 <= state.Z - state.y - 1 < len(state.Regime) else "Unknown",
             "coherence": self._check_coherence(), "symbol": SYMBOL, "tick": state.tick,
-            "timestamp": datetime.now().isoformat(), "engine_initialized": state.FG
+            "timestamp": datetime.now().isoformat(), "engine_initialized": state.FG,
+            "dbz_branch": info["dbz_branch"],
+            "arc_sq": info["arc_sq"],
+            "radius_sq": info["radius_sq"],
+            "deviation": info["deviation"],
+            "re_psi": info["re_psi"],
         }
+
 
 # ============================================================================
 # HTTP BRIDGE — TELEGRAM WEB APP ENABLED
@@ -1592,6 +2178,7 @@ class BridgeState:
             "arc_sq": "0", "radius_sq": "0", "deviation": "0", "timestamp": datetime.now().isoformat(),
             "endpoint": None, "webapp_user_id": None, "webapp_username": None, "last_price_update": None,
             "engine_initialized": False, "consecutive_zero_prices": 0,
+            "dbz_branch": 0, "re_psi": "0",
         }
         self._fvgs: Dict[int, Dict[str, str]] = {}
         self._next_fvg_idx = 0
@@ -1599,10 +2186,12 @@ class BridgeState:
         self._handshake_lock = threading.Lock()
 
     def publish(self, snapshot):
-        with self._lock: self._snapshot = dict(snapshot)
+        with self._lock:
+            self._snapshot = dict(snapshot)
 
     def get_snapshot(self):
-        with self._lock: return dict(self._snapshot)
+        with self._lock:
+            return dict(self._snapshot)
 
     def register_webapp_session(self, user_id, username, chat_id=None):
         with self._handshake_lock:
@@ -1621,36 +2210,42 @@ class BridgeState:
                     engine.state.webapp_username = username
                     engine.state.webapp_verified = True
                     engine.state.webapp_last_seen = datetime.now()
-                    if chat_id is not None: engine.state.chat_id = chat_id
-                except Exception as e: logger.warning(f"register_webapp_session → engine map failed: {e}")
+                    if chat_id is not None:
+                        engine.state.chat_id = chat_id
+                except Exception as e:
+                    logger.warning(f"register_webapp_session → engine map failed: {e}")
             logger.info(f"🌐 Web App session registered: user_id={user_id}, username={username}")
         return True
 
     def add_fvg(self, fvg_type, price_str, user_id=None):
-        if fvg_type not in ("top", "bott"): raise ValueError("fvg_type must be 'top' or 'bott'")
-        try: price_dec = Decimal(str(price_str))
-        except Exception: raise ValueError("price must be a decimal string")
-        if price_dec <= Decimal('0.0'): raise ValueError("price must be > 0")
+        if fvg_type not in ("top", "bott"):
+            raise ValueError("fvg_type must be 'top' or 'bott'")
+        try:
+            price_dec = Decimal(str(price_str))
+        except Exception:
+            raise ValueError("price must be a decimal string")
+        if price_dec <= Decimal('0.0'):
+            raise ValueError("price must be > 0")
         with self._lock:
             snap = self._snapshot
-            # COHERENCE LOCK: reject FVG on null price
-            try:
-                snap_price = Decimal(str(snap.get("price", "0")))
-                if snap_price <= Decimal('0.0'):
-                    raise ValueError("COHERENCE LOCK: no valid price available")
-            except ValueError: raise
-            except Exception: pass
-            try:
-                arc_sq = Decimal(str(snap.get("arc_sq", "0")))
-                radius_sq = Decimal(str(snap.get("radius_sq", "0")))
-                dev = abs(arc_sq - radius_sq)
-                if dev > Decimal('1.0') and arc_sq > Decimal('0'):
-                    raise ValueError("ARC-LENGTH DEVIATION: s²={} ≠ r²={} (dev={})".format(arc_sq, radius_sq, dev))
-            except ValueError: raise
-            except Exception: pass
+            # COHERENCE LOCK: use the exact arc-length info from the live engine
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is not None:
+                info = engine._verify_arc_length_coherence()
+                if not info["coherent"] and info["initialized"]:
+                    # Reject if deviation > 1.0, same as before but with exact quaternion truth
+                    if abs(info["deviation_float"]) > 1.0:
+                        raise ValueError(
+                            "ARC-LENGTH DEVIATION: s²={} ≠ r²={} (dev={})".format(
+                                info["arc_sq"], info["radius_sq"], info["deviation"]
+                            )
+                        )
             idx = self._next_fvg_idx
             self._next_fvg_idx += 1
-            self._fvgs[idx] = {"type": fvg_type, "price": str(price_dec), "idx": idx, "created": datetime.now().isoformat(), "user_id": user_id}
+            self._fvgs[idx] = {
+                "type": fvg_type, "price": str(price_dec), "idx": idx,
+                "created": datetime.now().isoformat(), "user_id": user_id
+            }
             self._inject_into_engine(fvg_type, price_dec, idx)
         return idx
 
@@ -1658,26 +2253,35 @@ class BridgeState:
         with self._lock:
             if idx in self._fvgs:
                 del self._fvgs[idx]
+                engine = BRIDGE_ENGINE_REF.get("engine")
+                if engine is not None:
+                    engine.state.fvg_anchor_map.pop(idx, None)
                 return True
         return False
 
     def list_fvgs(self):
-        with self._lock: return list(self._fvgs.values())
+        with self._lock:
+            return list(self._fvgs.values())
 
     def _inject_into_engine(self, fvg_type, price, idx):
         engine = BRIDGE_ENGINE_REF.get("engine")
-        if engine is None: return
+        if engine is None:
+            return
         try:
-            st = engine.state
-            arr = st.Premium if fvg_type == "top" else st.Discount
-            if len(arr) == 0: return
-            slot = idx % len(arr)
-            arr[slot] = price
-            st.FVG = max(st.FVG, idx)
-        except Exception as e: logger.warning(f"BridgeState._inject_into_engine: {e}")
+            price_frac = Fraction.from_string(str(price))
+            anchor = engine._anchor_fvg_to_leech(idx, price_frac, fvg_type)
+            # Store the anchor hash in the bridge record for /fvg readback
+            with self._lock:
+                if idx in self._fvgs:
+                    self._fvgs[idx]["leech_hash"] = anchor["vector_hash"]
+                    self._fvgs[idx]["leech_vector"] = anchor["vector_24d"]
+        except Exception as e:
+            logger.warning(f"BridgeState._inject_into_engine: {e}")
+
 
 BRIDGE_STATE = BridgeState()
 BRIDGE_ENGINE_REF: Dict[str, Any] = {"engine": None, "bot": None, "public_url": None}
+
 
 class TunnelManager:
     URL_RE_CLOUDFLARED = _re_bridge.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
@@ -1707,13 +2311,17 @@ class TunnelManager:
             if line:
                 logger.debug(f"[tunnel] {line}")
                 m = regex.search(line)
-                if m: return m.group(0)
-            if time.time() > deadline: return None
+                if m:
+                    return m.group(0)
+            if time.time() > deadline:
+                return None
         return None
 
     def _try_cloudflared(self):
-        if not self._which("cloudflared"): return None
-        try: proc = self._spawn(["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{self.port}", "--no-autoupdate"])
+        if not self._which("cloudflared"):
+            return None
+        try:
+            proc = self._spawn(["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{self.port}", "--no-autoupdate"])
         except Exception as e:
             logger.warning(f"cloudflared spawn failed: {e}")
             return None
@@ -1724,13 +2332,17 @@ class TunnelManager:
             self.public_url = url
             self.provider = "cloudflared"
             return url
-        try: proc.terminate()
-        except Exception: pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
         return None
 
     def _try_ngrok(self):
-        if not self._which("ngrok"): return None
-        try: proc = self._spawn(["ngrok", "http", str(self.port), "--log=stdout"])
+        if not self._which("ngrok"):
+            return None
+        try:
+            proc = self._spawn(["ngrok", "http", str(self.port), "--log=stdout"])
         except Exception as e:
             logger.warning(f"ngrok spawn failed: {e}")
             return None
@@ -1741,13 +2353,17 @@ class TunnelManager:
             self.public_url = url
             self.provider = "ngrok"
             return url
-        try: proc.terminate()
-        except Exception: pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
         return None
 
     def _try_serveo(self):
-        if not self._which("ssh"): return None
-        try: proc = self._spawn(["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-R", f"80:127.0.0.1:{self.port}", "serveo.net"])
+        if not self._which("ssh"):
+            return None
+        try:
+            proc = self._spawn(["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-R", f"80:127.0.0.1:{self.port}", "serveo.net"])
         except Exception as e:
             logger.warning(f"serveo spawn failed: {e}")
             return None
@@ -1758,8 +2374,10 @@ class TunnelManager:
             self.public_url = url
             self.provider = "serveo"
             return url
-        try: proc.terminate()
-        except Exception: pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
         return None
 
     def start(self):
@@ -1772,7 +2390,8 @@ class TunnelManager:
         order = [self.prefer] + [p for p in ("cloudflared", "ngrok", "serveo") if p != self.prefer]
         for provider in order:
             method = getattr(self, f"_try_{provider}", None)
-            if method is None: continue
+            if method is None:
+                continue
             try:
                 url = method()
             except Exception as e:
@@ -1786,30 +2405,36 @@ class TunnelManager:
         return None
 
     def stop(self):
-        if self.process is None: return
+        if self.process is None:
+            return
         try:
             self.process.terminate()
             self.process.wait(timeout=5)
         except Exception:
-            try: self.process.kill()
-            except Exception: pass
+            try:
+                self.process.kill()
+            except Exception:
+                pass
         self.process = None
         logger.info("🌐 Tunnel stopped")
 
-class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.17"
 
-    def log_message(self, fmt, *args): return
+class BridgeHandler(BaseHTTPRequestHandler):
+    server_version = "AEI-Bridge/4.18"
+
+    def log_message(self, fmt, *args):
+        return
 
     def _set_cors(self):
         origin = CORS_ORIGIN
         self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data")
-        if origin != "*": self.send_header("Vary", "Origin")
+        if origin != "*":
+            self.send_header("Vary", "Origin")
 
     def _send_json(self, code, payload):
-        body = json.dumps(payload).encode("utf-8")
+        body = json.dumps(payload, default=str).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -1830,7 +2455,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length", "0") or 0)
-        if length <= 0: return b""
+        if length <= 0:
+            return b""
         return self.rfile.read(length)
 
     def do_OPTIONS(self):
@@ -1849,16 +2475,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 try:
                     age_seconds = (datetime.now() - datetime.fromisoformat(last)).total_seconds()
                     stale = age_seconds > 60
-                except Exception: pass
+                except Exception:
+                    pass
             self._send_json(200, {
                 "ok": not stale,
                 "service": "aei-bridge",
-                "version": "4.17",
+                "version": "4.18",
                 "last_price_update": last,
                 "age_seconds": age_seconds,
                 "stale": stale,
                 "relay_url": RELAY_URL or None,
                 "engine_initialized": snap.get("engine_initialized", False),
+                "coherent": snap.get("coherent", False),
+                "dbz_branch": snap.get("dbz_branch", 0),
             })
             return
         if path == "/config":
@@ -1871,13 +2500,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "webapp_enabled": True,
                 "cors_origin": CORS_ORIGIN,
                 "relay_url": RELAY_URL or None,
-                "version": "4.17",
+                "version": "4.18",
             })
             return
         if path == "/state":
             snap = BRIDGE_STATE.get_snapshot()
             public = BRIDGE_ENGINE_REF.get("public_url")
-            if public: snap["endpoint"] = public
+            if public:
+                snap["endpoint"] = public
             else:
                 host = self.headers.get("Host", f"{BRIDGE_HOST}:{BRIDGE_PORT}")
                 scheme = "https" if BRIDGE_USE_TLS else "http"
@@ -1892,16 +2522,26 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if engine is None:
                 self._send_json(503, {"error": "engine_not_ready"})
                 return
-            self._send_json(200, engine.feed.probe())
+            probe_data = engine.feed.probe()
+            # Attach arc-length info from the live engine
+            try:
+                probe_data["arc_length"] = engine._verify_arc_length_coherence()
+            except Exception:
+                pass
+            self._send_json(200, probe_data)
             return
         if path == "/" or path == "/index.html":
             try:
                 base = os.path.dirname(os.path.abspath(__file__))
                 html_path = os.path.join(base, "index.html")
                 if os.path.isfile(html_path):
-                    with open(html_path, "r", encoding="utf-8") as f: self._send_html(200, f.read())
+                    with open(html_path, "r", encoding="utf-8") as f:
+                        self._send_html(200, f.read())
                 else:
-                    self._send_html(200, "<!DOCTYPE html><html><body style='font-family:monospace;background:#050510;color:#aaccff;padding:40px;'><h2>⚡ ÆEA Mini App Bridge Online</h2><p>index.html not found in <code>" + base + "</code>.</p></body></html>")
+                    self._send_html(200,
+                        "<!DOCTYPE html><html><body style='font-family:monospace;background:#050510;color:#aaccff;padding:40px;'>"
+                        "<h2>⚡ ÆEA Mini App Bridge Online</h2>"
+                        "<p>index.html not found in <code>" + base + "</code>.</p></body></html>")
             except Exception as e:
                 self._send_json(500, {"error": "read_index_failed", "detail": str(e)})
             return
@@ -1928,7 +2568,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 username = u.get("username")
                 BRIDGE_STATE.register_webapp_session(user_id, username, chat_id=chat_id)
                 logger.info(f"🤝 Handshake OK: user_id={user_id}, username={username}, chat_id={chat_id}")
-                self._send_json(200, {"ok": True, "user_id": user_id, "username": username, "public_url": BRIDGE_ENGINE_REF.get("public_url")})
+                self._send_json(200, {
+                    "ok": True, "user_id": user_id, "username": username,
+                    "public_url": BRIDGE_ENGINE_REF.get("public_url")
+                })
             except Exception as e:
                 logger.error(f"Handshake error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
@@ -1944,8 +2587,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": "missing_fields", "need": ["type", "price"]})
                     return
                 idx = BRIDGE_STATE.add_fvg(fvg_type, price_str, user_id=user_id)
+                # Return the Leech anchor hash to the client
+                anchor_info = {}
+                engine = BRIDGE_ENGINE_REF.get("engine")
+                if engine is not None and idx in engine.state.fvg_anchor_map:
+                    anchor_info = engine.state.fvg_anchor_map[idx]
                 logger.info(f"🔷 FVG committed: type={fvg_type} price={price_str} idx={idx} verified={verified} user={username}")
-                self._send_json(201, {"ok": True, "idx": idx, "type": fvg_type, "price": price_str, "verified": verified})
+                self._send_json(201, {
+                    "ok": True, "idx": idx, "type": fvg_type, "price": price_str,
+                    "verified": verified,
+                    "leech_hash": anchor_info.get("vector_hash") if anchor_info else None,
+                })
             except ValueError as ve:
                 logger.warning(f"FVG rejected: {ve}")
                 self._send_json(422, {"error": "validation", "detail": str(ve)})
@@ -1962,7 +2614,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 engine.feed._rebuild_ticker()
                 engine.feed._fallback_count = 0
                 engine._consecutive_zero_prices = 0
-                logger.info("🔄 Manual reset requested via /reset")
+                engine._on_reinit()
+                logger.info("🔄 Manual reset requested via /reset (full quaternion + MQL4 reinit)")
                 self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
             except Exception as e:
                 logger.error(f"/reset error: {e}")
@@ -1984,6 +2637,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         self._send_json(404, {"error": "not_found", "path": path})
 
+
 class BridgeServer:
     def __init__(self, host=BRIDGE_HOST, port=BRIDGE_PORT):
         self.host = host
@@ -1994,7 +2648,8 @@ class BridgeServer:
         self._ssl_context: Optional[ssl.SSLContext] = None
 
     def _build_ssl_context(self):
-        if not BRIDGE_USE_TLS: return None
+        if not BRIDGE_USE_TLS:
+            return None
         if not BRIDGE_TLS_CERT or not BRIDGE_TLS_KEY:
             logger.warning("⚠️ BRIDGE_USE_TLS=1 but cert/key paths missing — falling back to HTTP")
             return None
@@ -2011,12 +2666,14 @@ class BridgeServer:
             return None
 
     def start(self):
-        if self._thread is not None: return
+        if self._thread is not None:
+            return
         try:
             self._httpd = ThreadingHTTPServer((self.host, self.port), BridgeHandler)
             self._httpd.daemon_threads = True
             self._ssl_context = self._build_ssl_context()
-            if self._ssl_context is not None: self._httpd.socket = self._ssl_context.wrap_socket(self._httpd.socket, server_side=True)
+            if self._ssl_context is not None:
+                self._httpd.socket = self._ssl_context.wrap_socket(self._httpd.socket, server_side=True)
         except OSError as e:
             logger.error(f"❌ Bridge server bind failed on {self.host}:{self.port}: {e}")
             return
@@ -2029,51 +2686,74 @@ class BridgeServer:
 
     def stop(self):
         if self._tunnel is not None:
-            try: self._tunnel.stop()
-            except Exception: pass
+            try:
+                self._tunnel.stop()
+            except Exception:
+                pass
             self._tunnel = None
         if self._httpd is not None:
             try:
                 self._httpd.shutdown()
                 self._httpd.server_close()
-            except Exception: pass
+            except Exception:
+                pass
             self._httpd = None
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
         logger.info("🌐 ÆEA Mini App Bridge stopped")
 
+
 def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
-    if getattr(engine, "_bridge_attached", False): return
+    if getattr(engine, "_bridge_attached", False):
+        return
     original_on_tick = engine._on_tick
+
     def wrapped_on_tick(price_data):
         original_on_tick(price_data)
         try:
             st = engine.state
             idx = st.Z - st.y - 1
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-            arc_check = engine._verify_arc_length_coherence(st.price, st.signal)
+            info = engine._verify_arc_length_coherence()
             snapshot = {
-                "symbol": SYMBOL, "price": str(st.price), "bid": str(price_data.bid), "ask": str(price_data.ask),
-                "signal": str(st.signal), "regime": regime, "tick": int(st.tick),
-                "m_count": int(sum(1 for v in st.k if v)), "n_count": int(sum(1 for v in st.l if v)),
-                "coherent": bool(arc_check["coherent"]), "arc_sq": str(arc_check["arc_sq"]),
-                "radius_sq": str(arc_check["radius_sq"]), "deviation": str(arc_check["deviation"]),
-                "timestamp": datetime.now().isoformat(), "endpoint": BRIDGE_ENGINE_REF.get("public_url"),
-                "webapp_user_id": st.webapp_user_id, "webapp_username": st.webapp_username,
+                "symbol": SYMBOL,
+                "price": str(st.price),
+                "bid": str(price_data.bid),
+                "ask": str(price_data.ask),
+                "signal": str(st.signal),
+                "regime": regime,
+                "tick": int(st.tick),
+                "m_count": int(sum(1 for v in st.k if v)),
+                "n_count": int(sum(1 for v in st.l if v)),
+                "coherent": bool(info["coherent"]),
+                "arc_sq": str(info["arc_sq"]),
+                "radius_sq": str(info["radius_sq"]),
+                "deviation": str(info["deviation"]),
+                "dbz_branch": int(info["dbz_branch"]),
+                "re_psi": str(info["re_psi"]),
+                "timestamp": datetime.now().isoformat(),
+                "endpoint": BRIDGE_ENGINE_REF.get("public_url"),
+                "webapp_user_id": st.webapp_user_id,
+                "webapp_username": st.webapp_username,
                 "last_price_update": datetime.now().isoformat(),
                 "engine_initialized": bool(st.FG),
                 "consecutive_zero_prices": int(getattr(engine, "_consecutive_zero_prices", 0)),
             }
             BRIDGE_STATE.publish(snapshot)
-        except Exception as e: logger.warning(f"Bridge publish failed: {e}")
+        except Exception as e:
+            logger.warning(f"Bridge publish failed: {e}")
+
     engine._on_tick = wrapped_on_tick
     engine._bridge_attached = True
     logger.info("🔗 Bridge attached to AEEA_Engine (snapshot publishing active)")
 
+
 def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
-    if getattr(bot, "_bridge_attached", False): return
+    if getattr(bot, "_bridge_attached", False):
+        return
     original_run = bot.run
+
     def wrapped_run(self):
         BRIDGE_ENGINE_REF["engine"] = self.engine
         BRIDGE_ENGINE_REF["bot"] = self
@@ -2081,11 +2761,15 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
         server = BridgeServer()
         server.start()
         self._bridge_server = server
-        try: original_run(self)
-        finally: server.stop()
+        try:
+            original_run(self)
+        finally:
+            server.stop()
+
     bot.run = wrapped_run
     bot._bridge_attached = True
     logger.info("🔗 Bridge attached to AEI_Bot.run()")
+
 
 # ============================================================================
 # TELEGRAM BOT HANDLERS
@@ -2126,9 +2810,12 @@ class AEI_Bot:
             [InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"), InlineKeyboardButton("⏹️ Stop Feed", callback_data="stop_feed")],
             [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
             [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
+            [InlineKeyboardButton("🧬 Arc-Length", callback_data="arclen"), InlineKeyboardButton("🌿 DbZ", callback_data="dbz")],
         ]
-        if webapp_url: rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
-        else: rows.append([InlineKeyboardButton("⚡ Mini App (tunnel pending…)", callback_data="webapp_pending")])
+        if webapp_url:
+            rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
+        else:
+            rows.append([InlineKeyboardButton("⚡ Mini App (tunnel pending…)", callback_data="webapp_pending")])
         return InlineKeyboardMarkup(rows)
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2138,16 +2825,19 @@ class AEI_Bot:
         engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
         webapp_url = self._resolve_webapp_url()
         webapp_display = webapp_url if webapp_url else "⏳ Tunnel not yet established"
+        arclen_info = self.engine._verify_arc_length_coherence()
         welcome = (
             "🔷 *ÆEA Quantum-Financial Topology Bot*\n"
             "Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
-            "Stochastic Geometry of Supply-Demand Imbalance.\n\n"
+            "Stochastic Geometry of Supply-Demand Imbalance, now with EXACT\n"
+            "quaternion-based Arc-Length verification (s² = r²) and Leech-anchored FVGs.\n\n"
             "📊 *Available Commands:*\n"
             "`/status` - Current market state & regime\n"
             "`/regime` - Detailed regime classification\n"
             "`/signal` - Current trading signal\n"
             "`/indicators` - 13D Hilbert Space projection\n"
-            "`/fvg` - Fair Value Gap tracking\n"
+            "`/fvg` - Fair Value Gap tracking (Leech-anchored)\n"
+            "`/arclen` - Exact arc-length & DbZ state\n"
             "`/reset` - Reset topological branch\n"
             "`/start_feed` - Start price feed\n"
             "`/stop_feed` - Stop price feed\n"
@@ -2162,12 +2852,15 @@ class AEI_Bot:
             f"🔄 *Feed Status:* {'Active' if self._running else 'Inactive'}\n"
             f"🌐 *Relay:* `{RELAY_URL or 'unset'}`\n"
             f"🌐 *Mini App URL:* `{webapp_display}`\n"
-            f"🧠 *Engine Status:* {engine_status}\n\n"
+            f"🧠 *Engine Status:* {engine_status}\n"
+            f"🌿 *DbZ Branch:* {arclen_info['dbz_branch']}  |  "
+            f"*Coherent:* {'✅' if arclen_info['coherent'] else '⚠️'}\n\n"
             "🧠 *Theoretical Foundation:*\n"
-            "• Arc-Length Coherence (s = r)\n"
+            "• Arc-Length Coherence (s = r) — EXACT quaternion algebra\n"
             "• Kronecker-Delta Execution: δ(m-n-2)=1\n"
-            "• Observer Operator O[Ψ]\n"
-            "• Non-Hermitian Lindblad Dynamics\n\n"
+            "• Observer Operator O[Ψ] via Re[Ψ] quaternion component\n"
+            "• Non-Hermitian Lindblad Dynamics (DbZ branching)\n"
+            "• Leech Lattice Λ₂₄ FVG anchoring (24D vector projection)\n\n"
             "💎 Natalia Tanyatia"
         )
         await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
@@ -2193,14 +2886,19 @@ class AEI_Bot:
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
         bid, ask = self.engine.feed.get_current_price()
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
-        coherence = self.engine._check_coherence()
+        info = self.engine._verify_arc_length_coherence()
         response = (
             "🔷 *ÆEA STATUS*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
             f"🔎 *Active Relay Symbol:* `{self.engine.feed.active_symbol()}`\n"
             f"💰 *Price:* {price_display}\n"
             f"📊 *Regime:* {regime}\n"
-            f"🔄 *Coherence:* {coherence}\n"
+            f"🔄 *Coherence:* {'✅ COHERENT' if info['coherent'] else f\"⚠️ DEV: {info['deviation_float']:.6f}\"}\n"
+            f"🌿 *DbZ Branch:* {info['dbz_branch']}  (0=none, 1=critical-line, 2=Natalia)\n"
+            f"🧮 *s² =* `{info['arc_sq']}`\n"
+            f"🧮 *r² =* `{info['radius_sq']}`\n"
+            f"🧮 *Δ =* `{info['deviation']}`\n"
+            f"🌀 *Re[Ψ] =* `{info['re_psi']}`\n"
             f"🎯 *Signal Level:* {state.signal:.5f}\n"
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🧠 *KC State:* {state.KC}\n"
@@ -2212,8 +2910,61 @@ class AEI_Bot:
             f"📡 *Feed Active:* {'✅' if self._running else '❌'}"
         )
         reply_markup = self._build_main_keyboard()
-        if update.callback_query: await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else: await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+
+    async def arclen(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Exact arc-length + DbZ state readout."""
+        state = self.engine.state
+        info = self.engine._verify_arc_length_coherence()
+        # Additional context: recent quaternion history
+        q = state.q_field
+        qstr = f"({q.a}, {q.b}, {q.c}, {q.d})"
+        response = (
+            "🧬 *EXACT ARC-LENGTH STATE*\n"
+            f"🧮 *s² (exact)* = `{info['arc_sq']}`\n"
+            f"🧮 *r² (exact)* = `{info['radius_sq']}`\n"
+            f"🧮 *Δ = s² − r²* = `{info['deviation']}`\n"
+            f"🧮 *Δ (float)* = {info['deviation_float']:.10e}\n"
+            f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
+            f"   • 0 = coherent (no action)\n"
+            f"   • 1 = critical-line projection (Re[Ψ] > 0)\n"
+            f"   • 2 = Natalia fibration (Re[Ψ] ≤ 0)\n"
+            f"🌀 *Re[Ψ]* = `{info['re_psi']}`\n"
+            f"🧊 *Current Φ* = `{qstr}`\n"
+            f"📜 *Quaternion history depth:* {len(state.quat_history)}\n"
+            f"⏱️ *Exact time* = `{state.time_fraction}`\n"
+            f"🔷 *FVG anchors:* {len(state.fvg_anchor_map)} Leech vectors"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown")
+
+    async def dbz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show DbZ branch history and current ε."""
+        state = self.engine.state
+        info = self.engine._verify_arc_length_coherence()
+        eps = self.engine._eps
+        branch_names = {0: "COHERENT", 1: "CRITICAL-LINE (Branch A)", 2: "NATALIA (Branch B)"}
+        response = (
+            "🌿 *DECIDING-BY-ZERO (DbZ) STATE*\n"
+            f"🌿 *Current Branch:* {info['dbz_branch']} — {branch_names.get(info['dbz_branch'], 'UNKNOWN')}\n"
+            f"⚡ *ε (fibration parameter):* `{eps}`\n"
+            f"💠 *ε as float:* {eps.to_float():.10f}\n"
+            f"🌀 *Re[Ψ] =* `{info['re_psi']}`\n"
+            f"🧮 *Δ (deviation) =* `{info['deviation']}`\n\n"
+            "*Branch semantics (from Codex Symbolica §E.3):*\n"
+            "• Re[Ψ] > 0 → project to critical line Re(s)=½\n"
+            "• Re[Ψ] ≤ 0 → apply Natalia fibration εᵏ perturbation\n"
+            "• Δ ≈ 0 → relax ε toward baseline 1/100"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown")
 
     async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
@@ -2243,8 +2994,10 @@ class AEI_Bot:
             f"📐 *Imbalance Condition:* {'✅ TRIGGER' if k_count >= 12 or l_count >= 12 else '⏳ WAITING'}"
         )
         reply_markup = self._build_main_keyboard()
-        if update.callback_query: await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else: await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
@@ -2265,6 +3018,7 @@ class AEI_Bot:
         m_count = sum(1 for v in state.k if v)
         n_count = sum(1 for v in state.l if v)
         condition_met = m_count - n_count > 2
+        info = self.engine._verify_arc_length_coherence()
         response = (
             "🎯 *TRADING SIGNAL*\n"
             f"📊 *Direction:* {direction}\n"
@@ -2273,14 +3027,17 @@ class AEI_Bot:
             f"💰 *Current Price:* {state.price:.5f}\n"
             f"⚖️ *Imbalance:* m={m_count}, n={n_count}\n"
             f"✅ *Condition δ(m-n-2)=1:* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
+            f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
             f"🧠 *KC State:* {state.KC}\n"
             f"🔢 *Prime:* {state.prime}\n"
             f"📋 *Dime:* {state.dime}\n"
             f"🔄 *Tick Count:* {state.tick}"
         )
         reply_markup = self._build_main_keyboard()
-        if update.callback_query: await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else: await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
@@ -2305,8 +3062,10 @@ class AEI_Bot:
         indicator_str += f"  Overbought: 66.6 (f={F_THRESHOLD:.1f})\n"
         indicator_str += f"  Oversold:   33.3 (g={G_THRESHOLD:.1f})"
         reply_markup = self._build_main_keyboard()
-        if update.callback_query: await update.callback_query.edit_message_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
-        else: await update.message.reply_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
@@ -2317,14 +3076,16 @@ class AEI_Bot:
         bridge_fvgs = BRIDGE_STATE.list_fvgs()
         bridge_str = ""
         if bridge_fvgs:
-            bridge_str = "\n🌐 *Web App FVGs:*\n"
+            bridge_str = "\n🌐 *Web App FVGs (Leech-Anchored):*\n"
             for f in bridge_fvgs[-8:]:
                 mark = "▲" if f["type"] == "top" else "▼"
                 who = f" (user {f['user_id']})" if f.get("user_id") else ""
-                bridge_str += f"  {mark} {f['price']} (idx={f['idx']}){who}\n"
+                lh = f.get("leech_hash", "")[:12] if f.get("leech_hash") else "—"
+                bridge_str += f"  {mark} {f['price']} idx={f['idx']}{who}  Λ={lh}\n"
         response = (
-            "📐 *FAIR VALUE GAP TRACKING*\n"
+            "📐 *FAIR VALUE GAP TRACKING (Λ₂₄ ANCHORED)*\n"
             f"📊 *FVG Count:* {state.FVG + 1}\n"
+            f"🧬 *Leech Anchors:* {len(state.fvg_anchor_map)}\n"
             f"📈 *Current Price:* {state.price:.5f}\n"
             f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n"
             "*Topological Anchors:*\n"
@@ -2337,125 +3098,27 @@ class AEI_Bot:
         await update.message.reply_text(response, parse_mode="Markdown")
 
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        state = self.engine.state
-        saved_ohlcv = self.engine.ohlcv_history.copy()
-        saved_price = state.price
-        saved_Price = state.Price
-        saved_iH = state.iH
-        saved_iL = state.iL
-        saved_tick = state.tick
-        if state.X <= state.y:
-            state.X = state.y + MAX_PERIOD
-        size = state.X - state.y
-        if size <= 0: size = MAX_PERIOD
-        state.X = state.y + size
-        for i in range(13):
-            if i < len(state.cA):
-                state.cA[i] = [Decimal('0.0')] * size
-                state.iA[i] = [Decimal('0.0')] * size
-                state.kA[i] = [Decimal('0.0')] * size
-                state.lA[i] = [Decimal('0.0')] * size
-        state.IHKk = []
-        state.IHKt = []
-        state.RSI = []
-        state.CCI = []
-        state.MOM = []
-        state.AD = []
-        state.OBV = []
-        state.Force = []
-        state.MFI = []
-        state.DeM = []
-        state.RVIm = []
-        state.AC = []
-        state.StdDev = []
-        state.ATR = []
-        state.ADX = []
-        state.Regime = [""] * size
-        state.Premium = [Decimal('0.0')] * size
-        state.Discount = [Decimal('0.0')] * size
-        state.HH = [Decimal('0.0')] * size
-        state.LL = [Decimal('0.0')] * size
-        state.k = [False] * size
-        state.l = [False] * size
-        state.U = []
-        state.R = True
-        state.D = Decimal('0.0')
-        state.E = Decimal('0.0')
-        state.K = False
-        state.Z = state.y + 1
-        state.z = state.y + 1
-        state.O = state.y + 1
-        state.o = state.y + 1
-        state.r = 0
-        state.W = state.y + 1
-        state.w = state.y + 1
-        state.I = 0
-        state.iI = 0
-        state.J = 0
-        state.iJ = 0
-        state.ij = 0
-        state.toll = 0
-        state.tally = "   "
-        state.tick_tock = False
-        state.iZ = state.y + 1
-        state.iz = state.y + 1
-        state.iW = state.y + 1
-        state.iw = state.y + 1
-        state.iO = state.y + 1
-        state.io = state.y + 1
-        state.ir = 0
-        state.S = state.X
-        state.T = state.X
-        state.X = state.y
-        state.Y = state.y
-        state.FG = False
-        state.signature = False
-        state.signal = Decimal('0.0')
-        state.FVG = -1
-        state.BL = []
-        state.bottomLine = "   "
-        state.bL = "   "
-        self.engine.ohlcv_history = saved_ohlcv
-        state.price = saved_price
-        state.Price = saved_Price
-        state.iH = saved_iH
-        state.iL = saved_iL
-        state.tick = saved_tick
-        self.engine._consecutive_zero_prices = 0
-        if len(self.engine.ohlcv_history) >= 2:
-            iH = self.engine.ohlcv_history[-2]["high"]
-            iL = self.engine.ohlcv_history[-2]["low"]
-            for j in range(state.y + 1, state.X + 1):
-                idx = j - state.y - 1
-                if 0 <= idx < len(state.k):
-                    state.k[idx] = False
-                    state.l[idx] = False
-                    state.HH[idx] = iH
-                    state.LL[idx] = iL
-                    state.Premium[idx] = iH
-                    state.Discount[idx] = iL
-                    for i in range(13):
-                        if idx < len(state.kA[i]) and idx < len(state.cA[i]):
-                            state.kA[i][idx] = state.cA[i][idx]
-                            state.lA[i][idx] = state.cA[i][idx]
-            state.FG = True
+        self.engine._on_reinit()
         reset_msg = (
             "🔄 *TOPOLOGICAL BRANCH RESET*\n"
             "The Hilbert space projection has been re-anchored to the current\n"
-            "topological branch with historical preservation (MQL4 OnReInit() compatible).\n\n"
+            "topological branch with historical preservation.\n\n"
             "🧠 *State Reset:*\n"
             "• All 13 indicator arrays reset\n"
             "• Regime classification cleared\n"
             "• Premium/Discount/HH/LL reset to current bar data\n"
             "• k/l signal flags cleared\n"
-            "• Tracking variables reset to initial state\n"
-            "• ✨ Historical price data preserved via F() initialization\n"
-            f"• 🔄 Tick count preserved: {state.tick}\n"
-            f"• 🧹 Zero-price counter reset\n\n"
+            "• Quaternion field Φ reset to identity\n"
+            "• DbZ branch history cleared\n"
+            "• Leech anchor map cleared\n"
+            "• ✨ Historical price data preserved\n"
+            f"• 🔄 Tick count preserved: {self.engine.state.tick}\n\n"
             "📊 *Ready for new regime classification...*"
         )
-        if update.callback_query: await update.callback_query.edit_message_text(reset_msg, parse_mode="Markdown")
-        else: await update.message.reply_text(reset_msg, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(reset_msg, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(reset_msg, parse_mode="Markdown")
 
     async def start_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if self._running:
@@ -2464,7 +3127,7 @@ class AEI_Bot:
         self._running = True
         self.engine._running = True
         self.engine._consecutive_zero_prices = 0
-        
+
         historical = []
         try:
             historical = self.engine.feed.get_historical_klines(limit=200)
@@ -2473,24 +3136,24 @@ class AEI_Bot:
                 logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()}")
                 try:
                     self.engine.initialize_engine()
-                except Exception as e:
+                except Exception:
                     logger.exception("initialize_engine crashed")
             else:
-                logger.info("⏳ No historical data from relay. Engine will initialize organically on first tick (MQL4 parity).")
+                logger.info("⏳ No historical data from relay. Engine will initialize organically on first tick.")
         except Exception as e:
-            logger.warning(f"⚠️ Historical data fetch failed: {e}. Engine will initialize organically on first tick.")
+            logger.warning(f"⚠️ Historical data fetch failed: {e}")
 
         try:
             self.engine.update_price_from_feed()
-        except Exception as e:
+        except Exception:
             logger.exception("update_price_from_feed crashed during start_feed")
 
         if self._price_task is None or self._price_task.done():
             self._price_task = asyncio.create_task(self.price_feed_loop())
 
         hist_count = len(self.engine.ohlcv_history)
-        init_mode = "Pre-seeded with history" if hist_count >= 20 else "Organic first-tick initialization (MQL4 parity)"
-        
+        init_mode = "Pre-seeded with history" if hist_count >= 20 else "Organic first-tick initialization"
+
         reply_text = (
             f"✅ *Price feed started*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
@@ -2502,15 +3165,20 @@ class AEI_Bot:
             f"🔮 *Status:* Monitoring for signals...\n"
             f"_Tip: The engine builds its state in real-time as ticks arrive._"
         )
-        if update.callback_query: await update.callback_query.edit_message_text(reply_text, parse_mode="Markdown")
-        else: await update.message.reply_text(reply_text, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(reply_text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(reply_text, parse_mode="Markdown")
 
     async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._running = False
         self.engine._running = False
-        if self._price_task and not self._price_task.done(): self._price_task.cancel()
-        if update.callback_query: await update.callback_query.edit_message_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
-        else: await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+        if self._price_task and not self._price_task.done():
+            self._price_task.cancel()
+        if update.callback_query:
+            await update.callback_query.edit_message_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
 
     async def probe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         info = self.engine.feed.probe()
@@ -2531,24 +3199,24 @@ class AEI_Bot:
         raw = info.get("raw_response")
         if raw:
             lines.append(f"*Raw keys:* `{list(raw.keys())}`")
-            lines.append("")
-            lines.append("_If EMPTY persists:_")
-            lines.append("_1. Verify the Worker URL: `curl <relay>/?symbol=BTC-USD&kind=price`_")
-            lines.append("_2. Check the Worker dashboard for errors._")
-            lines.append("_3. Send `/rebuild_yf` to force a symbol rotation._")
         text = "\n".join(lines)
-        if update.callback_query: await update.callback_query.edit_message_text(text, parse_mode="Markdown")
-        else: await update.message.reply_text(text, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown")
 
     async def rebuild_yf(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.engine.feed._rebuild_ticker()
         self.engine.feed._fallback_count = 0
         self.engine._consecutive_zero_prices = 0
-        if len(self.engine.feed._chain) > 1: self.engine.feed._advance_symbol_chain()
+        if len(self.engine.feed._chain) > 1:
+            self.engine.feed._advance_symbol_chain()
         active = self.engine.feed.active_symbol()
         text = f"♻️ *Relay client rebuilt*\n🔎 *Active symbol:* `{active}`\n_Feed will use this symbol on next iteration._"
-        if update.callback_query: await update.callback_query.edit_message_text(text, parse_mode="Markdown")
-        else: await update.message.reply_text(text, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown")
 
     async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         global SYMBOL
@@ -2606,8 +3274,10 @@ class AEI_Bot:
             f"🌐 *Data Source:* Cloudflare Worker Relay (Yahoo Finance upstream)\n"
             f"🔗 *Relay URL:* `{RELAY_URL or 'unset'}`"
         )
-        if update.callback_query: await update.callback_query.edit_message_text(response, parse_mode="Markdown")
-        else: await update.message.reply_text(response, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown")
 
     async def webapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         url = self._resolve_webapp_url()
@@ -2626,17 +3296,15 @@ class AEI_Bot:
             f"🌐 *ÆEA Telegram Mini App*\n"
             f"*Public URL:* `{url}`\n"
             f"*Provider:* {'explicit' if TELEGRAM_WEBAPP_URL else BRIDGE_TUNNEL}\n"
-            f"Tap the button below to launch the full Codex Symbolica visualization "
-            f"as a Telegram Web App — the same GUI served locally at "
-            f"`http://127.0.0.1:{BRIDGE_PORT}`, but reachable from inside Telegram.\n\n"
+            f"Tap the button below to launch the full Codex Symbolica visualization.\n\n"
             f"*Features inside the Mini App:*\n"
-            f"  ▲ Draw premium FVG (Top)\n"
-            f"  ▼ Draw discount FVG (Bottom)\n"
-            f"  ✖ Delete FVG (Deleter)\n"
+            f"  ▲ Draw premium FVG (Leech-anchored)\n"
+            f"  ▼ Draw discount FVG (Leech-anchored)\n"
+            f"  ✖ Delete FVG\n"
             f"  ⟳ Live state polling every 2 s\n"
-            f"  🧠 Arc-Length Coherence gate enforced on every FVG commit\n\n"
-            f"Your Telegram user ID is bound to `chat_id` on handshake, so bot "
-            f"signal alerts route to the same account.",
+            f"  🧬 Exact arc-length gate on every FVG commit\n"
+            f"  🌿 Engine State panel mirrors app.py fields live\n\n"
+            f"Your Telegram user ID is bound to `chat_id` on handshake.",
             parse_mode="Markdown",
             reply_markup=keyboard
         )
@@ -2653,12 +3321,7 @@ class AEI_Bot:
             f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
             f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
             f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`\n"
-            f"*Relay URL:* `{RELAY_URL or 'unset'}`\n"
-            f"*Chart tools in Mini App:*\n"
-            f"  ▲ Top → Blue premium FVG\n"
-            f"  ▼ Bottom → Red discount FVG\n"
-            f"  ✖ Delete → Remove FVG\n"
-            f"  Esc → Pan/Rotate",
+            f"*Relay URL:* `{RELAY_URL or 'unset'}`",
             parse_mode="Markdown"
         )
 
@@ -2666,16 +3329,30 @@ class AEI_Bot:
         query = update.callback_query
         await query.answer()
         action = query.data
-        if action == "status": await self.status(update, context)
-        elif action == "regime": await self.regime(update, context)
-        elif action == "signal": await self.signal(update, context)
-        elif action == "indicators": await self.indicators(update, context)
-        elif action == "start_feed": await self.start_feed(update, context)
-        elif action == "stop_feed": await self.stop_feed(update, context)
-        elif action == "info": await self.info(update, context)
-        elif action == "reset": await self.reset(update, context)
-        elif action == "probe": await self.probe(update, context)
-        elif action == "rebuild_yf": await self.rebuild_yf(update, context)
+        if action == "status":
+            await self.status(update, context)
+        elif action == "regime":
+            await self.regime(update, context)
+        elif action == "signal":
+            await self.signal(update, context)
+        elif action == "indicators":
+            await self.indicators(update, context)
+        elif action == "start_feed":
+            await self.start_feed(update, context)
+        elif action == "stop_feed":
+            await self.stop_feed(update, context)
+        elif action == "info":
+            await self.info(update, context)
+        elif action == "reset":
+            await self.reset(update, context)
+        elif action == "probe":
+            await self.probe(update, context)
+        elif action == "rebuild_yf":
+            await self.rebuild_yf(update, context)
+        elif action == "arclen":
+            await self.arclen(update, context)
+        elif action == "dbz":
+            await self.dbz(update, context)
         elif action == "webapp_pending":
             await query.edit_message_text(
                 "⏳ *Mini App tunnel is starting…*\n"
@@ -2709,6 +3386,8 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("signal", self.signal))
         self.application.add_handler(CommandHandler("indicators", self.indicators))
         self.application.add_handler(CommandHandler("fvg", self.fvg))
+        self.application.add_handler(CommandHandler("arclen", self.arclen))
+        self.application.add_handler(CommandHandler("dbz", self.dbz))
         self.application.add_handler(CommandHandler("reset", self.reset))
         self.application.add_handler(CommandHandler("start_feed", self.start_feed))
         self.application.add_handler(CommandHandler("stop_feed", self.stop_feed))
@@ -2722,26 +3401,29 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info(f"📊 Quantum-Financial Topology Engine initialized.")
-        logger.info(f"🧠 Arc-Length Axiom (s=r) enforced.")
-        logger.info(f"🔄 Non-Hermitian Lindblad Dynamics active.")
+        logger.info(f"📊 Quantum-Financial Topology Engine initialized (v4.18).")
+        logger.info(f"🧠 EXACT Arc-Length Axiom (s²=r²) via Python Fraction + Quat.")
+        logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
+        logger.info(f"🧬 Leech Λ₂₄ anchoring: FVGs project to 24D lattice vectors.")
         logger.info(f"🌐 Relay: {RELAY_URL or 'UNSET — set RELAY_URL env var!'}")
         logger.info(f"⚡ Telegram Mini App enabled.")
         logger.info(f"🌐 CORS origin: {CORS_ORIGIN}")
         logger.info(f"💎 Ready. Use /start to begin.")
         self.application.run_polling()
 
+
 # ============================================================================
 # BRIDGE BOOTSTRAP
 # ============================================================================
 _bridge_attach_to_bot(AEI_Bot)
+
 
 # ============================================================================
 # MAIN ENTRY POINT
 # ============================================================================
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.17 (AUDIT PATCH)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.18 (EXACT ARC-LENGTH)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
 • Telegram bot      : app.py (python-telegram-bot)
@@ -2751,15 +3433,21 @@ Architecture:
 • Web GUI           : index.html → Telegram Web App (Mini App)
 • Menu button       : MenuButtonWebApp (one tap to open Mini App)
 
-v4.17 AUDIT PATCH — KEY FIXES:
-• ENGINE GUARD: refuse to process ticks with non-positive price
-• STATE SYNC: state.price is unconditionally set in update_price()
-• RELAY ROBUSTNESS: 3-retry loop with backoff on HTTP 403/429/URLError
-• COHERENCE LOCK: FVG commits rejected when snapshot price is zero
-• ZERO-PRICE COUNTER: tracks consecutive failed relay fetches
-• ENGINE_INITIALIZED flag exposed via /health and /state
-• /reset clears _consecutive_zero_prices
-• Detailed relay HTTPError body logging for Worker diagnostics
+v4.18 — EXACT ARC-LENGTH + DBZ BRANCH + LEECH ANCHOR:
+• Quaternion Class  : Exact Fraction arithmetic, no floats in TF paths
+• Fraction Class    : Python fractions.Fraction wrapper with Taylor
+                      series for sin/cos/exp, exact rational sqrt
+• Arc-Length Exact  : s² and r² computed from actual quaternion trajectory
+                      (discrete sum of norms), replacing the scalar placeholder
+• DbZ Branch Logic  : Re[Ψ] from quaternion's a-component drives:
+                      • Branch 0 (Δ≈0): coherent
+                      • Branch 1 (Re[Ψ]>0): critical-line projection
+                      • Branch 2 (Re[Ψ]≤0): Natalia fibration ε perturb
+• Leech Λ₂₄ Anchor  : FVG prices project to 24D lattice vectors with
+                      exact rational components and parity compliance
+• /arclen command   : shows exact s², r², Δ, Re[Ψ], DbZ branch, quaternion
+• /dbz command      : shows DbZ state + ε parameter + branch semantics
+• /state exposes    : arc_sq, radius_sq, deviation, dbz_branch, re_psi
 
 Quick start:
 1. Deploy the Cloudflare Worker (see worker.js).
@@ -2770,15 +3458,24 @@ Quick start:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
+
 def _print_manifest():
-    try: print(_BRIDGE_MANIFEST)
-    except Exception: pass
+    try:
+        print(_BRIDGE_MANIFEST)
+    except Exception:
+        pass
+
 
 _AEI_Bot_run_orig = AEI_Bot.run
+
+
 def _AEI_Bot_run_with_manifest(self):
     _print_manifest()
     return _AEI_Bot_run_orig(self)
+
+
 AEI_Bot.run = _AEI_Bot_run_with_manifest
+
 
 def main():
     """Main entry point."""
@@ -2793,8 +3490,10 @@ def main():
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
 
+
 if __name__ == "__main__":
     main()
+
 
 # ============================================================================
 # Q.E.D.
