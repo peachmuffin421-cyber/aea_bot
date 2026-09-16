@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.18 (EXACT ARC-LENGTH + DBZ BRANCH + LEECH ANCHOR + STATE SYNC)
+Version: 4.19 (F-STRING SYNTAX FIX - CONSTRAINT-LOCKED)
 """
 import asyncio
 import hashlib
@@ -875,7 +875,7 @@ class FeedClient:
                     url,
                     headers={
                         "Accept": "application/json",
-                        "User-Agent": "AEI-Bridge/4.18",
+                        "User-Agent": "AEI-Bridge/4.19",
                         "Cache-Control": "no-cache",
                     }
                 )
@@ -2118,7 +2118,10 @@ class AEEA_Engine:
         idx = state.Z - state.y - 1
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
         info = self._verify_arc_length_coherence()
-        coherence_str = "✅ COHERENT" if info["coherent"] else f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
+        if info["coherent"]:
+            coherence_str = "✅ COHERENT"
+        else:
+            coherence_str = f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
         msg = (
             f"🚨 *ÆEA SIGNAL ALERT*\n"
             f"📊 *Direction:* {direction}\n"
@@ -2420,7 +2423,7 @@ class TunnelManager:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.18"
+    server_version = "AEI-Bridge/4.19"
 
     def log_message(self, fmt, *args):
         return
@@ -2480,7 +2483,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "ok": not stale,
                 "service": "aei-bridge",
-                "version": "4.18",
+                "version": "4.19",
                 "last_price_update": last,
                 "age_seconds": age_seconds,
                 "stale": stale,
@@ -2500,7 +2503,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "webapp_enabled": True,
                 "cors_origin": CORS_ORIGIN,
                 "relay_url": RELAY_URL or None,
-                "version": "4.18",
+                "version": "4.19",
             })
             return
         if path == "/state":
@@ -2822,10 +2825,24 @@ class AEI_Bot:
         chat_id = update.effective_chat.id
         self.engine.state.chat_id = chat_id
         self.engine.application = self.application
-        engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
+        if self.engine.state.FG:
+            engine_status = "✅ Initialized"
+        else:
+            engine_status = "⏳ Waiting for data"
         webapp_url = self._resolve_webapp_url()
-        webapp_display = webapp_url if webapp_url else "⏳ Tunnel not yet established"
+        if webapp_url:
+            webapp_display = webapp_url
+        else:
+            webapp_display = "⏳ Tunnel not yet established"
         arclen_info = self.engine._verify_arc_length_coherence()
+        if self._running:
+            feed_status = "Active"
+        else:
+            feed_status = "Inactive"
+        if arclen_info['coherent']:
+            coherent_mark = '✅'
+        else:
+            coherent_mark = '⚠️'
         welcome = (
             "🔷 *ÆEA Quantum-Financial Topology Bot*\n"
             "Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
@@ -2849,12 +2866,12 @@ class AEI_Bot:
             "`/webgui` - Show local bridge URL\n"
             "`/help` - Show this message\n\n"
             f"📈 *Current Symbol:* `{SYMBOL}`\n"
-            f"🔄 *Feed Status:* {'Active' if self._running else 'Inactive'}\n"
+            f"🔄 *Feed Status:* {feed_status}\n"
             f"🌐 *Relay:* `{RELAY_URL or 'unset'}`\n"
             f"🌐 *Mini App URL:* `{webapp_display}`\n"
             f"🧠 *Engine Status:* {engine_status}\n"
             f"🌿 *DbZ Branch:* {arclen_info['dbz_branch']}  |  "
-            f"*Coherent:* {'✅' if arclen_info['coherent'] else '⚠️'}\n\n"
+            f"*Coherent:* {coherent_mark}\n\n"
             "🧠 *Theoretical Foundation:*\n"
             "• Arc-Length Coherence (s = r) — EXACT quaternion algebra\n"
             "• Kronecker-Delta Execution: δ(m-n-2)=1\n"
@@ -2885,15 +2902,30 @@ class AEI_Bot:
         idx = state.Z - state.y - 1
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
         bid, ask = self.engine.feed.get_current_price()
-        price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
+        if bid > Decimal('0.0'):
+            price_display = f"{bid:.5f}"
+        else:
+            price_display = f"{state.price:.5f}"
         info = self.engine._verify_arc_length_coherence()
+        if info['coherent']:
+            coherence_line = "✅ COHERENT"
+        else:
+            coherence_line = f"⚠️ DEV: {info['deviation_float']:.6f}"
+        if self._running:
+            feed_mark = "✅"
+        else:
+            feed_mark = "❌"
+        if state.FG:
+            init_mark = "✅ Initialized"
+        else:
+            init_mark = "⏳ Initializing"
         response = (
             "🔷 *ÆEA STATUS*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
             f"🔎 *Active Relay Symbol:* `{self.engine.feed.active_symbol()}`\n"
             f"💰 *Price:* {price_display}\n"
             f"📊 *Regime:* {regime}\n"
-            f"🔄 *Coherence:* {'✅ COHERENT' if info['coherent'] else f\"⚠️ DEV: {info['deviation_float']:.6f}\"}\n"
+            f"🔄 *Coherence:* {coherence_line}\n"
             f"🌿 *DbZ Branch:* {info['dbz_branch']}  (0=none, 1=critical-line, 2=Natalia)\n"
             f"🧮 *s² =* `{info['arc_sq']}`\n"
             f"🧮 *r² =* `{info['radius_sq']}`\n"
@@ -2903,11 +2935,11 @@ class AEI_Bot:
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🧠 *KC State:* {state.KC}\n"
             f"🔄 *Tick:* {state.tick}\n"
-            f"🧠 *Engine State:* {'✅ Initialized' if state.FG else '⏳ Initializing'}\n"
+            f"🧠 *Engine State:* {init_mark}\n"
             f"🌐 *Mini App User:* {state.webapp_username or '—'}\n"
             f"📅 *Last Update:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"📊 *Imbalance:* m={sum(1 for v in state.k if v)}, n={sum(1 for v in state.l if v)}\n"
-            f"📡 *Feed Active:* {'✅' if self._running else '❌'}"
+            f"📡 *Feed Active:* {feed_mark}"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -2982,6 +3014,10 @@ class AEI_Bot:
         ll = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
         k_count = sum(1 for v in state.k if v)
         l_count = sum(1 for v in state.l if v)
+        if k_count >= 12 or l_count >= 12:
+            imbalance_status = "✅ TRIGGER"
+        else:
+            imbalance_status = "⏳ WAITING"
         response = (
             "📊 *REGIME CLASSIFICATION*\n"
             f"🔹 *Current Regime:* {current}\n"
@@ -2991,7 +3027,7 @@ class AEI_Bot:
             f"📉 *LL:* {ll:.5f}\n"
             f"🟢 *Bullish Signals (k):* {k_count}\n"
             f"🔴 *Bearish Signals (l):* {l_count}\n"
-            f"📐 *Imbalance Condition:* {'✅ TRIGGER' if k_count >= 12 or l_count >= 12 else '⏳ WAITING'}"
+            f"📐 *Imbalance Condition:* {imbalance_status}"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -3011,14 +3047,24 @@ class AEI_Bot:
             confidence = "N/A"
         elif state.price > state.signal:
             direction = "🟢 BUY"
-            confidence = f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
+            if state.signal != Decimal('0.0'):
+                confidence = f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%"
+            else:
+                confidence = "0%"
         else:
             direction = "🔴 SELL"
-            confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
+            if state.signal != Decimal('0.0'):
+                confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%"
+            else:
+                confidence = "0%"
         m_count = sum(1 for v in state.k if v)
         n_count = sum(1 for v in state.l if v)
         condition_met = m_count - n_count > 2
         info = self.engine._verify_arc_length_coherence()
+        if condition_met:
+            condition_mark = "✅ MET"
+        else:
+            condition_mark = "❌ NOT MET"
         response = (
             "🎯 *TRADING SIGNAL*\n"
             f"📊 *Direction:* {direction}\n"
@@ -3026,7 +3072,7 @@ class AEI_Bot:
             f"🎯 *Signal Level:* {state.signal:.5f}\n"
             f"💰 *Current Price:* {state.price:.5f}\n"
             f"⚖️ *Imbalance:* m={m_count}, n={n_count}\n"
-            f"✅ *Condition δ(m-n-2)=1:* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
+            f"✅ *Condition δ(m-n-2)=1:* {condition_mark}\n"
             f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
             f"🧠 *KC State:* {state.KC}\n"
             f"🔢 *Prime:* {state.prime}\n"
@@ -3079,9 +3125,19 @@ class AEI_Bot:
             bridge_str = "\n🌐 *Web App FVGs (Leech-Anchored):*\n"
             for f in bridge_fvgs[-8:]:
                 mark = "▲" if f["type"] == "top" else "▼"
-                who = f" (user {f['user_id']})" if f.get("user_id") else ""
-                lh = f.get("leech_hash", "")[:12] if f.get("leech_hash") else "—"
+                if f.get("user_id"):
+                    who = f" (user {f['user_id']})"
+                else:
+                    who = ""
+                if f.get("leech_hash"):
+                    lh = f["leech_hash"][:12]
+                else:
+                    lh = "—"
                 bridge_str += f"  {mark} {f['price']} idx={f['idx']}{who}  Λ={lh}\n"
+        premium_val = state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0')
+        discount_val = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
+        hh_val = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
+        ll_val = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
         response = (
             "📐 *FAIR VALUE GAP TRACKING (Λ₂₄ ANCHORED)*\n"
             f"📊 *FVG Count:* {state.FVG + 1}\n"
@@ -3089,10 +3145,10 @@ class AEI_Bot:
             f"📈 *Current Price:* {state.price:.5f}\n"
             f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n"
             "*Topological Anchors:*\n"
-            f"  🔷 *Premium:* {state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0'):.5f}\n"
-            f"  🔶 *Discount:* {state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0'):.5f}\n"
-            f"  📈 *HH:* {state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0'):.5f}\n"
-            f"  📉 *LL:* {state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0'):.5f}"
+            f"  🔷 *Premium:* {premium_val:.5f}\n"
+            f"  🔶 *Discount:* {discount_val:.5f}\n"
+            f"  📈 *HH:* {hh_val:.5f}\n"
+            f"  📉 *LL:* {ll_val:.5f}"
             f"{bridge_str}"
         )
         await update.message.reply_text(response, parse_mode="Markdown")
@@ -3152,7 +3208,10 @@ class AEI_Bot:
             self._price_task = asyncio.create_task(self.price_feed_loop())
 
         hist_count = len(self.engine.ohlcv_history)
-        init_mode = "Pre-seeded with history" if hist_count >= 20 else "Organic first-tick initialization"
+        if hist_count >= 20:
+            init_mode = "Pre-seeded with history"
+        else:
+            init_mode = "Organic first-tick initialization"
 
         reply_text = (
             f"✅ *Price feed started*\n"
@@ -3222,12 +3281,13 @@ class AEI_Bot:
         global SYMBOL
         args = context.args
         if not args:
+            supported = ', '.join(list(SYMBOL_MAP.keys())[:10])
             await update.message.reply_text(
                 f"📈 *Current Symbol:* `{SYMBOL}`\n"
                 "Use `/symbol <PAIR>` to change.\n"
                 "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n"
                 f"*Supported Symbols:*\n"
-                f"{', '.join(list(SYMBOL_MAP.keys())[:10])}\n"
+                f"{supported}\n"
                 f"(and {len(SYMBOL_MAP) - 10} more)",
                 parse_mode="Markdown"
             )
@@ -3251,11 +3311,15 @@ class AEI_Bot:
                     self.engine.ohlcv_history = historical
                     self.engine.initialize_engine()
                     self.engine._force_initialization()
+                if self.engine.state.FG:
+                    init_status = "✅ Initialized"
+                else:
+                    init_status = "⏳ Initializing..."
                 await update.message.reply_text(
                     f"✅ *Symbol changed*\n"
                     f"📈 *New Symbol:* `{yahoo_symbol}`\n"
                     f"💰 *Current Price:* {bid}\n"
-                    f"🧠 *Engine State:* {'✅ Initialized' if self.engine.state.FG else '⏳ Initializing...'}",
+                    f"🧠 *Engine State:* {init_status}",
                     parse_mode="Markdown"
                 )
             else:
@@ -3292,10 +3356,11 @@ class AEI_Bot:
             )
             return
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
+        provider = "explicit" if TELEGRAM_WEBAPP_URL else BRIDGE_TUNNEL
         await update.message.reply_text(
             f"🌐 *ÆEA Telegram Mini App*\n"
             f"*Public URL:* `{url}`\n"
-            f"*Provider:* {'explicit' if TELEGRAM_WEBAPP_URL else BRIDGE_TUNNEL}\n"
+            f"*Provider:* {provider}\n"
             f"Tap the button below to launch the full Codex Symbolica visualization.\n\n"
             f"*Features inside the Mini App:*\n"
             f"  ▲ Draw premium FVG (Leech-anchored)\n"
@@ -3401,7 +3466,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info(f"📊 Quantum-Financial Topology Engine initialized (v4.18).")
+        logger.info(f"📊 Quantum-Financial Topology Engine initialized (v4.19).")
         logger.info(f"🧠 EXACT Arc-Length Axiom (s²=r²) via Python Fraction + Quat.")
         logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
         logger.info(f"🧬 Leech Λ₂₄ anchoring: FVGs project to 24D lattice vectors.")
@@ -3423,7 +3488,7 @@ _bridge_attach_to_bot(AEI_Bot)
 # ============================================================================
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.18 (EXACT ARC-LENGTH)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.19 (F-STRING FIX)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
 • Telegram bot      : app.py (python-telegram-bot)
@@ -3433,21 +3498,11 @@ Architecture:
 • Web GUI           : index.html → Telegram Web App (Mini App)
 • Menu button       : MenuButtonWebApp (one tap to open Mini App)
 
-v4.18 — EXACT ARC-LENGTH + DBZ BRANCH + LEECH ANCHOR:
-• Quaternion Class  : Exact Fraction arithmetic, no floats in TF paths
-• Fraction Class    : Python fractions.Fraction wrapper with Taylor
-                      series for sin/cos/exp, exact rational sqrt
-• Arc-Length Exact  : s² and r² computed from actual quaternion trajectory
-                      (discrete sum of norms), replacing the scalar placeholder
-• DbZ Branch Logic  : Re[Ψ] from quaternion's a-component drives:
-                      • Branch 0 (Δ≈0): coherent
-                      • Branch 1 (Re[Ψ]>0): critical-line projection
-                      • Branch 2 (Re[Ψ]≤0): Natalia fibration ε perturb
-• Leech Λ₂₄ Anchor  : FVG prices project to 24D lattice vectors with
-                      exact rational components and parity compliance
-• /arclen command   : shows exact s², r², Δ, Re[Ψ], DbZ branch, quaternion
-• /dbz command      : shows DbZ state + ε parameter + branch semantics
-• /state exposes    : arc_sq, radius_sq, deviation, dbz_branch, re_psi
+v4.19 — F-STRING SYNTAX FIX + CONSTRAINT-LOCKED:
+• Removed backslashes from f-string expressions in AEI_Bot.start()
+• Refactored inline conditionals to pre-computed variables
+• All prior v4.18 logic preserved verbatim
+• Heroku deployment unblocked (Python 3.11 f-string compliance)
 
 Quick start:
 1. Deploy the Cloudflare Worker (see worker.js).
