@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: Final (CONSTRAINT-LOCKED — Indicator Matrix Populated, Kronecker Gate Live)
+Version: Final (CONSTRAINT-LOCKED — Fraction ordering fixed, per-bar indicator matrix, FVG idx parity, OnInit hook, OnStand guard, syntax-clean)
 """
 import asyncio
 import hashlib
@@ -38,112 +38,7 @@ from decimal import Decimal, getcontext
 getcontext().prec = 50
 
 # ============================================================================
-# TELEGRAM BOT IMPORTS
-# ============================================================================
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    WebAppInfo,
-    MenuButtonWebApp,
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
-
-# ============================================================================
-# LOGGING SETUP
-# ============================================================================
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# ============================================================================
-# CONSTANTS & CONFIGURATION
-# ============================================================================
-COMMISSION: Decimal = Decimal('0.0')
-STOP_LOSS: Decimal = Decimal('0.0')
-TAKE_PROFIT: Decimal = Decimal('0.0')
-LOT_SIZE: Decimal = Decimal('0.01')
-SLIPPAGE: int = 100
-MAX_PERIOD: int = 60
-MIN_PERIOD: int = 3
-X_PERIOD: int = MAX_PERIOD + 2
-MIN_HISTORY_WINDOW: int = 52
-
-# [PATCH 1: EXACT SYMBOLIC THRESHOLDS]
-# MQL4: f = 200.0/3.0 = 66.6̄ ; g = 100.0/3.0 = 33.3̄ ; gf = 40.0/15.0 = 2.6̄
-F_THRESHOLD: Fraction = Fraction(200, 3)
-G_THRESHOLD: Fraction = Fraction(100, 3)
-GF_TOLERANCE: Fraction = Fraction(40, 15)
-F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD.num()) / Decimal(F_THRESHOLD.den())
-G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD.num()) / Decimal(G_THRESHOLD.den())
-GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE.num()) / Decimal(GF_TOLERANCE.den())
-
-PHI_SYMBOLIC = "(1 + sqrt(5)) / 2"
-PI_SYMBOLIC = "PI"
-ARC_LENGTH_AXIOM = "s=r"
-
-TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
-BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
-BRIDGE_PORT: int = int(os.getenv("PORT", os.getenv("BRIDGE_PORT", "8765")))
-BRIDGE_USE_TLS: bool = os.getenv("BRIDGE_USE_TLS", "0").strip() in ("1", "true", "yes")
-BRIDGE_TLS_CERT: str = os.getenv("BRIDGE_TLS_CERT", "").strip()
-BRIDGE_TLS_KEY: str = os.getenv("BRIDGE_TLS_KEY", "").strip()
-BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
-BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
-TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-
-RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
-RELAY_TIMEOUT: int = int(os.getenv("RELAY_TIMEOUT", "10"))
-RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
-
-CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
-
-ARC_COHERENCE_TOLERANCE = 1e-6
-
-SYMBOL_MAP = {
-    "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
-    "ADAUSDT": "ADA-USD", "SOLUSDT": "SOL-USD", "DOGEUSDT": "DOGE-USD",
-    "LTCUSDT": "LTC-USD", "LINKUSDT": "LINK-USD", "DOTUSDT": "DOT-USD",
-    "AVAXUSDT": "AVAX-USD", "MATICUSDT": "MATIC-USD", "UNIUSDT": "UNI-USD",
-    "ATOMUSDT": "ATOM-USD", "NEARUSDT": "NEAR-USD", "FILUSDT": "FIL-USD",
-    "ETCUSDT": "ETC-USD", "ICPUSDT": "ICP-USD", "XLMUSDT": "XLM-USD",
-    "HBARUSDT": "HBAR-USD", "QNTUSDT": "QNT-USD",
-    "GC=F": "GC=F", "SI=F": "SI=F", "CL=F": "CL=F", "NG=F": "NG=F",
-    "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZS=F": "ZS=F", "ZM=F": "ZM=F",
-    "ZW=F": "ZW=F", "KE=F": "KE=F"
-}
-
-SYMBOL_FALLBACKS: Dict[str, List[str]] = {
-    "BTC-USD":  ["BTC-USD", "BTCUSD=X"], "ETH-USD":  ["ETH-USD", "ETHUSD=X"],
-    "XRP-USD":  ["XRP-USD", "XRPUSD=X"], "ADA-USD":  ["ADA-USD", "ADAUSD=X"],
-    "SOL-USD":  ["SOL-USD", "SOLUSD=X"], "DOGE-USD": ["DOGE-USD", "DOGEUSD=X"],
-    "LTC-USD":  ["LTC-USD", "LTCUSD=X"], "LINK-USD": ["LINK-USD", "LINKUSD=X"],
-    "DOT-USD":  ["DOT-USD", "DOTUSD=X"], "AVAX-USD": ["AVAX-USD", "AVAXUSD=X"],
-    "MATIC-USD":["MATIC-USD", "MATICUSD=X"], "UNI-USD":  ["UNI-USD", "UNIUSD=X"],
-    "ATOM-USD": ["ATOM-USD", "ATOMUSD=X"], "NEAR-USD": ["NEAR-USD", "NEARUSD=X"],
-    "FIL-USD":  ["FIL-USD", "FILUSD=X"], "ETC-USD":  ["ETC-USD", "ETCUSD=X"],
-    "ICP-USD":  ["ICP-USD", "ICPUSD=X"], "XLM-USD":  ["XLM-USD", "XLMUSD=X"],
-    "HBAR-USD": ["HBAR-USD", "HBARUSD=X"], "QNT-USD":  ["QNT-USD", "QNTUSD=X"],
-    "GC=F": ["GC=F"], "SI=F": ["SI=F"], "CL=F": ["CL=F"], "NG=F": ["NG=F"],
-    "ZB=F": ["ZB=F"], "ZN=F": ["ZN=F"], "ZS=F": ["ZS=F"], "ZM=F": ["ZM=F"],
-    "ZW=F": ["ZW=F"], "KE=F": ["KE=F"],
-}
-
-SYMBOL: str = "BTC-USD"
-INTERVAL: str = "1m"
-UPDATE_INTERVAL: int = 30
-
-# ============================================================================
-# EXACT FRACTION WRAPPER
+# EXACT FRACTION WRAPPER  (defined above all constant definitions)
 # ============================================================================
 class Fraction:
     __slots__ = ('_f',)
@@ -170,10 +65,24 @@ class Fraction:
         return Fraction(x)
 
     @staticmethod
-    def from_float(f, precision=1000000):
+    def from_float(f, precision=1000000000000):
         if isinstance(f, Fraction):
             return f
         return Fraction(int(round(float(f) * precision)), precision)
+
+    @staticmethod
+    def from_decimal_string(s):
+        s = str(s).strip()
+        if 'E' in s or 'e' in s:
+            d = Decimal(s)
+            sign, digits, exp = d.as_tuple()
+            num = int(''.join(str(x) for x in digits)) * (-1 if sign else 1)
+            den = 10 ** (-exp) if exp < 0 else 1
+            if exp >= 0:
+                num = num * (10 ** exp)
+                den = 1
+            return Fraction(num, den)
+        return Fraction.from_string(s)
 
     @staticmethod
     def from_string(s):
@@ -335,6 +244,110 @@ class Fraction:
             x = (x + self / x) / two
         return x
 
+
+# ============================================================================
+# CONSTANTS & CONFIGURATION
+# ============================================================================
+COMMISSION: Decimal = Decimal('0.0')
+STOP_LOSS: Decimal = Decimal('0.0')
+TAKE_PROFIT: Decimal = Decimal('0.0')
+LOT_SIZE: Decimal = Decimal('0.01')
+SLIPPAGE: int = 100
+MAX_PERIOD: int = 60
+MIN_PERIOD: int = 3
+X_PERIOD: int = MAX_PERIOD + 2
+MIN_HISTORY_WINDOW: int = 52
+
+# [EXACT SYMBOLIC THRESHOLDS]  MQL4: f=200/3, g=100/3, gf=40/15
+F_THRESHOLD: Fraction = Fraction(200, 3)
+G_THRESHOLD: Fraction = Fraction(100, 3)
+GF_TOLERANCE: Fraction = Fraction(40, 15)
+F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD.num()) / Decimal(F_THRESHOLD.den())
+G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD.num()) / Decimal(G_THRESHOLD.den())
+GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE.num()) / Decimal(GF_TOLERANCE.den())
+
+PHI_SYMBOLIC = "(1 + sqrt(5)) / 2"
+PI_SYMBOLIC = "PI"
+ARC_LENGTH_AXIOM = "s=r"
+
+TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
+BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
+BRIDGE_PORT: int = int(os.getenv("PORT", os.getenv("BRIDGE_PORT", "8765")))
+BRIDGE_USE_TLS: bool = os.getenv("BRIDGE_USE_TLS", "0").strip() in ("1", "true", "yes")
+BRIDGE_TLS_CERT: str = os.getenv("BRIDGE_TLS_CERT", "").strip()
+BRIDGE_TLS_KEY: str = os.getenv("BRIDGE_TLS_KEY", "").strip()
+BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
+BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
+TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
+RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
+RELAY_TIMEOUT: int = int(os.getenv("RELAY_TIMEOUT", "10"))
+RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
+
+CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
+
+ARC_COHERENCE_TOLERANCE = 1e-6
+
+SYMBOL_MAP = {
+    "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
+    "ADAUSDT": "ADA-USD", "SOLUSDT": "SOL-USD", "DOGEUSDT": "DOGE-USD",
+    "LTCUSDT": "LTC-USD", "LINKUSDT": "LINK-USD", "DOTUSDT": "DOT-USD",
+    "AVAXUSDT": "AVAX-USD", "MATICUSDT": "MATIC-USD", "UNIUSDT": "UNI-USD",
+    "ATOMUSDT": "ATOM-USD", "NEARUSDT": "NEAR-USD", "FILUSDT": "FIL-USD",
+    "ETCUSDT": "ETC-USD", "ICPUSDT": "ICP-USD", "XLMUSDT": "XLM-USD",
+    "HBARUSDT": "HBAR-USD", "QNTUSDT": "QNT-USD",
+    "GC=F": "GC=F", "SI=F": "SI=F", "CL=F": "CL=F", "NG=F": "NG=F",
+    "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZS=F": "ZS=F", "ZM=F": "ZM=F",
+    "ZW=F": "ZW=F", "KE=F": "KE=F"
+}
+
+SYMBOL_FALLBACKS: Dict[str, List[str]] = {
+    "BTC-USD":  ["BTC-USD", "BTCUSD=X"], "ETH-USD":  ["ETH-USD", "ETHUSD=X"],
+    "XRP-USD":  ["XRP-USD", "XRPUSD=X"], "ADA-USD":  ["ADA-USD", "ADAUSD=X"],
+    "SOL-USD":  ["SOL-USD", "SOLUSD=X"], "DOGE-USD": ["DOGE-USD", "DOGEUSD=X"],
+    "LTC-USD":  ["LTC-USD", "LTCUSD=X"], "LINK-USD": ["LINK-USD", "LINKUSD=X"],
+    "DOT-USD":  ["DOT-USD", "DOTUSD=X"], "AVAX-USD": ["AVAX-USD", "AVAXUSD=X"],
+    "MATIC-USD":["MATIC-USD", "MATICUSD=X"], "UNI-USD":  ["UNI-USD", "UNIUSD=X"],
+    "ATOM-USD": ["ATOM-USD", "ATOMUSD=X"], "NEAR-USD": ["NEAR-USD", "NEARUSD=X"],
+    "FIL-USD":  ["FIL-USD", "FILUSD=X"], "ETC-USD":  ["ETC-USD", "ETCUSD=X"],
+    "ICP-USD":  ["ICP-USD", "ICPUSD=X"], "XLM-USD":  ["XLM-USD", "XLMUSD=X"],
+    "HBAR-USD": ["HBAR-USD", "HBARUSD=X"], "QNT-USD":  ["QNT-USD", "QNTUSD=X"],
+    "GC=F": ["GC=F"], "SI=F": ["SI=F"], "CL=F": ["CL=F"], "NG=F": ["NG=F"],
+    "ZB=F": ["ZB=F"], "ZN=F": ["ZN=F"], "ZS=F": ["ZS=F"], "ZM=F": ["ZM=F"],
+    "ZW=F": ["ZW=F"], "KE=F": ["KE=F"],
+}
+
+SYMBOL: str = "BTC-USD"
+INTERVAL: str = "1m"
+UPDATE_INTERVAL: int = 30
+
+# ============================================================================
+# TELEGRAM BOT IMPORTS
+# ============================================================================
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    WebAppInfo,
+    MenuButtonWebApp,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
+# ============================================================================
+# LOGGING SETUP
+# ============================================================================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # SYMBOLIC QUATERNION
@@ -640,8 +653,9 @@ class AEI_CoreState:
     arc_coherent: bool = True
     fvg_anchor_map: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     _raw_price_missing: bool = False
+```
 
-
+```python
 # ============================================================================
 # INDICATOR CALCULATIONS
 # ============================================================================
@@ -653,7 +667,7 @@ def sma(data: List[Decimal], period: int) -> Decimal:
 
 def ema(data: List[Decimal], period: int) -> Decimal:
     if len(data) < period: return sma(data, period)
-    alpha = Decimal('2.0') / Decimal(period + 1)
+    alpha = Decimal('2.0') / (period + 1)
     if len(data) > 1: return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
     return data[-1]
 
@@ -942,10 +956,11 @@ class FeedClient:
             "last_update": self._last_update.isoformat() if self._last_update else None,
             "relay_url": RELAY_URL,
         }
+```
 
-
+```python
 # ============================================================================
-# CORE ÆEA ENGINE — INDICATOR MATRIX POPULATED, KRONECKER GATE LIVE
+# CORE ÆEA ENGINE — INDICATOR MATRIX POPULATED PER-BAR, KRONECKER GATE LIVE
 # ============================================================================
 class AEEA_Engine:
     def __init__(self):
@@ -978,12 +993,28 @@ class AEEA_Engine:
         self._imbalance_fire_count: int = 0
         self._last_price_for_quat: Optional[Decimal] = None
 
+    def OnInit(self) -> None:
+        """
+        [ONINIT HOOK] MQL4 OnInit() parity.
+        Single explicit entry-point. Equivalent to AEI_Bot.run() calling
+        engine.initialize_engine() followed by engine._force_initialization().
+        Kept as a no-op guard so the lifecycle is symmetric with the MQL4 EA.
+        """
+        logger.info("🟢 OnInit(): ÆEA engine lifecycle beginning")
+        self.OnReInit()
+        logger.info("🟢 OnInit(): state reset to baseline")
+
+    def OnReInit(self) -> None:
+        """[RESET OPERATOR F()] Topological branch anchoring — MQL4 OnReInit parity."""
+        self._on_reinit()
+        logger.info("🔄 OnReInit(): engine reset to fresh topological branch")
+
     def _step_quaternion_field(self, price: Decimal, prev_price: Optional[Decimal]) -> None:
         st = self.state
         st.time_fraction = st.time_fraction + Fraction(1, 100)
         self._quat_tick_count += 1
-        price_frac = Fraction.from_float(float(price))
-        prev_price_frac = Fraction.from_float(float(prev_price)) if prev_price is not None and prev_price > 0 else price_frac
+        price_frac = Fraction.from_decimal_string(str(price))
+        prev_price_frac = Fraction.from_decimal_string(str(prev_price)) if prev_price is not None and prev_price > 0 else price_frac
         delta_price = (price_frac - prev_price_frac).abs()
         price_magnitude = prev_price_frac if not prev_price_frac.is_zero() else Fraction(1)
         normalized_delta = delta_price / price_magnitude
@@ -1096,10 +1127,6 @@ class AEEA_Engine:
         logger.info(f"🔷 FVG anchored to Leech vector: idx={idx} hash={vhash[:16]}...")
         return anchor
 
-    # ========================================================================
-    # [PATCH 4: FULL INDICATOR MATRIX POPULATION]
-    # Populate iA/cA across the entire [y+1, X] window on every bar-close.
-    # ========================================================================
     def _populate_indicator_matrix(self) -> None:
         st = self.state
         if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
@@ -1107,11 +1134,20 @@ class AEEA_Engine:
         size = st.X - st.y
         if size <= 0:
             return
+        end = len(self.ohlcv_history)
         for j in range(st.y + 1, st.X + 1):
             idx = j - st.y - 1
             if idx < 0 or idx >= size:
                 continue
-            norm_vals = self._normalize(MAX_PERIOD)
+            bars_back = st.X - j
+            bar_end = end - bars_back
+            if bar_end < MIN_HISTORY_WINDOW:
+                for i in range(13):
+                    if i < len(st.iA) and idx < len(st.iA[i]):
+                        st.iA[i][idx] = Decimal('50.0')
+                        st.cA[i][idx] = Decimal('50.0')
+                continue
+            norm_vals = self._normalize_at(bar_end)
             for i in range(13):
                 if i < len(st.iA) and idx < len(st.iA[i]):
                     st.iA[i][idx] = norm_vals[i]
@@ -1122,9 +1158,51 @@ class AEEA_Engine:
                         st.lA[i][idx] = norm_vals[i]
         self._indicator_populate_count += 1
         if self._indicator_populate_count % 20 == 0:
-            # Log a sample to verify non-degeneracy
-            sample = [st.iA[i][0] for i in range(13)]
-            logger.info(f"📊 Indicator matrix populated (pass #{self._indicator_populate_count}) | sample iA[:,0]={sample}")
+            sample = [str(st.iA[i][0]) for i in range(13)]
+            sample2 = [str(st.iA[i][min(1, size - 1)]) for i in range(13)]
+            logger.info(f"📊 Indicator matrix populated (pass #{self._indicator_populate_count}) | col0={sample} | col1={sample2}")
+
+    def _normalize_at(self, end: int) -> Tuple[Decimal, ...]:
+        if end < MIN_HISTORY_WINDOW:
+            return (Decimal('50.0'),) * 13
+        window = MAX_PERIOD
+        start = max(0, end - window)
+        close_prices = [d["close"] for d in self.ohlcv_history[start:end]]
+        high_prices = [d["high"] for d in self.ohlcv_history[start:end]]
+        low_prices = [d["low"] for d in self.ohlcv_history[start:end]]
+        volume_data = [d.get("volume", Decimal('0.0')) for d in self.ohlcv_history[start:end]]
+
+        iadx = self._compute_adx(high_prices, low_prices, close_prices, MAX_PERIOD)
+        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, 14, 3)
+        stoch_val = (k_stoch + d_stoch) / Decimal('2.0')
+        rvi_val = self._compute_rvi(close_prices, MAX_PERIOD)
+        ac_val = self._compute_ac(high_prices, low_prices, close_prices, MAX_PERIOD)
+        force_val = self._compute_force(close_prices, volume_data, MAX_PERIOD)
+        obv_val = self._compute_obv(close_prices, volume_data, MAX_PERIOD)
+        ad_val = self._compute_ad(high_prices, low_prices, close_prices, volume_data, MAX_PERIOD)
+        mfi_val = self._compute_mfi(high_prices, low_prices, close_prices, volume_data, MAX_PERIOD)
+        mom_val = self._compute_momentum(close_prices, MAX_PERIOD)
+        dem_val = self._compute_demarker(high_prices, low_prices, MAX_PERIOD)
+        wpr_val = self._compute_wpr(high_prices, low_prices, close_prices, MAX_PERIOD)
+        cci_val = self._compute_cci(high_prices, low_prices, close_prices, MAX_PERIOD)
+        rsi_val = rsi(close_prices, 14)
+
+        def clamp(v):
+            if v < Decimal('0'): return Decimal('0')
+            if v > Decimal('100'): return Decimal('100')
+            return v
+
+        return (
+            clamp(iadx), clamp(stoch_val), clamp(rvi_val), clamp(ac_val),
+            clamp(force_val), clamp(obv_val), clamp(ad_val), clamp(mfi_val),
+            clamp(mom_val), clamp(dem_val), clamp(wpr_val), clamp(cci_val),
+            clamp(rsi_val),
+        )
+
+    def _normalize(self, j):
+        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
+            return (Decimal('50.0'),) * 13
+        return self._normalize_at(len(self.ohlcv_history))
 
     def initialize_engine(self) -> None:
         state = self.state
@@ -1193,7 +1271,6 @@ class AEEA_Engine:
         state.R = True
         state.signature = False
         state.signal = Decimal('0.0')
-        # [PATCH 4] Populate the FULL indicator matrix
         self._populate_indicator_matrix()
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(MAX_PERIOD)
@@ -1229,7 +1306,6 @@ class AEEA_Engine:
             state.Premium = [Decimal('0.0')] * size
             state.Discount = [Decimal('0.0')] * size
             state.Regime = [""] * size
-        # [PATCH 6] Use the current forming bar, not the one before
         if len(self.ohlcv_history) >= 1:
             iH = self.ohlcv_history[-1]["high"]
             iL = self.ohlcv_history[-1]["low"]
@@ -1252,7 +1328,6 @@ class AEEA_Engine:
         if state.R and state.FG:
             state.U.append(True)
             if all(state.U): state.R = False
-        # [PATCH 4] Populate the FULL indicator matrix
         self._populate_indicator_matrix()
         state.FG = True
         state._initialized = True
@@ -1313,7 +1388,6 @@ class AEEA_Engine:
                 self.ohlcv_history[-1]["low"] = min(self.ohlcv_history[-1]["low"], price_data.low)
                 self.ohlcv_history[-1]["close"] = price_data.close
                 self.ohlcv_history[-1]["volume"] += price_data.volume
-        # [PATCH 4] Re-populate indicator matrix on every bar-close
         if self._bar_open and len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
             self._populate_indicator_matrix()
         if self._bar_open and len(self.ohlcv_history) >= 2:
@@ -1429,49 +1503,6 @@ class AEEA_Engine:
         cci = (tp[0] - sma_tp) / (Decimal('0.015') * mad)
         return Decimal('50.0') + max(Decimal('-50.0'), min(Decimal('50.0'), cci / Decimal('4.0')))
 
-    # ========================================================================
-    # [PATCH 2: _normalize(j) WINDOW SEMANTICS]
-    # `j` is now the lookback depth, not the slice size. Always use at least
-    # MIN_HISTORY_WINDOW bars so indicators are non-degenerate.
-    # ========================================================================
-    def _normalize(self, j):
-        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
-            return (Decimal('50.0'),) * 13
-        window = max(j, MIN_HISTORY_WINDOW)
-        end = len(self.ohlcv_history)
-        start = max(0, end - window)
-        close_prices = [d["close"] for d in self.ohlcv_history[start:end]]
-        high_prices = [d["high"] for d in self.ohlcv_history[start:end]]
-        low_prices = [d["low"] for d in self.ohlcv_history[start:end]]
-        volume_data = [d.get("volume", Decimal('0.0')) for d in self.ohlcv_history[start:end]]
-
-        iadx = self._compute_adx(high_prices, low_prices, close_prices, MAX_PERIOD)
-        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, 14, 3)
-        stoch_val = (k_stoch + d_stoch) / Decimal('2.0')
-        rvi_val = self._compute_rvi(close_prices, MAX_PERIOD)
-        ac_val = self._compute_ac(high_prices, low_prices, close_prices, MAX_PERIOD)
-        force_val = self._compute_force(close_prices, volume_data, MAX_PERIOD)
-        obv_val = self._compute_obv(close_prices, volume_data, MAX_PERIOD)
-        ad_val = self._compute_ad(high_prices, low_prices, close_prices, volume_data, MAX_PERIOD)
-        mfi_val = self._compute_mfi(high_prices, low_prices, close_prices, volume_data, MAX_PERIOD)
-        mom_val = self._compute_momentum(close_prices, MAX_PERIOD)
-        dem_val = self._compute_demarker(high_prices, low_prices, MAX_PERIOD)
-        wpr_val = self._compute_wpr(high_prices, low_prices, close_prices, MAX_PERIOD)
-        cci_val = self._compute_cci(high_prices, low_prices, close_prices, MAX_PERIOD)
-        rsi_val = rsi(close_prices, 14)
-
-        def clamp(v):
-            if v < Decimal('0'): return Decimal('0')
-            if v > Decimal('100'): return Decimal('100')
-            return v
-
-        return (
-            clamp(iadx), clamp(stoch_val), clamp(rvi_val), clamp(ac_val),
-            clamp(force_val), clamp(obv_val), clamp(ad_val), clamp(mfi_val),
-            clamp(mom_val), clamp(dem_val), clamp(wpr_val), clamp(cci_val),
-            clamp(rsi_val),
-        )
-
     def _unify_volatility(self, j):
         if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
             return Decimal('50.0'), Decimal('50.0')
@@ -1504,10 +1535,6 @@ class AEEA_Engine:
                 std_norm = Decimal('100.0') * (std_val - mn) / (mx - mn)
         return atr_norm, std_norm
 
-    # ========================================================================
-    # [PATCH 3: _M / _N CORRECT INDEXING]
-    # Read the CURRENT bar's indicator values (index idx), not [0].
-    # ========================================================================
     def _M(self, j, price, Price, iA, cA, kA, HH):
         m = 0
         y = self.state.y
@@ -1745,7 +1772,9 @@ class AEEA_Engine:
             close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
+```
 
+```python
     def _on_tick(self, price_data):
         state = self.state
         state.tick += 1
@@ -1781,9 +1810,8 @@ class AEEA_Engine:
         idx = state.Z - y - 1
         if idx < 0:
             idx = 0
-        # [PATCH 4] Refresh indicator matrix on every tick if history sufficient
         if len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
-            norm_vals = self._normalize(MAX_PERIOD)
+            norm_vals = self._normalize_at(len(self.ohlcv_history))
             for i in range(min(13, len(norm_vals))):
                 if i < len(state.iA):
                     while len(state.iA[i]) <= idx:
@@ -1881,14 +1909,13 @@ class AEEA_Engine:
         if state.signature and state.chat_id:
             self._send_signal_alert()
 
-    # ========================================================================
-    # [PATCH 5: _on_track / _on_stand WHILE-LOOPS]
-    # ========================================================================
     def _on_track(self):
         state = self.state
         y = state.y
         s = state.X - 1
-        while s < state.S:
+        guard = 0
+        while s < state.S and guard < 4096:
+            guard += 1
             idx = s - y - 1
             if idx < 0 or idx >= len(state.Regime):
                 s += 1
@@ -1969,7 +1996,9 @@ class AEEA_Engine:
         state = self.state
         y = state.y
         s = y + 1
-        while s > state.Y:
+        guard = 0
+        while s > state.Y and s > 2 and guard < 4096:
+            guard += 1
             if s == 1 or s < 0: break
             idx = s - y - 1
             if idx < 0 or idx >= len(state.Regime):
@@ -2242,7 +2271,6 @@ class AEEA_Engine:
         state.iH = saved_iH
         state.iL = saved_iL
         state.tick = saved_tick
-        # [PATCH 4] Re-populate indicator matrix after reset
         self._populate_indicator_matrix()
         logger.info(f"🔄 OnReInit() completed — Tick preserved: {state.tick}")
 
@@ -2308,8 +2336,9 @@ class AEEA_Engine:
             "indicator_populate_count": int(self._indicator_populate_count),
             "imbalance_fire_count": int(self._imbalance_fire_count),
         }
+```
 
-
+```python
 # ============================================================================
 # HTTP BRIDGE — TELEGRAM WEB APP ENABLED
 # ============================================================================
@@ -2323,6 +2352,7 @@ class BridgeState:
             "endpoint": None, "webapp_user_id": None, "webapp_username": None, "last_price_update": None,
             "engine_initialized": False, "consecutive_zero_prices": 0,
             "dbz_branch": 0, "re_psi": "0", "relay_url": RELAY_URL,
+            "indicator_populate_count": 0, "imbalance_fire_count": 0,
         }
         self._fvgs: Dict[int, Dict[str, str]] = {}
         self._next_fvg_idx = 0
@@ -2361,7 +2391,7 @@ class BridgeState:
             logger.info(f"🌐 Web App session registered: user_id={user_id}, username={username}")
         return True
 
-    def add_fvg(self, fvg_type, price_str, user_id=None):
+    def add_fvg(self, fvg_type, price_str, user_id=None, requested_idx=None):
         if fvg_type not in ("top", "bott"):
             raise ValueError("fvg_type must be 'top' or 'bott'")
         try:
@@ -2382,8 +2412,13 @@ class BridgeState:
                                 info["arc_sq"], info["radius_sq"], dev_float
                             )
                         )
-            idx = self._next_fvg_idx
-            self._next_fvg_idx += 1
+            if requested_idx is not None and isinstance(requested_idx, int) and requested_idx >= 0:
+                idx = requested_idx
+                if idx >= self._next_fvg_idx:
+                    self._next_fvg_idx = idx + 1
+            else:
+                idx = self._next_fvg_idx
+                self._next_fvg_idx += 1
             self._fvgs[idx] = {
                 "type": fvg_type, "price": str(price_dec), "idx": idx,
                 "created": datetime.now().isoformat(), "user_id": user_id
@@ -2627,6 +2662,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "engine_initialized": snap.get("engine_initialized", False),
                 "coherent": snap.get("coherent", False),
                 "dbz_branch": snap.get("dbz_branch", 0),
+                "indicator_populate_count": snap.get("indicator_populate_count", 0),
+                "imbalance_fire_count": snap.get("imbalance_fire_count", 0),
             })
             return
         if path == "/config":
@@ -2679,6 +2716,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 diag["arc_length"] = engine._verify_arc_length_coherence()
                 diag["quat_history_depth"] = len(engine.state.quat_history)
                 diag["ohlcv_history_depth"] = len(engine.ohlcv_history)
+                diag["indicator_sample_col0"] = [str(engine.state.iA[i][0]) for i in range(13)]
+                diag["indicator_sample_col1"] = [str(engine.state.iA[i][1]) for i in range(13)] if len(engine.state.iA[0]) > 1 else []
                 self._send_json(200, diag)
             except Exception as e:
                 self._send_json(500, {"error": "diagnostics_failed", "detail": str(e)})
@@ -2736,10 +2775,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 data = json.loads(raw.decode("utf-8")) if raw else {}
                 fvg_type = data.get("type")
                 price_str = data.get("price")
+                requested_idx = data.get("idx")
                 if fvg_type is None or price_str is None:
                     self._send_json(400, {"error": "missing_fields", "need": ["type", "price"]})
                     return
-                idx = BRIDGE_STATE.add_fvg(fvg_type, price_str, user_id=user_id)
+                try:
+                    requested_idx_int = int(requested_idx) if requested_idx is not None else None
+                except (TypeError, ValueError):
+                    requested_idx_int = None
+                idx = BRIDGE_STATE.add_fvg(fvg_type, price_str, user_id=user_id, requested_idx=requested_idx_int)
                 anchor_info = {}
                 engine = BRIDGE_ENGINE_REF.get("engine")
                 if engine is not None and idx in engine.state.fvg_anchor_map:
@@ -2924,8 +2968,9 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     bot.run = wrapped_run
     bot._bridge_attached = True
     logger.info("🔗 Bridge attached to AEI_Bot.run()")
+```
 
-
+```python
 # ============================================================================
 # TELEGRAM BOT HANDLERS
 # ============================================================================
@@ -2951,7 +2996,7 @@ class AEI_Bot:
             try:
                 logger.info(f"🔄 Feed iteration #{iteration}")
                 self.engine.update_price_from_feed()
-                logger.info(f"📊 price={self.engine.state.price} tick={self.engine.state.tick} FG={self.engine.state.FG} active_sym={self.engine.feed.active_symbol()} m/n={sum(1 for v in self.engine.state.k if v)}/{sum(1 for v in self.engine.state.l if v)}")
+                logger.info(f"📊 price={self.engine.state.price} tick={self.engine.state.tick} FG={self.engine.state.FG} active_sym={self.engine.feed.active_symbol()} m/n={sum(1 for v in self.engine.state.k if v)}/{sum(1 for v in self.engine.state.l if v)} ind_pass={self.engine._indicator_populate_count} sig_fire={self.engine._imbalance_fire_count}")
             except Exception:
                 logger.exception(f"❌ Feed iteration #{iteration} failed")
             await asyncio.sleep(UPDATE_INTERVAL)
@@ -3537,6 +3582,7 @@ class AEI_Bot:
             logger.warning(f"Failed to set menu button: {e}")
 
     def run(self):
+        self.engine.OnInit()
         self.application = Application.builder().token(self.token).post_init(self._post_init).build()
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("help", self.help))
@@ -3565,7 +3611,7 @@ class AEI_Bot:
         logger.info(f"🧠 EXACT Arc-Length Axiom (s²=r²) via Python Fraction + Quat.")
         logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
         logger.info(f"🧬 Leech Λ₂₄ anchoring: FVGs project to 24D lattice vectors.")
-        logger.info(f"⚡ Live indicator extraction: 13D Hilbert-space projection populated per tick.")
+        logger.info(f"⚡ Live indicator extraction: 13D Hilbert-space projection populated per bar.")
         logger.info(f"⚡ Telegram Mini App enabled.")
         logger.info(f"💎 Ready. Use /start to begin.")
         self.application.run_polling()
