@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: Final (CONSTRAINT-LOCKED — Tick Processing Fixed, UI Cleaned)
+Version: Final (CONSTRAINT-LOCKED — Indicator Matrix Populated, Kronecker Gate Live)
 """
 import asyncio
 import hashlib
@@ -35,7 +35,7 @@ from decimal import Decimal, getcontext
 # ============================================================================
 # EXACT ARITHMETIC: Decimal precision for financial + Fraction for TF
 # ============================================================================
-getcontext().prec = 28
+getcontext().prec = 50
 
 # ============================================================================
 # TELEGRAM BOT IMPORTS
@@ -76,10 +76,16 @@ SLIPPAGE: int = 100
 MAX_PERIOD: int = 60
 MIN_PERIOD: int = 3
 X_PERIOD: int = MAX_PERIOD + 2
+MIN_HISTORY_WINDOW: int = 52
 
-F_THRESHOLD: Decimal = Decimal('66.6666666666666667')
-G_THRESHOLD: Decimal = Decimal('33.3333333333333333')
-GF_TOLERANCE: Decimal = Decimal('2.6666666666666667')
+# [PATCH 1: EXACT SYMBOLIC THRESHOLDS]
+# MQL4: f = 200.0/3.0 = 66.6̄ ; g = 100.0/3.0 = 33.3̄ ; gf = 40.0/15.0 = 2.6̄
+F_THRESHOLD: Fraction = Fraction(200, 3)
+G_THRESHOLD: Fraction = Fraction(100, 3)
+GF_TOLERANCE: Fraction = Fraction(40, 15)
+F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD.num()) / Decimal(F_THRESHOLD.den())
+G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD.num()) / Decimal(G_THRESHOLD.den())
+GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE.num()) / Decimal(GF_TOLERANCE.den())
 
 PHI_SYMBOLIC = "(1 + sqrt(5)) / 2"
 PI_SYMBOLIC = "PI"
@@ -824,7 +830,7 @@ class FeedClient:
                     raw = r.read().decode("utf-8")
                     payload = json.loads(raw)
                     if isinstance(payload, dict) and payload.get("error"):
-                        logger.warning(f"Relay returned error for {self.active_symbol()}: {payload.get('error')} ({payload.get('status', '?')})")
+                        logger.warning(f"Relay returned error for {self.active_symbol()}: {payload.get('error')}")
                         self._failure_count += 1
                         self._fallback_count += 1
                         if self._fallback_count >= 5:
@@ -934,11 +940,12 @@ class FeedClient:
             "empty": (d is None or d.get("close") is None),
             "failure_count": self._failure_count, "fallback_count": self._fallback_count,
             "last_update": self._last_update.isoformat() if self._last_update else None,
+            "relay_url": RELAY_URL,
         }
 
 
 # ============================================================================
-# CORE ÆEA ENGINE — TICK PROCESSING FIXED
+# CORE ÆEA ENGINE — INDICATOR MATRIX POPULATED, KRONECKER GATE LIVE
 # ============================================================================
 class AEEA_Engine:
     def __init__(self):
@@ -1089,6 +1096,36 @@ class AEEA_Engine:
         logger.info(f"🔷 FVG anchored to Leech vector: idx={idx} hash={vhash[:16]}...")
         return anchor
 
+    # ========================================================================
+    # [PATCH 4: FULL INDICATOR MATRIX POPULATION]
+    # Populate iA/cA across the entire [y+1, X] window on every bar-close.
+    # ========================================================================
+    def _populate_indicator_matrix(self) -> None:
+        st = self.state
+        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
+            return
+        size = st.X - st.y
+        if size <= 0:
+            return
+        for j in range(st.y + 1, st.X + 1):
+            idx = j - st.y - 1
+            if idx < 0 or idx >= size:
+                continue
+            norm_vals = self._normalize(MAX_PERIOD)
+            for i in range(13):
+                if i < len(st.iA) and idx < len(st.iA[i]):
+                    st.iA[i][idx] = norm_vals[i]
+                    st.cA[i][idx] = norm_vals[i]
+                    if i < len(st.kA) and idx < len(st.kA[i]):
+                        st.kA[i][idx] = norm_vals[i]
+                    if i < len(st.lA) and idx < len(st.lA[i]):
+                        st.lA[i][idx] = norm_vals[i]
+        self._indicator_populate_count += 1
+        if self._indicator_populate_count % 20 == 0:
+            # Log a sample to verify non-degeneracy
+            sample = [st.iA[i][0] for i in range(13)]
+            logger.info(f"📊 Indicator matrix populated (pass #{self._indicator_populate_count}) | sample iA[:,0]={sample}")
+
     def initialize_engine(self) -> None:
         state = self.state
         if state._initialized and state.FG:
@@ -1156,14 +1193,10 @@ class AEEA_Engine:
         state.R = True
         state.signature = False
         state.signal = Decimal('0.0')
+        # [PATCH 4] Populate the FULL indicator matrix
+        self._populate_indicator_matrix()
         if len(self.ohlcv_history) >= state.y + 1:
-            norm_vals = self._normalize(state.y)
-            for i in range(min(13, len(norm_vals))):
-                if i < len(state.iA) and len(state.iA[i]) > 0:
-                    state.iA[i][0] = norm_vals[i]
-                    state.cA[i][0] = norm_vals[i]
-        if len(self.ohlcv_history) >= state.y + 1:
-            state.iATR, state.iStdDev = self._unify_volatility(state.y)
+            state.iATR, state.iStdDev = self._unify_volatility(MAX_PERIOD)
         current_price = state.price
         self._step_quaternion_field(current_price, None)
         info = self._verify_arc_length_coherence()
@@ -1196,19 +1229,16 @@ class AEEA_Engine:
             state.Premium = [Decimal('0.0')] * size
             state.Discount = [Decimal('0.0')] * size
             state.Regime = [""] * size
-        if len(self.ohlcv_history) >= 2:
-            iH = self.ohlcv_history[-2]["high"]
-            iL = self.ohlcv_history[-2]["low"]
+        # [PATCH 6] Use the current forming bar, not the one before
+        if len(self.ohlcv_history) >= 1:
+            iH = self.ohlcv_history[-1]["high"]
+            iL = self.ohlcv_history[-1]["low"]
         else:
             iH = state.price
             iL = state.price
         for j in range(state.y + 1, state.X + 1):
             idx = j - state.y - 1
             if 0 <= idx < len(state.k):
-                norm_vals = self._normalize(j)
-                for i in range(min(13, len(norm_vals))):
-                    if i < len(state.cA) and idx < len(state.cA[i]):
-                        state.cA[i][idx] = norm_vals[i] if i < len(norm_vals) else Decimal('50.0')
                 state.k[idx] = False
                 state.l[idx] = False
                 state.HH[idx] = iH
@@ -1222,6 +1252,8 @@ class AEEA_Engine:
         if state.R and state.FG:
             state.U.append(True)
             if all(state.U): state.R = False
+        # [PATCH 4] Populate the FULL indicator matrix
+        self._populate_indicator_matrix()
         state.FG = True
         state._initialized = True
         logger.info(f"✅ Engine initialized on first tick at price={state.price:.5f}")
@@ -1281,6 +1313,9 @@ class AEEA_Engine:
                 self.ohlcv_history[-1]["low"] = min(self.ohlcv_history[-1]["low"], price_data.low)
                 self.ohlcv_history[-1]["close"] = price_data.close
                 self.ohlcv_history[-1]["volume"] += price_data.volume
+        # [PATCH 4] Re-populate indicator matrix on every bar-close
+        if self._bar_open and len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
+            self._populate_indicator_matrix()
         if self._bar_open and len(self.ohlcv_history) >= 2:
             self._on_bar()
         self._on_tick(price_data)
@@ -1394,28 +1429,36 @@ class AEEA_Engine:
         cci = (tp[0] - sma_tp) / (Decimal('0.015') * mad)
         return Decimal('50.0') + max(Decimal('-50.0'), min(Decimal('50.0'), cci / Decimal('4.0')))
 
+    # ========================================================================
+    # [PATCH 2: _normalize(j) WINDOW SEMANTICS]
+    # `j` is now the lookback depth, not the slice size. Always use at least
+    # MIN_HISTORY_WINDOW bars so indicators are non-degenerate.
+    # ========================================================================
     def _normalize(self, j):
-        if len(self.ohlcv_history) < j + 1:
+        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
             return (Decimal('50.0'),) * 13
-        close_prices = [d["close"] for d in self.ohlcv_history]
-        high_prices = [d["high"] for d in self.ohlcv_history]
-        low_prices = [d["low"] for d in self.ohlcv_history]
-        volume_data = [d.get("volume", Decimal('0.0')) for d in self.ohlcv_history]
+        window = max(j, MIN_HISTORY_WINDOW)
+        end = len(self.ohlcv_history)
+        start = max(0, end - window)
+        close_prices = [d["close"] for d in self.ohlcv_history[start:end]]
+        high_prices = [d["high"] for d in self.ohlcv_history[start:end]]
+        low_prices = [d["low"] for d in self.ohlcv_history[start:end]]
+        volume_data = [d.get("volume", Decimal('0.0')) for d in self.ohlcv_history[start:end]]
 
-        iadx = self._compute_adx(high_prices, low_prices, close_prices, j)
-        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices)
+        iadx = self._compute_adx(high_prices, low_prices, close_prices, MAX_PERIOD)
+        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, 14, 3)
         stoch_val = (k_stoch + d_stoch) / Decimal('2.0')
-        rvi_val = self._compute_rvi(close_prices, j)
-        ac_val = self._compute_ac(high_prices, low_prices, close_prices, j)
-        force_val = self._compute_force(close_prices, volume_data, j)
-        obv_val = self._compute_obv(close_prices, volume_data, j)
-        ad_val = self._compute_ad(high_prices, low_prices, close_prices, volume_data, j)
-        mfi_val = self._compute_mfi(high_prices, low_prices, close_prices, volume_data, j)
-        mom_val = self._compute_momentum(close_prices, j)
-        dem_val = self._compute_demarker(high_prices, low_prices, j)
-        wpr_val = self._compute_wpr(high_prices, low_prices, close_prices, j)
-        cci_val = self._compute_cci(high_prices, low_prices, close_prices, j)
-        rsi_val = rsi(close_prices, min(14, j))
+        rvi_val = self._compute_rvi(close_prices, MAX_PERIOD)
+        ac_val = self._compute_ac(high_prices, low_prices, close_prices, MAX_PERIOD)
+        force_val = self._compute_force(close_prices, volume_data, MAX_PERIOD)
+        obv_val = self._compute_obv(close_prices, volume_data, MAX_PERIOD)
+        ad_val = self._compute_ad(high_prices, low_prices, close_prices, volume_data, MAX_PERIOD)
+        mfi_val = self._compute_mfi(high_prices, low_prices, close_prices, volume_data, MAX_PERIOD)
+        mom_val = self._compute_momentum(close_prices, MAX_PERIOD)
+        dem_val = self._compute_demarker(high_prices, low_prices, MAX_PERIOD)
+        wpr_val = self._compute_wpr(high_prices, low_prices, close_prices, MAX_PERIOD)
+        cci_val = self._compute_cci(high_prices, low_prices, close_prices, MAX_PERIOD)
+        rsi_val = rsi(close_prices, 14)
 
         def clamp(v):
             if v < Decimal('0'): return Decimal('0')
@@ -1430,22 +1473,25 @@ class AEEA_Engine:
         )
 
     def _unify_volatility(self, j):
-        if len(self.ohlcv_history) < j + 1:
+        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
             return Decimal('50.0'), Decimal('50.0')
-        close_prices = [d["close"] for d in self.ohlcv_history]
-        high_prices = [d["high"] for d in self.ohlcv_history]
-        low_prices = [d["low"] for d in self.ohlcv_history]
-        atr_val = atr(high_prices, low_prices, close_prices, j)
-        std_val = stddev(close_prices, j)
+        window = max(j, MIN_HISTORY_WINDOW)
+        end = len(self.ohlcv_history)
+        start = max(0, end - window)
+        close_prices = [d["close"] for d in self.ohlcv_history[start:end]]
+        high_prices = [d["high"] for d in self.ohlcv_history[start:end]]
+        low_prices = [d["low"] for d in self.ohlcv_history[start:end]]
+        atr_val = atr(high_prices, low_prices, close_prices, MAX_PERIOD)
+        std_val = stddev(close_prices, MAX_PERIOD)
 
         atr_list, std_list = [], []
-        for i in range(max(0, len(self.ohlcv_history) - j * 2), len(self.ohlcv_history) - j):
-            sub_high = high_prices[i:i+j]
-            sub_low = low_prices[i:i+j]
-            sub_close = close_prices[i:i+j]
-            if len(sub_high) == j:
-                atr_list.append(atr(sub_high, sub_low, sub_close, j))
-                std_list.append(stddev(sub_close, j))
+        for i in range(max(0, len(self.ohlcv_history) - window * 2), len(self.ohlcv_history) - window):
+            sub_high = [d["high"] for d in self.ohlcv_history[i:i+window]]
+            sub_low = [d["low"] for d in self.ohlcv_history[i:i+window]]
+            sub_close = [d["close"] for d in self.ohlcv_history[i:i+window]]
+            if len(sub_high) == window:
+                atr_list.append(atr(sub_high, sub_low, sub_close, MAX_PERIOD))
+                std_list.append(stddev(sub_close, MAX_PERIOD))
 
         atr_norm, std_norm = Decimal('50.0'), Decimal('50.0')
         if len(atr_list) >= 2:
@@ -1458,53 +1504,53 @@ class AEEA_Engine:
                 std_norm = Decimal('100.0') * (std_val - mn) / (mx - mn)
         return atr_norm, std_norm
 
+    # ========================================================================
+    # [PATCH 3: _M / _N CORRECT INDEXING]
+    # Read the CURRENT bar's indicator values (index idx), not [0].
+    # ========================================================================
     def _M(self, j, price, Price, iA, cA, kA, HH):
         m = 0
         y = self.state.y
-        f = F_THRESHOLD + GF_TOLERANCE
-        g_minus = G_THRESHOLD - GF_TOLERANCE
+        f = F_THRESHOLD_D + GF_TOLERANCE_D
+        g_minus = G_THRESHOLD_D - GF_TOLERANCE_D
         idx = j - y - 1
         if idx < 0 or idx >= len(HH): return 0
         for i in range(13):
             if i >= len(iA): continue
-            slice_iA = iA[i]
-            slice_cA = cA[i] if i < len(cA) else [Decimal('50.0')]
-            slice_kA = kA[i] if i < len(kA) else [Decimal('50.0')]
-            val_iA = slice_iA[0] if len(slice_iA) > 0 else Decimal('50.0')
-            val_cA = slice_cA[0] if len(slice_cA) > 0 else Decimal('50.0')
-            val_kA = slice_kA[0] if len(slice_kA) > 0 else Decimal('50.0')
+            if idx >= len(iA[i]): continue
+            val_iA = iA[i][idx]
+            val_cA = cA[i][idx] if i < len(cA) and idx < len(cA[i]) else Decimal('50.0')
+            val_kA = kA[i][idx] if i < len(kA) and idx < len(kA[i]) else Decimal('50.0')
             if Price > HH[idx]:
                 if val_iA > f or val_cA < val_kA: m += 1
             elif price > HH[idx]:
                 if val_iA > f or val_iA < val_kA: m += 1
             elif val_iA > f: m += 1
-        if len(iA) > 0 and len(iA[0]) > 0:
-            if iA[0][0] > f or iA[0][0] < g_minus: m += 1
+        if len(iA) > 0 and len(iA[0]) > idx:
+            if iA[0][idx] > f or iA[0][idx] < g_minus: m += 1
         if self.state.iIHKt > f and self.state.iIHKk > f: m += 1
         return m
 
     def _N(self, j, price, Price, iA, cA, lA, LL):
         n = 0
         y = self.state.y
-        f = F_THRESHOLD + GF_TOLERANCE
-        g_minus = G_THRESHOLD - GF_TOLERANCE
+        f = F_THRESHOLD_D + GF_TOLERANCE_D
+        g_minus = G_THRESHOLD_D - GF_TOLERANCE_D
         idx = j - y - 1
         if idx < 0 or idx >= len(LL): return 0
         for i in range(13):
             if i >= len(iA): continue
-            slice_iA = iA[i]
-            slice_cA = cA[i] if i < len(cA) else [Decimal('50.0')]
-            slice_lA = lA[i] if i < len(lA) else [Decimal('50.0')]
-            val_iA = slice_iA[0] if len(slice_iA) > 0 else Decimal('50.0')
-            val_cA = slice_cA[0] if len(slice_cA) > 0 else Decimal('50.0')
-            val_lA = slice_lA[0] if len(slice_lA) > 0 else Decimal('50.0')
+            if idx >= len(iA[i]): continue
+            val_iA = iA[i][idx]
+            val_cA = cA[i][idx] if i < len(cA) and idx < len(cA[i]) else Decimal('50.0')
+            val_lA = lA[i][idx] if i < len(lA) and idx < len(lA[i]) else Decimal('50.0')
             if Price < LL[idx]:
                 if val_iA < g_minus or val_cA > val_lA: n += 1
             elif price < LL[idx]:
                 if val_iA < g_minus or val_iA > val_lA: n += 1
             elif val_iA < g_minus: n += 1
-        if len(iA) > 0 and len(iA[0]) > 0:
-            if iA[0][0] > f or iA[0][0] < g_minus: n += 1
+        if len(iA) > 0 and len(iA[0]) > idx:
+            if iA[0][idx] > f or iA[0][idx] < g_minus: n += 1
         if self.state.iIHKt < g_minus and self.state.iIHKk < g_minus: n += 1
         return n
 
@@ -1642,7 +1688,7 @@ class AEEA_Engine:
         for j in range(y + 1, state.X):
             idx = j - y - 1
             if idx < 0 or idx >= len(state.Regime): break
-            iATR_norm, iStdDev_norm = self._unify_volatility(j)
+            iATR_norm, iStdDev_norm = self._unify_volatility(MAX_PERIOD)
             if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
@@ -1666,7 +1712,7 @@ class AEEA_Engine:
         for j in range(y + 1, state.X):
             idx = j - y - 1
             if idx < 0 or idx >= len(state.Regime): break
-            iATR_norm, iStdDev_norm = self._unify_volatility(j)
+            iATR_norm, iStdDev_norm = self._unify_volatility(MAX_PERIOD)
             if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     if state.Regime[idx] != "tVolatile":
@@ -1735,8 +1781,9 @@ class AEEA_Engine:
         idx = state.Z - y - 1
         if idx < 0:
             idx = 0
-        if len(self.ohlcv_history) >= y + 1:
-            norm_vals = self._normalize(y)
+        # [PATCH 4] Refresh indicator matrix on every tick if history sufficient
+        if len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
+            norm_vals = self._normalize(MAX_PERIOD)
             for i in range(min(13, len(norm_vals))):
                 if i < len(state.iA):
                     while len(state.iA[i]) <= idx:
@@ -1745,11 +1792,10 @@ class AEEA_Engine:
                         state.cA[i].append(Decimal('50.0'))
                     state.iA[i][idx] = norm_vals[i]
                     state.cA[i][idx] = norm_vals[i]
-            self._indicator_populate_count += 1
             close_prices = [d["close"] for d in self.ohlcv_history[-y-1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0'), Decimal('0'), Decimal('0'))
-            state.iATR, state.iStdDev = self._unify_volatility(y)
+            state.iATR, state.iStdDev = self._unify_volatility(MAX_PERIOD)
             high_prices = [d["high"] for d in self.ohlcv_history]
             low_prices = [d["low"] for d in self.ohlcv_history]
             close_all = [d["close"] for d in self.ohlcv_history]
@@ -1835,12 +1881,18 @@ class AEEA_Engine:
         if state.signature and state.chat_id:
             self._send_signal_alert()
 
+    # ========================================================================
+    # [PATCH 5: _on_track / _on_stand WHILE-LOOPS]
+    # ========================================================================
     def _on_track(self):
         state = self.state
         y = state.y
-        for s in range(state.X - 1, state.S):
+        s = state.X - 1
+        while s < state.S:
             idx = s - y - 1
-            if idx < 0 or idx >= len(state.Regime): break
+            if idx < 0 or idx >= len(state.Regime):
+                s += 1
+                continue
             j = s
             if state.Suply <= state.price or state.iSuply <= state.price or state.iSuply <= state.iH:
                 state.I = state.iW
@@ -1901,6 +1953,7 @@ class AEEA_Engine:
                     state.Regime[idx] = "sVolatile"
                 state.S += 1
             if s == 4 * state.X: break
+            s += 1
         state.S = state.X
         state.T = state.X
         if state.Z != 4 * state.X:
@@ -1915,10 +1968,13 @@ class AEEA_Engine:
     def _on_stand(self):
         state = self.state
         y = state.y
-        for s in range(y + 1, state.Y, -1):
+        s = y + 1
+        while s > state.Y:
             if s == 1 or s < 0: break
             idx = s - y - 1
-            if idx < 0 or idx >= len(state.Regime): continue
+            if idx < 0 or idx >= len(state.Regime):
+                s -= 1
+                continue
             j = s
             state.ir = 0
             state.ij = 0
@@ -1991,6 +2047,7 @@ class AEEA_Engine:
                 if state.Y != 2 and state.X != 2:
                     state.Y -= 1
                     state.X -= 1
+            s -= 1
         state.X = state.y
         state.Y = state.y
         if state.Z != 2:
@@ -2185,6 +2242,8 @@ class AEEA_Engine:
         state.iH = saved_iH
         state.iL = saved_iL
         state.tick = saved_tick
+        # [PATCH 4] Re-populate indicator matrix after reset
+        self._populate_indicator_matrix()
         logger.info(f"🔄 OnReInit() completed — Tick preserved: {state.tick}")
 
     def _send_signal_alert(self):
@@ -2263,7 +2322,7 @@ class BridgeState:
             "arc_sq": "0", "radius_sq": "0", "deviation": "0", "timestamp": datetime.now().isoformat(),
             "endpoint": None, "webapp_user_id": None, "webapp_username": None, "last_price_update": None,
             "engine_initialized": False, "consecutive_zero_prices": 0,
-            "dbz_branch": 0, "re_psi": "0",
+            "dbz_branch": 0, "re_psi": "0", "relay_url": RELAY_URL,
         }
         self._fvgs: Dict[int, Dict[str, str]] = {}
         self._next_fvg_idx = 0
@@ -2579,6 +2638,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "symbol": SYMBOL,
                 "webapp_enabled": True,
                 "cors_origin": CORS_ORIGIN,
+                "relay_url": RELAY_URL,
             })
             return
         if path == "/state":
@@ -2590,6 +2650,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 host = self.headers.get("Host", f"{BRIDGE_HOST}:{BRIDGE_PORT}")
                 scheme = "https" if BRIDGE_USE_TLS else "http"
                 snap["endpoint"] = f"{scheme}://{host}"
+            snap["relay_url"] = RELAY_URL
             self._send_json(200, snap)
             return
         if path == "/fvg":
@@ -2662,6 +2723,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 logger.info(f"🤝 Handshake OK: user_id={user_id}, username={username}, chat_id={chat_id}")
                 self._send_json(200, {
                     "ok": True, "user_id": user_id, "username": username,
+                    "public_url": BRIDGE_ENGINE_REF.get("public_url"),
                 })
             except Exception as e:
                 logger.error(f"Handshake error: {e}")
@@ -2829,6 +2891,9 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "last_price_update": datetime.now().isoformat(),
                 "engine_initialized": bool(st.FG),
                 "consecutive_zero_prices": int(getattr(engine, "_consecutive_zero_prices", 0)),
+                "relay_url": RELAY_URL,
+                "indicator_populate_count": int(engine._indicator_populate_count),
+                "imbalance_fire_count": int(engine._imbalance_fire_count),
             }
             BRIDGE_STATE.publish(snapshot)
         except Exception as e:
@@ -2862,7 +2927,7 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
 
 
 # ============================================================================
-# TELEGRAM BOT HANDLERS (UI CLEANED — NO INTERNAL DETAILS)
+# TELEGRAM BOT HANDLERS
 # ============================================================================
 class AEI_Bot:
     def __init__(self, token: str, bot_name: str = "UpscaleTradeBot"):
@@ -2886,7 +2951,7 @@ class AEI_Bot:
             try:
                 logger.info(f"🔄 Feed iteration #{iteration}")
                 self.engine.update_price_from_feed()
-                logger.info(f"📊 price={self.engine.state.price} tick={self.engine.state.tick} FG={self.engine.state.FG} active_sym={self.engine.feed.active_symbol()}")
+                logger.info(f"📊 price={self.engine.state.price} tick={self.engine.state.tick} FG={self.engine.state.FG} active_sym={self.engine.feed.active_symbol()} m/n={sum(1 for v in self.engine.state.k if v)}/{sum(1 for v in self.engine.state.l if v)}")
             except Exception:
                 logger.exception(f"❌ Feed iteration #{iteration} failed")
             await asyncio.sleep(UPDATE_INTERVAL)
@@ -2974,6 +3039,8 @@ class AEI_Bot:
         coherence_line = "✅ COHERENT" if info['coherent'] else f"⚠️ DEV: {info['deviation_float']:.6f}"
         feed_mark = "✅" if self._running else "❌"
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
+        m_count = sum(1 for v in state.k if v)
+        n_count = sum(1 for v in state.l if v)
         response = (
             "🔷 *ÆEA STATUS*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
@@ -2985,7 +3052,9 @@ class AEI_Bot:
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🔄 *Tick:* {state.tick}\n"
             f"🧠 *Engine State:* {init_mark}\n"
-            f"📊 *Imbalance:* m={sum(1 for v in state.k if v)}, n={sum(1 for v in state.l if v)}\n"
+            f"📊 *Imbalance:* m={m_count}, n={n_count}\n"
+            f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
+            f"📡 *Signal Fires:* {self.engine._imbalance_fire_count}\n"
             f"📡 *Feed Active:* {feed_mark}"
         )
         reply_markup = self._build_main_keyboard()
@@ -3155,8 +3224,8 @@ class AEI_Bot:
             bar = "█" * min(max(val_int // 10, 0), 10) + "░" * (10 - min(max(val_int // 10, 0), 10))
             indicator_str += f"`{name:8}` {val:6.1f} [{bar}]\n"
         indicator_str += "\n*Thresholds:*\n"
-        indicator_str += f"  Overbought: 66.6 (f={F_THRESHOLD:.1f})\n"
-        indicator_str += f"  Oversold:   33.3 (g={G_THRESHOLD:.1f})"
+        indicator_str += f"  Overbought: 66.6 (f={F_THRESHOLD_D:.1f})\n"
+        indicator_str += f"  Oversold:   33.3 (g={G_THRESHOLD_D:.1f})"
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
             await update.callback_query.edit_message_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
@@ -3231,7 +3300,7 @@ class AEI_Bot:
         historical = []
         try:
             historical = self.engine.feed.get_historical_klines(limit=200)
-            if historical and len(historical) >= 20:
+            if historical and len(historical) >= MIN_HISTORY_WINDOW:
                 self.engine.ohlcv_history = historical
                 logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()}")
                 try:
@@ -3252,7 +3321,7 @@ class AEI_Bot:
             self._price_task = asyncio.create_task(self.price_feed_loop())
 
         hist_count = len(self.engine.ohlcv_history)
-        init_mode = "Pre-seeded with history" if hist_count >= 20 else "Organic first-tick initialization"
+        init_mode = "Pre-seeded with history" if hist_count >= MIN_HISTORY_WINDOW else "Organic first-tick initialization"
 
         reply_text = (
             f"✅ *Price feed started*\n"
@@ -3260,6 +3329,7 @@ class AEI_Bot:
             f"🔄 *Update Interval:* {UPDATE_INTERVAL}s\n"
             f"📊 *Historical Data:* {hist_count} bars loaded\n"
             f"🧠 *Initialization Mode:* {init_mode}\n"
+            f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
             f"🔮 *Status:* Monitoring for signals..."
         )
         if update.callback_query:
@@ -3283,6 +3353,7 @@ class AEI_Bot:
         lines = [
             "🔬 *RELAY PROBE*", "",
             f"*Status:* {status}",
+            f"*Relay URL:* `{RELAY_URL or 'UNSET'}`",
             f"*Primary symbol:* `{info.get('primary_symbol')}`",
             f"*Active symbol:* `{info.get('active_symbol')}`",
             f"*Chain index:* {info.get('chain_index')}",
