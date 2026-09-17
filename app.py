@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.20 (CONSTRAINT-LOCKED CORE ACTIVATION - INDICATOR + QUATERNION + IMBALANCE FIX)
+Version: 4.21 (LIVE QUATERNION BINDING & ACTUATION DEADLOCK FIX)
 """
 import asyncio
 import hashlib
@@ -875,7 +875,7 @@ class FeedClient:
                     url,
                     headers={
                         "Accept": "application/json",
-                        "User-Agent": "AEI-Bridge/4.20",
+                        "User-Agent": "AEI-Bridge/4.21",
                         "Cache-Control": "no-cache",
                     }
                 )
@@ -1030,13 +1030,14 @@ class AEEA_Engine:
         self._quat_tick_count: int = 0
         self._indicator_populate_count: int = 0
         self._imbalance_fire_count: int = 0
+        self._last_price_for_quat: Optional[Decimal] = None
 
     # ------------------------------------------------------------------
     # EXACT ARC-LENGTH VERIFICATION (TF-mandated: s² = r²)
     # ------------------------------------------------------------------
-    def _step_quaternion_field(self) -> None:
+    def _step_quaternion_field(self, price: Decimal, prev_price: Optional[Decimal]) -> None:
         """
-        Advance the quaternion field Φ by one tick using Natalia's Fibrations.
+        Advance the quaternion field Φ using the live market price.
         Updates s², r², deviation, and Re[Ψ] from the live quaternion state.
         Includes hard guard against silent identity collapse.
         """
@@ -1044,7 +1045,21 @@ class AEEA_Engine:
         # Advance time (monotonic, never resets on tick)
         st.time_fraction = st.time_fraction + Fraction(1, 100)
         self._quat_tick_count += 1
-        s_param = st.time_fraction * Fraction(4, 10)
+
+        # --- BIND QUATERNION FIELD TO MARKET PRICE ---
+        # The "s" parameter now incorporates the price change, making s² and r²
+        # respond to real market volatility.
+        price_frac = Fraction.from_float(float(price))
+        prev_price_frac = Fraction.from_float(float(prev_price)) if prev_price is not None and prev_price > 0 else price_frac
+        delta_price = (price_frac - prev_price_frac).abs()
+        # Normalize delta to a small value to avoid blowing up the fibration
+        price_magnitude = prev_price_frac if not prev_price_frac.is_zero() else Fraction(1)
+        normalized_delta = delta_price / price_magnitude
+
+        # s_param now blends time and price action
+        s_param_time = st.time_fraction * Fraction(4, 10)
+        s_param = s_param_time + normalized_delta
+        # --- END BINDING ---
 
         # Base quaternion on unit sphere via Hopf angles
         theta_base = s_param * Fraction(7, 10)
@@ -1270,7 +1285,8 @@ class AEEA_Engine:
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(state.y)
         # Initialize the quaternion field once for coherence baseline
-        self._step_quaternion_field()
+        current_price = state.price
+        self._step_quaternion_field(current_price, None)
         info = self._verify_arc_length_coherence()
         self._arc_length_verified = info["coherent"]
         logger.info(f"✅ Arc-Length Axiom verification: {'COHERENT' if info['coherent'] else 'DEVIATION'}")
@@ -1854,16 +1870,19 @@ class AEEA_Engine:
         on every tick so M() and N() have real signal to work with.
         """
         state = self.state
+        # --- LIVE BINDING: Update quaternion field with new price ---
+        prev_price = self._last_price_for_quat
+        self._step_quaternion_field(price_data.bid, prev_price)
+        self._last_price_for_quat = price_data.bid
+        # --- END LIVE BINDING ---
+
         state.price = price_data.bid
         state.Price = price_data.close
         state.tick += 1
         self._tick_log_counter += 1
         if self._tick_log_counter >= 100:
             self._tick_log_counter = 0
-            logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}, FG={state.FG}")
-
-        # Advance the exact quaternion field
-        self._step_quaternion_field()
+            logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}, FG={state.FG}, Coherent={state.arc_coherent}")
 
         # CRITICAL GUARD: refuse to evolve on null price
         if state.price <= Decimal('0.0'):
@@ -2682,7 +2701,7 @@ class TunnelManager:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.20"
+    server_version = "AEI-Bridge/4.21"
 
     def log_message(self, fmt, *args):
         return
@@ -2742,7 +2761,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "ok": not stale,
                 "service": "aei-bridge",
-                "version": "4.20",
+                "version": "4.21",
                 "last_price_update": last,
                 "age_seconds": age_seconds,
                 "stale": stale,
@@ -2762,7 +2781,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "webapp_enabled": True,
                 "cors_origin": CORS_ORIGIN,
                 "relay_url": RELAY_URL or None,
-                "version": "4.20",
+                "version": "4.21",
             })
             return
         if path == "/state":
@@ -3291,7 +3310,7 @@ class AEI_Bot:
         status = self.engine.get_signal_status()
         indicator_sample_str = ", ".join(status.get("indicator_sample", []))
         response = (
-            "🔬 *ENGINE DIAGNOSTICS (v4.20)*\n"
+            "🔬 *ENGINE DIAGNOSTICS (v4.21)*\n"
             f"📊 *Tick:* {status.get('tick')}\n"
             f"🌀 *Quat Ticks:* {status.get('quat_tick_count')}\n"
             f"🧮 *Indicator Populates:* {status.get('indicator_populate_count')}\n"
@@ -3790,7 +3809,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info(f"📊 Quantum-Financial Topology Engine initialized (v4.20).")
+        logger.info(f"📊 Quantum-Financial Topology Engine initialized (v4.21).")
         logger.info(f"🧠 EXACT Arc-Length Axiom (s²=r²) via Python Fraction + Quat.")
         logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
         logger.info(f"🧬 Leech Λ₂₄ anchoring: FVGs project to 24D lattice vectors.")
@@ -3813,7 +3832,7 @@ _bridge_attach_to_bot(AEI_Bot)
 # ============================================================================
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.20 (CORE ACTIVATION)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · v4.21 (ACTUATION DEADLOCK FIX)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
 • Telegram bot      : app.py (python-telegram-bot)
@@ -3823,19 +3842,14 @@ Architecture:
 • Web GUI           : index.html → Telegram Web App (Mini App)
 • Menu button       : MenuButtonWebApp (one tap to open Mini App)
 
-v4.20 — CONSTRAINT-LOCKED CORE ACTIVATION:
-• _normalize() now returns LIVE indicator values (13D)
-• 12 new indicator calculators: ADX, RVI, AC, Force, OBV, AD, MFI,
-  Momentum, DeMarker, WPR, CCI, RSI — all derived from OHLCV
-• _unify_volatility() now uses rolling window min/max instead of
-  single-point normalization
-• _step_quaternion_field() has hard guard against identity collapse
-• _on_tick() explicitly populates iA/cA on every tick
-• _apply_dbz_branch() logs exceptions instead of silently swallowing
-• New /diagnostics endpoint + Telegram command for dead-zone detection
-• Diagnostic counters: _quat_tick_count, _indicator_populate_count,
-  _imbalance_fire_count
-• All prior v4.19 logic preserved verbatim
+v4.21 — ACTUATION DEADLOCK FIX:
+• _step_quaternion_field() now receives the live market price and
+  binds the quaternion Φ to actual price action, making s² and r²
+  respond to market volatility. Previously, s² was always 0 and r²
+  was always 1, creating a false permanent coherence state.
+• This fixes the critical bug where the DbZ branching logic was
+  never triggered because the system always believed it was coherent.
+• All prior v4.20 logic preserved verbatim.
 
 Quick start:
 1. Deploy the Cloudflare Worker (see worker.js).
