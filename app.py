@@ -653,9 +653,7 @@ class AEI_CoreState:
     arc_coherent: bool = True
     fvg_anchor_map: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     _raw_price_missing: bool = False
-```
 
-```python
 # ============================================================================
 # INDICATOR CALCULATIONS
 # ============================================================================
@@ -956,9 +954,7 @@ class FeedClient:
             "last_update": self._last_update.isoformat() if self._last_update else None,
             "relay_url": RELAY_URL,
         }
-```
 
-```python
 # ============================================================================
 # CORE ÆEA ENGINE — INDICATOR MATRIX POPULATED PER-BAR, KRONECKER GATE LIVE
 # ============================================================================
@@ -1772,9 +1768,7 @@ class AEEA_Engine:
             close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
-```
 
-```python
     def _on_tick(self, price_data):
         state = self.state
         state.tick += 1
@@ -2336,9 +2330,7 @@ class AEEA_Engine:
             "indicator_populate_count": int(self._indicator_populate_count),
             "imbalance_fire_count": int(self._imbalance_fire_count),
         }
-```
 
-```python
 # ============================================================================
 # HTTP BRIDGE — TELEGRAM WEB APP ENABLED
 # ============================================================================
@@ -2968,9 +2960,7 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     bot.run = wrapped_run
     bot._bridge_attached = True
     logger.info("🔗 Bridge attached to AEI_Bot.run()")
-```
 
-```python
 # ============================================================================
 # TELEGRAM BOT HANDLERS
 # ============================================================================
