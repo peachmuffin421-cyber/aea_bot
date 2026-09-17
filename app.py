@@ -7,15 +7,6 @@ Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
 Version: Final (CONSTRAINT-LOCKED — All Audit Findings Resolved)
-
-AUDIT PATCHES APPLIED (Compiler Specs):
-[P1] s² accumulator: O(1) incremental update via _last_s_acc field.
-[P2] Coherence validator: exact tolerance from Fraction dev, coherent
-     ONLY when |Δ| < 1e-6 (not 2e-3). Reports true s², r², Δ.
-[P3] MQL4 state machine: iA/cA populated at correct idx (Z - y - 1)
-     on every tick; M()/N() read from correct array slice.
-[P4] Frontend trust: engine coherence flag is the sole truth; frontend
-     mirrors, never fabricates.
 """
 import asyncio
 import hashlib
@@ -980,8 +971,6 @@ class AEEA_Engine:
         self.state.time_fraction = Fraction(0, 1)
         self._eps = Fraction(1, 100)
         # --- [P1] Incremental arc-length accumulator ---
-        # Rather than recompute Σ|dq| over the entire history every tick
-        # (O(n²), integer overflow at depth), we maintain the sum incrementally.
         self._s_acc_exact: Fraction = Fraction(0, 1)
         # Constraint-locked diagnostics counters
         self._quat_tick_count: int = 0
@@ -993,12 +982,6 @@ class AEEA_Engine:
     # [P1+P2] EXACT ARC-LENGTH — O(1) INCREMENTAL
     # ------------------------------------------------------------------
     def _step_quaternion_field(self, price: Decimal, prev_price: Optional[Decimal]) -> None:
-        """
-        Advance the quaternion field Φ using the live market price.
-        [P1] Uses O(1) incremental arc-length accumulator.
-        [P2] Writes exact s², r², deviation into state so the coherence
-        validator reads ground truth instead of stale zeros.
-        """
         st = self.state
         st.time_fraction = st.time_fraction + Fraction(1, 100)
         self._quat_tick_count += 1
@@ -1070,12 +1053,6 @@ class AEEA_Engine:
             )
 
     def _apply_dbz_branch(self, dev: Fraction, re_psi: Fraction) -> int:
-        """
-        DbZ logic:
-          Re[Ψ] > 0  ⟹ Branch 1 (critical-line projection; dev attenuated)
-          Re[Ψ] ≤ 0  ⟹ Branch 2 (Natalia fibration; ε perturbed)
-          dev ≈ 0    ⟹ Branch 0 (coherent, no action)
-        """
         try:
             if dev.abs().to_float() < ARC_COHERENCE_TOLERANCE:
                 target = Fraction(1, 100)
@@ -1100,10 +1077,6 @@ class AEEA_Engine:
             return 0
 
     def _verify_arc_length_coherence(self) -> Dict[str, Any]:
-        """
-        [P2] Return the EXACT arc-length coherence state from the live quaternion
-        field, using exact-rational-derived tolerance.
-        """
         st = self.state
         dev_float = st.deviation_exact.to_float()
         coherent = abs(dev_float) < ARC_COHERENCE_TOLERANCE
@@ -1120,7 +1093,6 @@ class AEEA_Engine:
         }
 
     def _check_coherence(self) -> str:
-        """Human-readable coherence string for the /status command."""
         info = self._verify_arc_length_coherence()
         if info["coherent"]:
             return "✅ COHERENT"
@@ -1538,11 +1510,6 @@ class AEEA_Engine:
     # IMBALANCE OPERATORS (M / N)
     # ------------------------------------------------------------------
     def _M(self, j, price, Price, iA, cA, kA, HH):
-        """
-        [P3] Count overbought alignments.
-        Reads iA[i] — the CURRENT tick's vector (indexed at slot 0, which
-        is written by _on_tick via iA[i][0] = norm_vals[i]).
-        """
         m = 0
         y = self.state.y
         f = F_THRESHOLD + GF_TOLERANCE
@@ -1568,9 +1535,6 @@ class AEEA_Engine:
         return m
 
     def _N(self, j, price, Price, iA, cA, lA, LL):
-        """
-        [P3] Count oversold alignments.
-        """
         n = 0
         y = self.state.y
         f = F_THRESHOLD + GF_TOLERANCE
@@ -1788,21 +1752,13 @@ class AEEA_Engine:
             state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
 
     def _on_tick(self, price_data):
-        """
-        [P3] Live tick handler. Advances the quaternion field with the new price,
-        populates iA/cA at the CORRECT idx so M()/N() can read them, and
-        increments the tick counter.
-        """
         state = self.state
-        # --- LIVE BINDING: Update quaternion field with new price (P1) ---
         prev_price = self._last_price_for_quat
         self._step_quaternion_field(price_data.bid, prev_price)
         self._last_price_for_quat = price_data.bid
-        # --- END LIVE BINDING ---
 
         state.price = price_data.bid
         state.Price = price_data.close
-        # [P3] Increment tick counter
         state.tick += 1
         self._tick_log_counter += 1
         if self._tick_log_counter >= 100:
@@ -1824,7 +1780,6 @@ class AEEA_Engine:
             state.iH = self.ohlcv_history[-2]["high"]
             state.iL = self.ohlcv_history[-2]["low"]
 
-        # ── [P3] POPULATE iA / cA AT CORRECT IDX ─────────────────
         y = state.y
         idx = state.Z - y - 1
         if idx < 0:
@@ -1833,7 +1788,6 @@ class AEEA_Engine:
             norm_vals = self._normalize(y)
             for i in range(min(13, len(norm_vals))):
                 if i < len(state.iA):
-                    # Ensure the slice can hold the idx
                     while len(state.iA[i]) <= idx:
                         state.iA[i].append(Decimal('50.0'))
                     while len(state.cA[i]) <= idx:
@@ -1855,7 +1809,6 @@ class AEEA_Engine:
             else:
                 state.iIHKk = Decimal('50.0')
                 state.iIHKt = Decimal('50.0')
-        # ─────────────────────────────────────────────────
 
         self._on_point()
         self._O(state.iO, state.O, state.J)
@@ -2430,8 +2383,6 @@ class BridgeState:
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is not None:
                 info = engine._verify_arc_length_coherence()
-                # [P2] Reject FVG only if engine is initialized AND reports
-                # a real deviation (not the initial 0/1 baseline).
                 if info["initialized"] and not info["coherent"]:
                     dev_float = info["deviation_float"]
                     if abs(dev_float) > 1.0:
@@ -2679,7 +2630,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "ok": not stale,
                 "service": "aei-bridge",
-                "version": "Final",
                 "last_price_update": last,
                 "age_seconds": age_seconds,
                 "stale": stale,
@@ -2699,7 +2649,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "webapp_enabled": True,
                 "cors_origin": CORS_ORIGIN,
                 "relay_url": RELAY_URL or None,
-                "version": "Final",
             })
             return
         if path == "/state":
@@ -3220,7 +3169,7 @@ class AEI_Bot:
         status = self.engine.get_signal_status()
         indicator_sample_str = ", ".join(status.get("indicator_sample", []))
         response = (
-            "🔬 *ENGINE DIAGNOSTICS (Final)*\n"
+            "🔬 *ENGINE DIAGNOSTICS*\n"
             f"📊 *Tick:* {status.get('tick')}\n"
             f"🌀 *Quat Ticks:* {status.get('quat_tick_count')}\n"
             f"🧮 *Indicator Populates:* {status.get('indicator_populate_count')}\n"
@@ -3719,7 +3668,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info(f"📊 Quantum-Financial Topology Engine initialized (Final).")
+        logger.info(f"📊 Quantum-Financial Topology Engine initialized.")
         logger.info(f"🧠 EXACT Arc-Length Axiom (s²=r²) via Python Fraction + Quat.")
         logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
         logger.info(f"🧬 Leech Λ₂₄ anchoring: FVGs project to 24D lattice vectors.")
@@ -3742,7 +3691,7 @@ _bridge_attach_to_bot(AEI_Bot)
 # ============================================================================
 _BRIDGE_MANIFEST = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE · Final (CONSTRAINT-LOCKED)
+⚡ ÆEA TELEGRAM BOT + WEB GUI BRIDGE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Architecture:
 • Telegram bot      : app.py (python-telegram-bot)
@@ -3752,7 +3701,7 @@ Architecture:
 • Web GUI           : index.html → Telegram Web App (Mini App)
 • Menu button       : MenuButtonWebApp (one tap to open Mini App)
 
-Final — ALL AUDIT FINDINGS RESOLVED (Compiler Specs):
+Constraint-locked audit fixes applied:
 • [P1] Arc-length accumulator is O(1) incremental via _s_acc_exact.
         No more O(n²) recomputation. Integer overflow eliminated.
 • [P2] Coherence validator uses exact-rational-derived tolerance
@@ -3809,7 +3758,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 # ============================================================================
 # Q.E.D.
