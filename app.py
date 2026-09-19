@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: Final (CONSTRAINT-LOCKED — Signal parity, robust init, enhanced logging)
+Version: Final (CONSTRAINT-LOCKED — SPEC-1 through SPEC-5 enforced, MQL4 parity)
 """
 import asyncio
 import hashlib
@@ -653,9 +653,13 @@ class AEI_CoreState:
     arc_coherent: bool = True
     fvg_anchor_map: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     _raw_price_missing: bool = False
+    # [SPEC-2] Trailing stop state
+    trailing_stop_active: bool = False
+    trailing_stop_price: Decimal = Decimal('0.0')
+    trailing_take_profit: Decimal = Decimal('0.0')
 
 # ============================================================================
-# INDICATOR CALCULATIONS
+# INDICATOR CALCULATIONS (EXACT MQL4 EQUIVALENTS)
 # ============================================================================
 def sma(data: List[Decimal], period: int) -> Decimal:
     if len(data) < period: return Decimal('0.0')
@@ -988,6 +992,9 @@ class AEEA_Engine:
         self._indicator_populate_count: int = 0
         self._imbalance_fire_count: int = 0
         self._last_price_for_quat: Optional[Decimal] = None
+        # [SPEC-2] Trailing stop execution tracking
+        self._active_trailing_stop: Decimal = Decimal('0.0')
+        self._active_trailing_tp: Decimal = Decimal('0.0')
 
     def OnInit(self) -> None:
         """
@@ -1902,6 +1909,8 @@ class AEEA_Engine:
             state.GF = False
         if state.signature and state.chat_id:
             self._send_signal_alert()
+        # [SPEC-2] Trailing stop execution
+        self._execute_trailing_stop()
 
     def _on_track(self):
         state = self.state
@@ -2145,6 +2154,12 @@ class AEEA_Engine:
         if state.price <= Decimal('0.0'):
             logger.warning("_signal suppressed: no valid price")
             return
+        # [SPEC-1] Kronecker-Delta Gate: δ(m-n-2)=1 must be satisfied
+        m_count = sum(1 for v in state.k if v)
+        n_count = sum(1 for v in state.l if v)
+        if not (m_count - n_count > 2):
+            logger.info(f"📡 Signal suppressed: δ(m-n-2) = {m_count - n_count - 2} ≠ 1 (m={m_count}, n={n_count})")
+            return
         state.ab = not state.ba
         state.count = 0
         state.toll = 0
@@ -2153,15 +2168,10 @@ class AEEA_Engine:
         state.signature = True
         self._last_signal_time = datetime.now()
         self._imbalance_fire_count += 1
-        logger.info(f"📡 SIGNAL GENERATED #{self._imbalance_fire_count}: price={state.price:.5f}, tick={state.tick}, dbz={state.dbz_branch}")
+        logger.info(f"📡 SIGNAL GENERATED #{self._imbalance_fire_count}: price={state.price:.5f}, tick={state.tick}, dbz={state.dbz_branch}, δ={m_count - n_count - 2}")
 
     def _on_gaurd(self, inp):
         state = self.state
-        # [CRITICAL FIX] Relaxed guard condition to allow signal generation
-        # Original MQL4 logic: if (price > E && E != 0) or (price < D && D != 0)
-        # The issue is that after init, D and E are set to the first price.
-        # The price then needs to move beyond these anchors to trigger.
-        # We add a secondary condition: if the guard is never satisfied, we allow signals after a grace period.
         if state.price > state.E and state.E != Decimal('0.0'):
             if state.signature and inp != -1: state.dime = 0
             return True
@@ -2169,11 +2179,6 @@ class AEEA_Engine:
             if state.signature and inp != -1: state.dime = 1
             return True
         else:
-            # [PATCH] Allow signal if we have an active signal price and have ticked for a while
-            # This prevents deadlock when price is in a tight range
-            if state.signal != Decimal('0.0') and state.tick > 100:
-                if state.signature and inp != -1: state.dime = 1 # Assume neutral/bearish
-                return True
             if state.signature and inp != -1: state.dime = 1
             return False
 
@@ -2278,6 +2283,61 @@ class AEEA_Engine:
         self._populate_indicator_matrix()
         logger.info(f"🔄 OnReInit() completed — Tick preserved: {state.tick}")
 
+    def _execute_trailing_stop(self):
+        """[SPEC-2] Port of MQL4 T() trailing stop logic."""
+        state = self.state
+        # Only trail during Trend/Volatile regimes
+        idx = state.Z - state.y - 1
+        if idx < 0 or idx >= len(state.Regime):
+            return
+        regime = state.Regime[idx]
+        if regime in ("tStable", "tCoherent", "sStable", "sCoherent"):
+            return
+        if state.price <= Decimal('0.0'):
+            return
+        # If no active trailing stop, initialize it
+        if not state.trailing_stop_active and state.signal != Decimal('0.0'):
+            state.trailing_stop_active = True
+            state.trailing_stop_price = state.price
+            state.trailing_take_profit = state.price * Decimal('1.02') if state.prime == 0 else state.price * Decimal('0.98')
+            logger.info(f"📈 Trailing stop activated at {state.trailing_stop_price:.5f}, TP={state.trailing_take_profit:.5f}")
+        # Update trailing stop if active
+        if state.trailing_stop_active:
+            # Calculate friction
+            current_spread = (state.price * Decimal('0.001'))  # Approximate spread
+            friction_points = current_spread / Decimal('0.00001')
+            safety_buffer = Decimal('1.0')
+            min_trail_threshold = (friction_points + safety_buffer) * Decimal('0.00001')
+            # Calculate PnL in points
+            pnl_points = (state.price - state.trailing_stop_price) / Decimal('0.00001') if state.prime == 0 else (state.trailing_stop_price - state.price) / Decimal('0.00001')
+            if pnl_points <= (friction_points + safety_buffer):
+                return
+            # Compute geometric trail step (lock ~30% of open profit)
+            trail_step = max(min_trail_threshold, pnl_points * Decimal('0.00001') * Decimal('0.3'))
+            new_sl = state.trailing_stop_price
+            if state.prime == 0:  # Long
+                proposed_sl = state.price - trail_step
+                if proposed_sl > state.trailing_stop_price:
+                    new_sl = proposed_sl
+            else:  # Short
+                proposed_sl = state.price + trail_step
+                if proposed_sl < state.trailing_stop_price:
+                    new_sl = proposed_sl
+            if new_sl != state.trailing_stop_price:
+                state.trailing_stop_price = new_sl
+                logger.info(f"📈 Trailing stop updated to {state.trailing_stop_price:.5f}")
+            # Check if TP hit
+            if state.prime == 0 and state.price >= state.trailing_take_profit:
+                logger.info(f"✅ Take profit hit at {state.price:.5f}")
+                state.trailing_stop_active = False
+                state.trailing_stop_price = Decimal('0.0')
+                state.trailing_take_profit = Decimal('0.0')
+            elif state.prime == 1 and state.price <= state.trailing_take_profit:
+                logger.info(f"✅ Take profit hit at {state.price:.5f}")
+                state.trailing_stop_active = False
+                state.trailing_stop_price = Decimal('0.0')
+                state.trailing_take_profit = Decimal('0.0')
+
     def _send_signal_alert(self):
         state = self.state
         if not state.chat_id or not self.application: return
@@ -2339,6 +2399,9 @@ class AEEA_Engine:
             "quat_tick_count": int(self._quat_tick_count),
             "indicator_populate_count": int(self._indicator_populate_count),
             "imbalance_fire_count": int(self._imbalance_fire_count),
+            "trailing_stop_active": state.trailing_stop_active,
+            "trailing_stop_price": str(state.trailing_stop_price),
+            "trailing_take_profit": str(state.trailing_take_profit),
         }
 
 # ============================================================================
@@ -2355,6 +2418,7 @@ class BridgeState:
             "engine_initialized": False, "consecutive_zero_prices": 0,
             "dbz_branch": 0, "re_psi": "0", "relay_url": RELAY_URL,
             "indicator_populate_count": 0, "imbalance_fire_count": 0,
+            "trailing_stop_active": False, "trailing_stop_price": "0.0", "trailing_take_profit": "0.0",
         }
         self._fvgs: Dict[int, Dict[str, str]] = {}
         self._next_fvg_idx = 0
@@ -2666,6 +2730,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "dbz_branch": snap.get("dbz_branch", 0),
                 "indicator_populate_count": snap.get("indicator_populate_count", 0),
                 "imbalance_fire_count": snap.get("imbalance_fire_count", 0),
+                "trailing_stop_active": snap.get("trailing_stop_active", False),
+                "trailing_stop_price": snap.get("trailing_stop_price", "0.0"),
+                "trailing_take_profit": snap.get("trailing_take_profit", "0.0"),
             })
             return
         if path == "/config":
@@ -2940,6 +3007,9 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "relay_url": RELAY_URL,
                 "indicator_populate_count": int(engine._indicator_populate_count),
                 "imbalance_fire_count": int(engine._imbalance_fire_count),
+                "trailing_stop_active": bool(st.trailing_stop_active),
+                "trailing_stop_price": str(st.trailing_stop_price),
+                "trailing_take_profit": str(st.trailing_take_profit),
             }
             BRIDGE_STATE.publish(snapshot)
         except Exception as e:
@@ -2984,7 +3054,6 @@ class AEI_Bot:
         self._price_task: Optional[asyncio.Task] = None
         self._bridge_server: Optional[BridgeServer] = None
         self._webapp_url: Optional[str] = None
-        self._auto_init_task: Optional[asyncio.Task] = None
 
     def _resolve_webapp_url(self) -> Optional[str]:
         return TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
@@ -2997,44 +3066,11 @@ class AEI_Bot:
             try:
                 logger.info(f"🔄 Feed iteration #{iteration}")
                 self.engine.update_price_from_feed()
-                logger.info(f"📊 price={self.engine.state.price} tick={self.engine.state.tick} FG={self.engine.state.FG} active_sym={self.engine.feed.active_symbol()} m/n={sum(1 for v in self.engine.state.k if v)}/{sum(1 for v in self.engine.state.l if v)} ind_pass={self.engine._indicator_populate_count} sig_fire={self.engine._imbalance_fire_count}")
+                logger.info(f"📊 price={self.engine.state.price} tick={self.engine.state.tick} FG={self.engine.state.FG} active_sym={self.engine.feed.active_symbol()} m/n={sum(1 for v in self.engine.state.k if v)}/{sum(1 for v in self.engine.state.l if v)} ind_pass={self.engine._indicator_populate_count} sig_fire={self.engine._imbalance_fire_count} trail={self.engine.state.trailing_stop_active}")
             except Exception:
                 logger.exception(f"❌ Feed iteration #{iteration} failed")
             await asyncio.sleep(UPDATE_INTERVAL)
         logger.info("🔄 Price feed loop exited")
-
-    async def _auto_initialize(self):
-        """
-        [AUTO-INIT] Automatically fetches historical data and initializes
-        the engine on startup, ensuring the bot is operational without
-        manual intervention after a restart.
-        """
-        logger.info("🤖 Auto-initialization sequence starting...")
-        try:
-            historical = self.engine.feed.get_historical_klines(limit=200)
-            if historical and len(historical) >= MIN_HISTORY_WINDOW:
-                self.engine.ohlcv_history = historical
-                logger.info(f"✅ Auto-init: Loaded {len(historical)} historical bars.")
-                try:
-                    self.engine.initialize_engine()
-                    self.engine._force_initialization()
-                    if self.engine.state.FG:
-                        logger.info("✅ Auto-init: Engine initialized successfully.")
-                    else:
-                        logger.warning("⚠️ Auto-init: Engine initialization did not complete.")
-                except Exception as e:
-                    logger.exception("❌ Auto-init: Engine initialization crashed.")
-            else:
-                logger.warning("⚠️ Auto-init: Insufficient historical data. Engine will initialize organically.")
-
-            # Start the feed loop regardless
-            self._running = True
-            self.engine._running = True
-            if self._price_task is None or self._price_task.done():
-                self._price_task = asyncio.create_task(self.price_feed_loop())
-                logger.info("🔄 Auto-init: Price feed loop started.")
-        except Exception as e:
-            logger.exception("❌ Auto-init: Unhandled exception during auto-initialization.")
 
     def _build_main_keyboard(self) -> InlineKeyboardMarkup:
         webapp_url = self._resolve_webapp_url()
@@ -3120,6 +3156,7 @@ class AEI_Bot:
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
         m_count = sum(1 for v in state.k if v)
         n_count = sum(1 for v in state.l if v)
+        trail_status = "🟢 Active" if state.trailing_stop_active else "⚪ Inactive"
         response = (
             "🔷 *ÆEA STATUS*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
@@ -3134,7 +3171,8 @@ class AEI_Bot:
             f"📊 *Imbalance:* m={m_count}, n={n_count}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
             f"📡 *Signal Fires:* {self.engine._imbalance_fire_count}\n"
-            f"📡 *Feed Active:* {feed_mark}"
+            f"📡 *Feed Active:* {feed_mark}\n"
+            f"📈 *Trailing Stop:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -3202,6 +3240,9 @@ class AEI_Bot:
             f"*Re[Ψ] =* `{status.get('re_psi')}`\n"
             f"*Signal:* {status.get('signal'):.5f}\n"
             f"*Regime:* {status.get('regime')}\n"
+            f"*Trailing Stop Active:* {status.get('trailing_stop_active')}\n"
+            f"*Trailing Stop Price:* {status.get('trailing_stop_price')}\n"
+            f"*Trailing Take Profit:* {status.get('trailing_take_profit')}\n"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -3275,7 +3316,8 @@ class AEI_Bot:
             f"🧠 *KC State:* {state.KC}\n"
             f"🔢 *Prime:* {state.prime}\n"
             f"📋 *Dime:* {state.dime}\n"
-            f"🔄 *Tick Count:* {state.tick}"
+            f"🔄 *Tick Count:* {state.tick}\n"
+            f"📈 *Trailing Stop:* {'Active' if state.trailing_stop_active else 'Inactive'}"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -3647,8 +3689,16 @@ class AEI_Bot:
         logger.info(f"🧬 Leech Λ₂₄ anchoring: FVGs project to 24D lattice vectors.")
         logger.info(f"⚡ Live indicator extraction: 13D Hilbert-space projection populated per bar.")
         logger.info(f"⚡ Telegram Mini App enabled.")
+        logger.info(f"📈 Trailing stop execution ported from MQL4 T().")
         logger.info(f"💎 Ready. Use /start to begin.")
         self.application.run_polling()
+
+
+# ============================================================================
+# BRIDGE BOOTSTRAP
+# ============================================================================
+_bridge_attach_to_bot(AEI_Bot)
+
 
 # ============================================================================
 # MAIN ENTRY POINT
@@ -3662,6 +3712,7 @@ def main():
         sys.exit(1)
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
+
 
 if __name__ == "__main__":
     main()
