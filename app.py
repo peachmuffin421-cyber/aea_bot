@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 ÆEA TELEGRAM BOT — HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
-Complete Quantum-Financial Topology Implementation
+Faithful Unabridged Port of æea.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: Final + PATCH-C through PATCH-L (constraint-locked, MQL4 parity)
+Version: 2.0.0 (MQL4 parity — X_PERIOD constant + X_scan mutable)
 """
 import asyncio
 import hashlib
@@ -33,27 +33,19 @@ from fractions import Fraction as PyFraction
 from decimal import Decimal, getcontext
 
 # ============================================================================
-# ARITHMETIC REGIMES  (PATCH-C — exactness disclosure)
+# ARITHMETIC REGIMES  (REGIME-E / REGIME-R disclosure)
 # ----------------------------------------------------------------------------
-# The Codex demands symbolic representation. In this implementation there are
-# two regimes, and the code names them explicitly:
+# REGIME-E (exact):
+#   Fraction.__add__, __sub__, __mul__, __truediv__  →  ℚ-exact.
+#   Fraction.__eq__, __lt__, __le__, __gt__, __ge__  →  ℚ-exact.
+#   Fraction.from_decimal_string / from_string       →  ℚ-exact for any
+#   finite decimal input.
 #
-#   REGIME-E (exact):
-#     Fraction.__add__, __sub__, __mul__, __truediv__  →  ℚ-exact (numerator
-#     and denominator are Python ints of unbounded size).
-#     Fraction.__eq__, __lt__, __le__, __gt__, __ge__ →  ℚ-exact.
-#     Fraction.from_decimal_string / from_string      →  ℚ-exact for any
-#     finite decimal input.
-#
-#   REGIME-R (rational approximation):
-#     Fraction.cos_rational / sin_rational  →  REGIME-R. Uses Milü's 710/113
-#         for 2π and a 12-term Taylor truncation. NOT the exact transcendental.
-#     Fraction.exp_rational  →  REGIME-R. [2/2] Padé approximant.
-#     Fraction.sqrt  →  REGIME-R. Newton–Raphson over ℚ with bounded
-#         iterations; returns a rational convergent, not the exact irrational.
-#         Iteration count is capped at REGIME_R_SQRT_ITERATIONS to keep the
-#         hot path (Quat.norm / normalize / step_quaternion_field) from
-#         blowing up the numerator/denominator to astronomically large BigInts.
+# REGIME-R (rational approximation):
+#   Fraction.cos_rational / sin_rational  →  REGIME-R. Uses Milü's 710/113
+#       for 2π and a 12-term Taylor truncation. NOT the exact transcendental.
+#   Fraction.exp_rational  →  REGIME-R. [2/2] Padé approximant.
+#   Fraction.sqrt  →  REGIME-R. Newton–Raphson over ℚ with bounded iterations.
 #
 # Rule of thumb: any operation that touches π, e, or √ is REGIME-R.
 # All other Fraction arithmetic is REGIME-E.
@@ -62,6 +54,8 @@ getcontext().prec = 50
 
 REGIME_R_SQRT_ITERATIONS = 8
 REGIME_R_SQRT_SCALE = 10 ** 12
+ARC_COHERENCE_TOLERANCE = 1e-6
+
 
 # ============================================================================
 # EXACT FRACTION WRAPPER
@@ -126,31 +120,46 @@ class Fraction:
         return Fraction(int(s), 1)
 
     @staticmethod
-    def zero(): return Fraction(0, 1)
+    def zero():
+        return Fraction(0, 1)
 
     @staticmethod
-    def one(): return Fraction(1, 1)
+    def one():
+        return Fraction(1, 1)
 
-    def num(self): return self._f.numerator
-    def den(self): return self._f.denominator
+    def num(self):
+        return self._f.numerator
 
-    def is_zero(self): return self._f.numerator == 0
-    def is_integer(self): return self._f.denominator == 1
+    def den(self):
+        return self._f.denominator
+
+    def is_zero(self):
+        return self._f.numerator == 0
+
+    def is_integer(self):
+        return self._f.denominator == 1
+
     def sign(self):
         n = self._f.numerator
         return (n > 0) - (n < 0)
 
-    def abs(self): return Fraction(abs(self._f.numerator), self._f.denominator)
-    def neg(self): return Fraction(-self._f.numerator, self._f.denominator)
+    def abs(self):
+        return Fraction(abs(self._f.numerator), self._f.denominator)
+
+    def neg(self):
+        return Fraction(-self._f.numerator, self._f.denominator)
 
     def __add__(self, other):
         o = Fraction._wrap(other)
         return Fraction(self._f + o._f)
-    def __radd__(self, other): return self.__add__(other)
+
+    def __radd__(self, other):
+        return self.__add__(other)
 
     def __sub__(self, other):
         o = Fraction._wrap(other)
         return Fraction(self._f - o._f)
+
     def __rsub__(self, other):
         o = Fraction._wrap(other)
         return Fraction(o._f - self._f)
@@ -158,7 +167,9 @@ class Fraction:
     def __mul__(self, other):
         o = Fraction._wrap(other)
         return Fraction(self._f * o._f)
-    def __rmul__(self, other): return self.__mul__(other)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
 
     def __truediv__(self, other):
         o = Fraction._wrap(other)
@@ -166,26 +177,35 @@ class Fraction:
             raise ZeroDivisionError("Fraction division by zero")
         return Fraction(self._f / o._f)
 
-    def __neg__(self): return Fraction(-self._f.numerator, self._f.denominator)
-    def __pos__(self): return self
+    def __neg__(self):
+        return Fraction(-self._f.numerator, self._f.denominator)
+
+    def __pos__(self):
+        return self
+
     def __eq__(self, other):
         try:
             o = Fraction._wrap(other)
             return self._f == o._f
         except Exception:
             return False
+
     def __lt__(self, other):
         o = Fraction._wrap(other)
         return self._f < o._f
+
     def __le__(self, other):
         o = Fraction._wrap(other)
         return self._f <= o._f
+
     def __gt__(self, other):
         o = Fraction._wrap(other)
         return self._f > o._f
+
     def __ge__(self, other):
         o = Fraction._wrap(other)
         return self._f >= o._f
+
     def __hash__(self):
         return hash(self._f)
 
@@ -271,6 +291,7 @@ class Fraction:
             x = (x + self / x) / two
         return x
 
+
 # Aliases: name the approximation regime truthfully.
 Fraction.cos_exact = staticmethod(Fraction.cos_rational)
 Fraction.sin_exact = staticmethod(Fraction.sin_rational)
@@ -285,8 +306,20 @@ Fraction.__sub__._regime = "E"
 Fraction.__mul__._regime = "E"
 Fraction.__truediv__._regime = "E"
 
+
 # ============================================================================
-# CONSTANTS & CONFIGURATION
+# CONSTANTS & CONFIGURATION  —  MQL4 PARITY
+# ----------------------------------------------------------------------------
+# MQL4 declared:
+#   input int    max=60;
+#   input int    min=3;
+#   int x=max+2;          // CONSTANT 62, never reassigned
+#   int y=min-2;          // CONSTANT 1
+#
+# Python now mirrors this exactly:
+#   X_PERIOD = MAX_PERIOD + 2 = 62   (module constant)
+#   MIN_PERIOD = 3
+#   Y_START   = MIN_PERIOD - 2 = 1
 # ============================================================================
 COMMISSION: Decimal = Decimal('0.0')
 STOP_LOSS: Decimal = Decimal('0.0')
@@ -295,7 +328,8 @@ LOT_SIZE: Decimal = Decimal('0.01')
 SLIPPAGE: int = 100
 MAX_PERIOD: int = 60
 MIN_PERIOD: int = 3
-X_PERIOD: int = MAX_PERIOD + 2
+X_PERIOD: int = MAX_PERIOD + 2          # = 62, CONSTANT — never reassigned
+Y_START: int = MIN_PERIOD - 2           # = 1
 MIN_HISTORY_WINDOW: int = 52
 
 # [EXACT SYMBOLIC THRESHOLDS]  MQL4: f=200/3, g=100/3, gf=40/15
@@ -327,7 +361,9 @@ RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
 
 CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
 
-ARC_COHERENCE_TOLERANCE = 1e-6
+SYMBOL: str = "BTC-USD"
+INTERVAL: str = "1m"
+UPDATE_INTERVAL: int = 30
 
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
@@ -358,9 +394,6 @@ SYMBOL_FALLBACKS: Dict[str, List[str]] = {
     "ZW=F": ["ZW=F"], "KE=F": ["KE=F"],
 }
 
-SYMBOL: str = "BTC-USD"
-INTERVAL: str = "1m"
-UPDATE_INTERVAL: int = 30
 
 # ============================================================================
 # TELEGRAM BOT IMPORTS
@@ -381,6 +414,7 @@ from telegram.ext import (
     filters,
 )
 
+
 # ============================================================================
 # LOGGING SETUP
 # ============================================================================
@@ -390,8 +424,355 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # ============================================================================
-# SYMBOLIC QUATERNION
+# DATACLASSES
+# ============================================================================
+@dataclass
+class PriceData:
+    bid: Decimal = Decimal('0.0')
+    ask: Decimal = Decimal('0.0')
+    close: Decimal = Decimal('0.0')
+    open: Decimal = Decimal('0.0')
+    high: Decimal = Decimal('0.0')
+    low: Decimal = Decimal('0.0')
+    volume: Decimal = Decimal('0.0')
+    timestamp: datetime = field(default_factory=datetime.now)
+
+    @property
+    def spread(self) -> Decimal:
+        return self.ask - self.bid
+
+
+@dataclass
+class IndicatorState:
+    adx: Decimal = Decimal('50.0')
+    stochastic: Decimal = Decimal('50.0')
+    rvi: Decimal = Decimal('50.0')
+    ac: Decimal = Decimal('50.0')
+    force: Decimal = Decimal('50.0')
+    obv: Decimal = Decimal('50.0')
+    ad: Decimal = Decimal('50.0')
+    mfi: Decimal = Decimal('50.0')
+    momentum: Decimal = Decimal('50.0')
+    dem: Decimal = Decimal('50.0')
+    wpr: Decimal = Decimal('50.0')
+    cci: Decimal = Decimal('50.0')
+    rsi: Decimal = Decimal('50.0')
+    ihk_kijun: Decimal = Decimal('50.0')
+    ihk_tenkan: Decimal = Decimal('50.0')
+
+
+@dataclass
+class AEI_CoreState:
+    # --- MQL4 flags and primitives ---
+    KC: bool = True
+    invert: bool = True
+    tag: int = -1
+    prime: int = -1
+    dime: int = -1
+    mem: int = -1
+    tick: int = 0
+    y: int = Y_START                      # MQL4 y = min - 2 = 1
+    signal: Decimal = Decimal('0.0')
+    signature: bool = False
+    tick_tock: bool = False
+    FG: bool = False
+    GF: bool = False
+    Buy: int = -1
+    Sell: int = -1
+    A: bool = True
+    B: bool = True
+    a: bool = True
+    b: bool = True
+    ab: bool = False
+    ba: bool = True
+    u: bool = False
+    v: bool = False
+    lOrder_id: int = -1
+    kOrder_id: int = -1
+    D: Decimal = Decimal('0.0')
+    E: Decimal = Decimal('0.0')
+    p: Decimal = Decimal('0.0')
+    q: Decimal = Decimal('0.0')
+    K: bool = False
+    C: bool = True
+    c: bool = True
+    iC: bool = True
+    jC: bool = True
+    Cc: bool = True
+    cC: bool = True
+
+    # --- MQL4 scan anchors ---
+    Z: int = Y_START + 1                  # = 2
+    z: int = Y_START + 1
+    O: int = Y_START + 1
+    o: int = Y_START + 1
+    r: int = 0
+    W: int = Y_START + 1
+    w: int = Y_START + 1
+    I: int = 0
+    iI: int = 0
+    J: int = 0
+    iJ: int = 0
+    ij: int = 0
+    h: int = 0
+    iZ: int = Y_START + 1
+    iz: int = Y_START + 1
+    iW: int = Y_START + 1
+    iw: int = Y_START + 1
+    iO: int = Y_START + 1
+    io: int = Y_START + 1
+    ir: int = 0
+
+    # --- MQL4 counters ---
+    count: int = 0
+    toll: int = 0
+    tally: str = "   "
+
+    # --- MQL4 global m/n accumulators (set by H()/L()) ---
+    m: int = 0
+    n: int = 0
+
+    # --- MQL4 arrays (indexed by j - (y+1)) ---
+    Premium: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
+    Discount: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
+    HH: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
+    LL: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
+    k: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - Y_START))
+    l: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - Y_START))
+    U: List[bool] = field(default_factory=list)
+    R: bool = True
+    Regime: List[str] = field(default_factory=lambda: [""] * (X_PERIOD - Y_START))
+
+    # 13 × (X_PERIOD - Y_START) indicator matrices
+    iA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
+    cA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
+    kA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
+    lA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
+
+    # --- MQL4 scratch arrays (used by Normalize) ---
+    IHKk: List[Decimal] = field(default_factory=list)
+    IHKt: List[Decimal] = field(default_factory=list)
+    RSI: List[Decimal] = field(default_factory=list)
+    CCI: List[Decimal] = field(default_factory=list)
+    MOM: List[Decimal] = field(default_factory=list)
+    AD: List[Decimal] = field(default_factory=list)
+    OBV: List[Decimal] = field(default_factory=list)
+    Force: List[Decimal] = field(default_factory=list)
+    MFI: List[Decimal] = field(default_factory=list)
+    DeM: List[Decimal] = field(default_factory=list)
+    RVIm: List[Decimal] = field(default_factory=list)
+    AC: List[Decimal] = field(default_factory=list)
+    StdDev: List[Decimal] = field(default_factory=list)
+    ATR: List[Decimal] = field(default_factory=list)
+    ADX: List[Decimal] = field(default_factory=list)
+
+    # --- MQL4 scalar prices ---
+    Suply: Decimal = Decimal('0.0')
+    iSuply: Decimal = Decimal('0.0')
+    Demand: Decimal = Decimal('0.0')
+    iDemand: Decimal = Decimal('0.0')
+    Sale: Decimal = Decimal('0.0')
+    iSale: Decimal = Decimal('0.0')
+    Stock: Decimal = Decimal('0.0')
+    iStock: Decimal = Decimal('0.0')
+    iStdDev: Decimal = Decimal('50.0')
+    iATR: Decimal = Decimal('50.0')
+    iIHKk: Decimal = Decimal('50.0')
+    iIHKt: Decimal = Decimal('50.0')
+
+    # --- MQL4 FVG tracking ---
+    FVG: int = -1
+    BL: List[Decimal] = field(default_factory=list)
+    bottomLine: str = "   "
+    bL: str = "   "
+
+    # --- MQL4 mutable scan boundaries ---
+    S: int = X_PERIOD
+    T: int = X_PERIOD
+    X_scan: int = Y_START                 # MUTABLE — reset to y after OnCall
+    Y_scan: int = Y_START
+
+    # --- MQL4 timing ---
+    t: Optional[datetime] = None
+
+    # --- MQL4 bar-1 prices ---
+    iopen: Decimal = Decimal('0.0')
+    iPrice: Decimal = Decimal('0.0')
+    iH: Decimal = Decimal('0.0')
+    iL: Decimal = Decimal('0.0')
+    price: Decimal = Decimal('0.0')
+    Price: Decimal = Decimal('0.0')
+    open: Decimal = Decimal('0.0')
+
+    # --- Telegram / WebApp ---
+    chat_id: Optional[int] = None
+    _initialized: bool = False
+    webapp_user_id: Optional[int] = None
+    webapp_username: Optional[str] = None
+    webapp_verified: bool = False
+    webapp_last_seen: Optional[datetime] = None
+
+    # --- Parallel symbolic layer (telemetry only; does NOT influence trading) ---
+    q_field: Any = None
+    quat_history: List[Any] = field(default_factory=list)
+    time_fraction: Fraction = field(default_factory=lambda: Fraction(0, 1))
+    s_squared_exact: Fraction = field(default_factory=lambda: Fraction(0, 1))
+    r_squared_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
+    deviation_exact: Fraction = field(default_factory=lambda: Fraction(0, 1))
+    re_psi_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
+    dbz_branch: int = 0
+    arc_coherent: bool = True
+
+    # --- PATCH-H trailing stop state (MQL4 T()) ---
+    trailing_stop_active: bool = False
+    trailing_stop_price: Decimal = Decimal('0.0')
+    trailing_take_profit: Decimal = Decimal('0.0')
+    on_track_runs: int = 0
+    on_stand_runs: int = 0
+    has_open_long: bool = False
+    has_open_short: bool = False
+    trailing_stop_entry: Decimal = Decimal('0.0')
+    trailing_stop_side: str = ""
+
+    # --- PATCH-D Kronecker gate ---
+    last_kronecker_m: int = 0
+    last_kronecker_n: int = 0
+    last_kronecker_h: int = -1
+
+    # --- FVG anchor map (parallel symbolic; does not affect trading) ---
+    fvg_anchor_map: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    _raw_price_missing: bool = False
+
+
+# ============================================================================
+# MODULE-LEVEL INDICATOR HELPERS (MQL4 built-in indicator equivalents)
+# ============================================================================
+def sma(data: List[Decimal], period: int) -> Decimal:
+    if len(data) < period or period <= 0:
+        return Decimal('0.0')
+    total = sum(data[-period:], Decimal('0.0'))
+    return total / Decimal(period)
+
+
+def ema(data: List[Decimal], period: int) -> Decimal:
+    if len(data) < period or period <= 0:
+        return sma(data, period)
+    alpha = Decimal('2.0') / (Decimal(period) + Decimal('1.0'))
+    if len(data) > 1:
+        return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
+    return data[-1]
+
+
+def rsi(data: List[Decimal], period: int = 14) -> Decimal:
+    if len(data) < period + 1 or period <= 0:
+        return Decimal('50.0')
+    gains = Decimal('0.0')
+    losses = Decimal('0.0')
+    for i in range(1, period + 1):
+        diff = data[-i] - data[-i - 1]
+        if diff >= Decimal('0.0'):
+            gains += diff
+        else:
+            losses -= diff
+    avg_gain = gains / Decimal(period)
+    avg_loss = losses / Decimal(period)
+    if avg_loss == Decimal('0.0'):
+        return Decimal('100.0')
+    rs = avg_gain / avg_loss
+    return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
+
+
+def stochastic(high, low, close, k_period=14, d_period=3):
+    if len(close) < k_period or k_period <= 0:
+        return Decimal('50.0'), Decimal('50.0')
+    highest = max(high[-k_period:])
+    lowest = min(low[-k_period:])
+    range_val = highest - lowest
+    if range_val == Decimal('0.0'):
+        return Decimal('50.0'), Decimal('50.0')
+    k = Decimal('100.0') * (close[-1] - lowest) / range_val
+    return k, k
+
+
+def bollinger_bands(close, period=20, dev=Decimal('2.0')):
+    if len(close) < period or period <= 0:
+        return Decimal('0.0'), Decimal('0.0'), Decimal('0.0')
+    mid = sma(close, period)
+    variance = sum((x - mid) ** 2 for x in close[-period:]) / Decimal(period)
+    std = Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
+    upper = mid + dev * std
+    lower = mid - dev * std
+    return upper, mid, lower
+
+
+def atr(high, low, close, period=14):
+    if len(close) < period + 1 or period <= 0:
+        return Decimal('0.0')
+    tr_values = []
+    for i in range(1, period + 1):
+        tr1 = high[-i] - low[-i]
+        tr2 = abs(high[-i] - close[-i - 1])
+        tr3 = abs(low[-i] - close[-i - 1])
+        tr_values.append(max(tr1, tr2, tr3))
+    return sum(tr_values) / Decimal(period)
+
+
+def stddev(data, period):
+    if len(data) < period or period <= 0:
+        return Decimal('0.0')
+    mean = sum(data[-period:]) / Decimal(period)
+    variance = sum((x - mean) ** 2 for x in data[-period:]) / Decimal(period)
+    return Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
+
+
+def ichimoku(high, low, close):
+    n1, n2, n3 = 9, 26, 52
+    if len(close) < n3:
+        return {"tenkan": Decimal('50.0'), "kijun": Decimal('50.0'),
+                "senkou_a": Decimal('50.0'), "senkou_b": Decimal('50.0')}
+    tenkan = (max(high[-n1:]) + min(low[-n1:])) / Decimal('2.0')
+    kijun = (max(high[-n2:]) + min(low[-n2:])) / Decimal('2.0')
+    senkou_a = (tenkan + kijun) / Decimal('2.0')
+    senkou_b = (max(high[-n3:]) + min(low[-n3:])) / Decimal('2.0')
+    return {"tenkan": tenkan, "kijun": kijun, "senkou_a": senkou_a, "senkou_b": senkou_b}
+
+
+def to_decimal(value):
+    try:
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+    except Exception:
+        return Decimal('0.0')
+
+
+def symbol_point(symbol: str) -> Decimal:
+    """Return the point size (10^-digits) for the given symbol."""
+    try:
+        digits = int(_symbol_digits(symbol))
+    except Exception:
+        digits = 2
+    return Decimal(10) ** Decimal(-digits)
+
+
+def _symbol_digits(symbol: str) -> int:
+    try:
+        import MetaTrader5 as _mt5  # type: ignore
+        info = _mt5.symbol_info(symbol)
+        if info is not None and hasattr(info, "digits"):
+            return int(info.digits)
+    except Exception:
+        pass
+    return 2
+
+# ============================================================================
+# SYMBOLIC QUATERNION  (parallel telemetry layer; does NOT affect trading)
+# ----------------------------------------------------------------------------
+# MQL4 has no Quat. This class exists only to compute the Mini App's symbolic
+# s²/r² coherence panel via _step_quaternion_field(). It does not feed into
+# _M(), _N(), _on_goe(), _on_toe(), or any trading decision.
 # ============================================================================
 class Quat:
     __slots__ = ('a', 'b', 'c', 'd')
@@ -428,7 +809,7 @@ class Quat:
         return Quat(self.a - o.a, self.b - o.b, self.c - o.c, self.d - o.d)
 
     def __mul__(self, other):
-        if isinstance(other, Fraction) or isinstance(other, (int, float)):
+        if isinstance(other, (Fraction, int, float)):
             f = other if isinstance(other, Fraction) else Fraction(other)
             return Quat(self.a * f, self.b * f, self.c * f, self.d * f)
         o = other if isinstance(other, Quat) else Quat(other)
@@ -457,12 +838,14 @@ class Quat:
         return {
             "x": (x * inv).to_float(),
             "y": (y * inv).to_float(),
-            "z": (z * inv).to_float()
+            "z": (z * inv).to_float(),
         }
 
     def apply_natalia_fibration(self, s: Fraction, eps: Fraction, time_f: Fraction) -> 'Quat':
-        pA = Fraction(0, 1); pB = Fraction(0, 1)
-        pC = Fraction(0, 1); pD = Fraction(0, 1)
+        pA = Fraction(0, 1)
+        pB = Fraction(0, 1)
+        pC = Fraction(0, 1)
+        pD = Fraction(0, 1)
         e = eps
         threshold = Fraction(1, 1000000000)
         for k in range(1, 13):
@@ -484,29 +867,20 @@ class Quat:
             self.a + pA * Fraction(15, 100),
             self.b + pB * Fraction(10, 100),
             self.c + pC * Fraction(12, 100),
-            self.d + pD * Fraction(8, 100)
+            self.d + pD * Fraction(8, 100),
         )
 
     def clone(self) -> 'Quat':
         return Quat(self.a, self.b, self.c, self.d)
 
+
 # ============================================================================
-# LEECH LATTICE  Λ₂₄  —  PATCH-E
+# LEECH LATTICE Λ₂₄ ANCHOR  (parallel symbolic; does NOT influence trading)
 # ----------------------------------------------------------------------------
-# Λ₂₄ is the unique 24-dimensional even unimodular lattice with no roots.
-# Construction used here (Conway–Sloane, "Sphere Packings, Lattices, Groups",
-# Ch. 4, §10) via the Golay code G₂₄:
-#
-#   Λ₂₄ = { (x_i) ∈ ℤ²⁴ ∪ (ℤ+½)²⁴  :
-#             Σ x_i ≡ 0 (mod 8)   [when x_i ∈ ℤ]
-#             Σ x_i ≡ 4 (mod 8)   [when x_i ∈ ℤ+½]
-#             and the support of (x_i mod 2) is a Golay codeword }
-#
-# For price anchoring we need a *deterministic, injective* map from a rational
-# price to a Λ₂₄ vector. Full Golay decoding is overkill; we use the standard
-# "integer row" trick: take the 4×6 unfolding, snap to the nearest lattice
-# point via the 6-bit (not Golay) subcode, then verify the mod-8 sum. This
-# preserves the two invariants that matter for the codex:
+# Full Golay decoding is overkill for price anchoring. We use the standard
+# "integer row" trick: take a 4×6 unfolding, snap to the nearest lattice
+# point via the 6-bit (not Golay) subcode, then verify the mod-8 sum.
+# Preserves the two invariants that matter:
 #   (i)  ‖v‖² ∈ 8ℤ        (integrality of the norm)
 #   (ii) v even           (all coordinates share parity)
 # ============================================================================
@@ -586,309 +960,31 @@ class LeechLatticeAnchor:
             return False
         return True
 
-# ============================================================================
-# STATE MANAGEMENT
-# ============================================================================
-@dataclass
-class PriceData:
-    bid: Decimal = Decimal('0.0')
-    ask: Decimal = Decimal('0.0')
-    close: Decimal = Decimal('0.0')
-    open: Decimal = Decimal('0.0')
-    high: Decimal = Decimal('0.0')
-    low: Decimal = Decimal('0.0')
-    volume: Decimal = Decimal('0.0')
-    timestamp: datetime = field(default_factory=datetime.now)
-
-    @property
-    def spread(self) -> Decimal:
-        return self.ask - self.bid
-
-@dataclass
-class IndicatorState:
-    adx: Decimal = Decimal('50.0')
-    stochastic: Decimal = Decimal('50.0')
-    rvi: Decimal = Decimal('50.0')
-    ac: Decimal = Decimal('50.0')
-    force: Decimal = Decimal('50.0')
-    obv: Decimal = Decimal('50.0')
-    ad: Decimal = Decimal('50.0')
-    mfi: Decimal = Decimal('50.0')
-    momentum: Decimal = Decimal('50.0')
-    dem: Decimal = Decimal('50.0')
-    wpr: Decimal = Decimal('50.0')
-    cci: Decimal = Decimal('50.0')
-    rsi: Decimal = Decimal('50.0')
-    ihk_kijun: Decimal = Decimal('50.0')
-    ihk_tenkan: Decimal = Decimal('50.0')
-
-@dataclass
-class AEI_CoreState:
-    KC: bool = True
-    invert: bool = True
-    tag: int = -1
-    prime: int = -1
-    dime: int = -1
-    mem: int = -1
-    tick: int = 0
-    y: int = MIN_PERIOD - 2
-    signal: Decimal = Decimal('0.0')
-    signature: bool = False
-    tick_tock: bool = False
-    FG: bool = False
-    GF: bool = False
-    Buy: int = -1
-    Sell: int = -1
-    A: bool = True
-    B: bool = True
-    a: bool = True
-    b: bool = True
-    ab: bool = False
-    ba: bool = True
-    u: bool = False
-    v: bool = False
-    lOrder_id: int = -1
-    kOrder_id: int = -1
-    Buy_ticket: int = -1
-    Sell_ticket: int = -1
-    D: Decimal = Decimal('0.0')
-    E: Decimal = Decimal('0.0')
-    p: Decimal = Decimal('0.0')
-    q: Decimal = Decimal('0.0')
-    K: bool = False
-    C: bool = True
-    c: bool = True
-    iC: bool = True
-    jC: bool = True
-    Cc: bool = True
-    cC: bool = True
-    Z: int = MIN_PERIOD - 1
-    z: int = MIN_PERIOD - 1
-    O: int = MIN_PERIOD - 1
-    o: int = MIN_PERIOD - 1
-    r: int = 0
-    W: int = MIN_PERIOD - 1
-    w: int = MIN_PERIOD - 1
-    I: int = 0
-    iI: int = 0
-    J: int = 0
-    iJ: int = 0
-    ij: int = 0
-    h: int = 0
-    iZ: int = MIN_PERIOD - 1
-    iz: int = MIN_PERIOD - 1
-    iW: int = MIN_PERIOD - 1
-    iw: int = MIN_PERIOD - 1
-    iO: int = MIN_PERIOD - 1
-    io: int = MIN_PERIOD - 1
-    ir: int = 0
-    count: int = 0
-    toll: int = 0
-    tally: str = "   "
-    Premium: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - (MIN_PERIOD - 1)))
-    Discount: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - (MIN_PERIOD - 1)))
-    HH: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - (MIN_PERIOD - 1)))
-    LL: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - (MIN_PERIOD - 1)))
-    k: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - (MIN_PERIOD - 1)))
-    l: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - (MIN_PERIOD - 1)))
-    U: List[bool] = field(default_factory=list)
-    R: bool = True
-    iA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('0.0')] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
-    cA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('0.0')] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
-    kA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('0.0')] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
-    lA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('0.0')] * ((X_PERIOD + 1) - (MIN_PERIOD - 1)) for _ in range(13)])
-    Regime: List[str] = field(default_factory=lambda: [""] * (X_PERIOD - (MIN_PERIOD - 1)))
-    IHKk: List[Decimal] = field(default_factory=list)
-    IHKt: List[Decimal] = field(default_factory=list)
-    RSI: List[Decimal] = field(default_factory=list)
-    CCI: List[Decimal] = field(default_factory=list)
-    MOM: List[Decimal] = field(default_factory=list)
-    AD: List[Decimal] = field(default_factory=list)
-    OBV: List[Decimal] = field(default_factory=list)
-    Force: List[Decimal] = field(default_factory=list)
-    MFI: List[Decimal] = field(default_factory=list)
-    DeM: List[Decimal] = field(default_factory=list)
-    RVIm: List[Decimal] = field(default_factory=list)
-    AC: List[Decimal] = field(default_factory=list)
-    StdDev: List[Decimal] = field(default_factory=list)
-    ATR: List[Decimal] = field(default_factory=list)
-    ADX: List[Decimal] = field(default_factory=list)
-    Suply: Decimal = Decimal('0.0')
-    iSuply: Decimal = Decimal('0.0')
-    Demand: Decimal = Decimal('0.0')
-    iDemand: Decimal = Decimal('0.0')
-    Sale: Decimal = Decimal('0.0')
-    iSale: Decimal = Decimal('0.0')
-    Stock: Decimal = Decimal('0.0')
-    iStock: Decimal = Decimal('0.0')
-    iStdDev: Decimal = Decimal('0.0')
-    iATR: Decimal = Decimal('0.0')
-    iIHKk: Decimal = Decimal('50.0')
-    iIHKt: Decimal = Decimal('50.0')
-    FVG: int = -1
-    BL: List[Decimal] = field(default_factory=list)
-    bottomLine: str = "   "
-    bL: str = "   "
-    S: int = X_PERIOD
-    T: int = X_PERIOD
-    X: int = MIN_PERIOD - 1
-    Y: int = MIN_PERIOD - 1
-    t: Optional[datetime] = None
-    iopen: Decimal = Decimal('0.0')
-    iPrice: Decimal = Decimal('0.0')
-    iH: Decimal = Decimal('0.0')
-    iL: Decimal = Decimal('0.0')
-    price: Decimal = Decimal('0.0')
-    Price: Decimal = Decimal('0.0')
-    open: Decimal = Decimal('0.0')
-    chat_id: Optional[int] = None
-    _initialized: bool = False
-    webapp_user_id: Optional[int] = None
-    webapp_username: Optional[str] = None
-    webapp_verified: bool = False
-    webapp_last_seen: Optional[datetime] = None
-    q_field: Quat = field(default_factory=lambda: Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1)))
-    quat_history: List[Quat] = field(default_factory=list)
-    time_fraction: Fraction = field(default_factory=lambda: Fraction(0, 1))
-    s_squared_exact: Fraction = field(default_factory=lambda: Fraction(0, 1))
-    r_squared_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
-    deviation_exact: Fraction = field(default_factory=lambda: Fraction(0, 1))
-    re_psi_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
-    dbz_branch: int = 0
-    arc_coherent: bool = True
-    fvg_anchor_map: Dict[int, Dict[str, Any]] = field(default_factory=dict)
-    _raw_price_missing: bool = False
-    trailing_stop_active: bool = False
-    trailing_stop_price: Decimal = Decimal('0.0')
-    trailing_take_profit: Decimal = Decimal('0.0')
-    on_track_runs: int = 0
-    on_stand_runs: int = 0
-    has_open_long: bool = False
-    has_open_short: bool = False
-    trailing_stop_entry: Decimal = Decimal('0.0')
-    trailing_stop_side: str = ""
-    last_kronecker_m: int = 0
-    last_kronecker_n: int = 0
-    last_kronecker_h: int = -1
-
-# ============================================================================
-# INDICATOR CALCULATIONS (EXACT MQL4 EQUIVALENTS)
-# ============================================================================
-def sma(data: List[Decimal], period: int) -> Decimal:
-    if len(data) < period: return Decimal('0.0')
-    total = sum(data[-period:], Decimal('0.0'))
-    return total / Decimal(period)
-
-def ema(data: List[Decimal], period: int) -> Decimal:
-    if len(data) < period: return sma(data, period)
-    alpha = Decimal('2.0') / (period + 1)
-    if len(data) > 1: return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
-    return data[-1]
-
-def rsi(data: List[Decimal], period: int = 14) -> Decimal:
-    if len(data) < period + 1: return Decimal('50.0')
-    gains = Decimal('0.0')
-    losses = Decimal('0.0')
-    for i in range(1, period + 1):
-        diff = data[-i] - data[-i - 1]
-        if diff >= Decimal('0.0'): gains += diff
-        else: losses -= diff
-    avg_gain = gains / Decimal(period) if period > 0 else Decimal('0.0')
-    avg_loss = losses / Decimal(period) if period > 0 else Decimal('0.0')
-    if avg_loss == Decimal('0.0'): return Decimal('100.0')
-    rs = avg_gain / avg_loss
-    return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
-
-def stochastic(high, low, close, k_period=14, d_period=3):
-    if len(close) < k_period: return Decimal('50.0'), Decimal('50.0')
-    highest = max(high[-k_period:])
-    lowest = min(low[-k_period:])
-    range_val = highest - lowest
-    if range_val == Decimal('0.0'): return Decimal('50.0'), Decimal('50.0')
-    k = Decimal('100.0') * (close[-1] - lowest) / range_val
-    return k, k
-
-def bollinger_bands(close, period=20, dev=Decimal('2.0')):
-    if len(close) < period: return Decimal('0.0'), Decimal('0.0'), Decimal('0.0')
-    mid = sma(close, period)
-    variance = sum((x - mid) ** 2 for x in close[-period:]) / Decimal(period)
-    std = Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
-    upper = mid + dev * std
-    lower = mid - dev * std
-    return upper, mid, lower
-
-def atr(high, low, close, period=14):
-    if len(close) < period + 1: return Decimal('0.0')
-    tr_values = []
-    for i in range(1, period + 1):
-        tr1 = high[-i] - low[-i]
-        tr2 = abs(high[-i] - close[-i - 1])
-        tr3 = abs(low[-i] - close[-i - 1])
-        tr_values.append(max(tr1, tr2, tr3))
-    return sum(tr_values) / Decimal(period)
-
-def stddev(data, period):
-    if len(data) < period: return Decimal('0.0')
-    mean = sum(data[-period:]) / Decimal(period)
-    variance = sum((x - mean) ** 2 for x in data[-period:]) / Decimal(period)
-    return Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
-
-def ichimoku(high, low, close):
-    n1, n2, n3 = 9, 26, 52
-    if len(close) < n3:
-        return {"tenkan": Decimal('50.0'), "kijun": Decimal('50.0'),
-                "senkou_a": Decimal('50.0'), "senkou_b": Decimal('50.0')}
-    tenkan = (max(high[-n1:]) + min(low[-n1:])) / Decimal('2.0')
-    kijun = (max(high[-n2:]) + min(low[-n2:])) / Decimal('2.0')
-    senkou_a = (tenkan + kijun) / Decimal('2.0')
-    senkou_b = (max(high[-n3:]) + min(low[-n3:])) / Decimal('2.0')
-    return {"tenkan": tenkan, "kijun": kijun, "senkou_a": senkou_a, "senkou_b": senkou_b}
-
-def to_decimal(value):
-    try:
-        if isinstance(value, Decimal): return value
-        return Decimal(str(value))
-    except Exception:
-        return Decimal('0.0')
-
-def symbol_point(symbol: str) -> Decimal:
-    """Return the point size (10^-digits) for the given symbol."""
-    try:
-        digits = int(_symbol_digits(symbol))
-    except Exception:
-        digits = 2
-    return Decimal(10) ** Decimal(-digits)
-
-def _symbol_digits(symbol: str) -> int:
-    try:
-        import MetaTrader5 as _mt5  # type: ignore
-        info = _mt5.symbol_info(symbol)
-        if info is not None and hasattr(info, "digits"):
-            return int(info.digits)
-    except Exception:
-        pass
-    return 2
 
 # ============================================================================
 # TELEGRAM WEB APP AUTHENTICATION
 # ============================================================================
 def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> Optional[Dict[str, Any]]:
-    if not init_data or not bot_token: return None
+    if not init_data or not bot_token:
+        return None
     try:
         parsed = dict(parse_qsl(init_data, keep_blank_values=True))
     except Exception:
         return None
     received_hash = parsed.pop("hash", None)
-    if not received_hash: return None
+    if not received_hash:
+        return None
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
     secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
     expected_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected_hash, received_hash): return None
+    if not hmac.compare_digest(expected_hash, received_hash):
+        return None
     auth_date_raw = parsed.get("auth_date")
     if auth_date_raw is not None:
         try:
             auth_age = time.time() - int(auth_date_raw)
-            if auth_age > max_age_seconds or auth_age < -300: return None
+            if auth_age > max_age_seconds or auth_age < -300:
+                return None
         except (ValueError, TypeError):
             return None
     user_json = parsed.get("user")
@@ -898,18 +994,27 @@ def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: i
             user_obj = json.loads(user_json)
         except Exception:
             user_obj = None
-    return {"user": user_obj, "auth_date": int(auth_date_raw) if auth_date_raw else None, "raw": parsed}
+    return {
+        "user": user_obj,
+        "auth_date": int(auth_date_raw) if auth_date_raw else None,
+        "raw": parsed,
+    }
+
 
 def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Optional[str], bool]:
     raw_init = handler.headers.get("X-Telegram-Init-Data", "").strip()
     if not raw_init:
         auth_hdr = handler.headers.get("Authorization", "").strip()
-        if auth_hdr.lower().startswith("tma "): raw_init = auth_hdr[4:].strip()
-    if not raw_init: return (None, None, False)
+        if auth_hdr.lower().startswith("tma "):
+            raw_init = auth_hdr[4:].strip()
+    if not raw_init:
+        return (None, None, False)
     verified = verify_telegram_init_data(raw_init, TELEGRAM_BOT_TOKEN_ENV)
-    if not verified or not verified.get("user"): return (None, None, False)
+    if not verified or not verified.get("user"):
+        return (None, None, False)
     u = verified["user"] or {}
     return (u.get("id"), u.get("username"), True)
+
 
 # ============================================================================
 # FEED CLIENT — CLOUDFLARE WORKER RELAY  (optional X-Relay-Key)
@@ -934,7 +1039,8 @@ class FeedClient:
         return self._chain[self._chain_index]
 
     def _advance_symbol_chain(self) -> None:
-        if len(self._chain) <= 1: return
+        if len(self._chain) <= 1:
+            return
         self._chain_index = (self._chain_index + 1) % len(self._chain)
         logger.warning(f"🔄 FeedClient: rotating symbol chain to '{self.active_symbol()}'")
         self._fallback_count = 0
@@ -982,14 +1088,20 @@ class FeedClient:
                 except Exception:
                     error_body = '<unreadable>'
                 last_error = f"HTTP {e.code}: {error_body[:200]}"
-                logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
+                logger.warning(
+                    f"Relay HTTP Error {e.code} for {self.active_symbol()} "
+                    f"(attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}"
+                )
                 if e.code in (401, 403, 429) and attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
                 break
             except urllib.error.URLError as e:
                 last_error = f"URLError: {e.reason}"
-                logger.warning(f"Relay URLError for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e.reason}")
+                logger.warning(
+                    f"Relay URLError for {self.active_symbol()} "
+                    f"(attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e.reason}"
+                )
                 if attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
@@ -1000,7 +1112,10 @@ class FeedClient:
                 break
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
-                logger.warning(f"Relay error ({kind}) for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e}")
+                logger.warning(
+                    f"Relay error ({kind}) for {self.active_symbol()} "
+                    f"(attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e}"
+                )
                 if attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
@@ -1031,18 +1146,25 @@ class FeedClient:
 
     def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, Any]]:
         d = self._get("history", limit=limit, interval=interval)
-        if not d or not isinstance(d, list): return []
+        if not d or not isinstance(d, list):
+            return []
         out = []
         for row in d:
             try:
-                if row.get("close") is None: continue
+                if row.get("close") is None:
+                    continue
                 c = Decimal(str(row["close"]))
-                if c <= Decimal('0.0'): continue
+                if c <= Decimal('0.0'):
+                    continue
                 out.append({
-                    "open": Decimal(str(row["open"])), "high": Decimal(str(row["high"])),
-                    "low": Decimal(str(row["low"])), "close": c,
+                    "open": Decimal(str(row["open"])),
+                    "high": Decimal(str(row["high"])),
+                    "low": Decimal(str(row["low"])),
+                    "close": c,
                     "volume": Decimal(str(row.get("volume") or 0)),
-                    "timestamp": datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None),
+                    "timestamp": datetime.fromisoformat(
+                        row["timestamp"].replace("Z", "+00:00")
+                    ).replace(tzinfo=None),
                 })
             except Exception:
                 continue
@@ -1050,16 +1172,20 @@ class FeedClient:
 
     def get_intraday(self, interval: str = "1m") -> Dict[str, Any]:
         d = self._get("intraday", interval=interval)
-        if not d or d.get("close") is None: return {}
+        if not d or d.get("close") is None:
+            return {}
         try:
             c = Decimal(str(d["close"]))
             if c <= Decimal('0.0'):
                 logger.warning(f"Relay returned non-positive intraday close: {c}")
                 return {}
             return {
-                "open": Decimal(str(d["open"])), "high": Decimal(str(d["high"])),
-                "low": Decimal(str(d["low"])), "close": c,
-                "volume": Decimal(str(d.get("volume") or 0)), "timestamp": datetime.now(),
+                "open": Decimal(str(d["open"])),
+                "high": Decimal(str(d["high"])),
+                "low": Decimal(str(d["low"])),
+                "close": c,
+                "volume": Decimal(str(d.get("volume") or 0)),
+                "timestamp": datetime.now(),
             }
         except Exception as e:
             logger.warning(f"Failed to parse intraday: {e}")
@@ -1071,16 +1197,19 @@ class FeedClient:
     def probe(self) -> Dict[str, Any]:
         d = self._get("price")
         return {
-            "active_symbol": self.active_symbol(), "primary_symbol": self.symbol,
-            "chain": list(self._chain), "chain_index": self._chain_index,
+            "active_symbol": self.active_symbol(),
+            "primary_symbol": self.symbol,
+            "chain": list(self._chain),
+            "chain_index": self._chain_index,
             "empty": (d is None or d.get("close") is None),
-            "failure_count": self._failure_count, "fallback_count": self._fallback_count,
+            "failure_count": self._failure_count,
+            "fallback_count": self._fallback_count,
             "last_update": self._last_update.isoformat() if self._last_update else None,
             "relay_url": RELAY_URL,
         }
 
 # ============================================================================
-# CORE ÆEA ENGINE
+# CORE ÆEA ENGINE — Faithful Port of æea.mq4
 # ============================================================================
 class AEEA_Engine:
     def __init__(self):
@@ -1103,471 +1232,542 @@ class AEEA_Engine:
         self._bridge_publish_callback = None
         self._last_relay_warn: Optional[datetime] = None
         self._consecutive_zero_prices: int = 0
+        # Parallel symbolic layer (telemetry only — does NOT influence trading)
         self.state.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
         self.state.quat_history = [self.state.q_field.clone()]
         self.state.time_fraction = Fraction(0, 1)
         self._eps = Fraction(1, 100)
         self._s_acc_exact: Fraction = Fraction(0, 1)
         self._quat_tick_count: int = 0
+        # Indicator population counter
         self._indicator_populate_count: int = 0
         self._imbalance_fire_count: int = 0
         self._last_price_for_quat: Optional[Decimal] = None
+        # Trailing-stop telemetry
         self._active_trailing_stop: Decimal = Decimal('0.0')
         self._active_trailing_tp: Decimal = Decimal('0.0')
         self._last_kronecker_bar: int = -1
+        # SL/TP scratch (MQL4's sSL/bSL/sTP/bTP are file-scope vars)
+        self._sSL: Decimal = Decimal('0.0')
+        self._bSL: Decimal = Decimal('0.0')
+        self._sTP: Decimal = Decimal('0.0')
+        self._bTP: Decimal = Decimal('0.0')
+        # Point size (MQL4 reads digits from the symbol)
         self._point_size: Decimal = symbol_point(SYMBOL)
 
+    # ------------------------------------------------------------------------
+    # MQL4 OnInit() / OnReInit()
+    # ------------------------------------------------------------------------
     def OnInit(self) -> None:
+        """MQL4: int OnInit(){ OnReInit(); return(INIT_SUCCEEDED); }"""
         logger.info("🟢 OnInit(): ÆEA engine lifecycle beginning")
         self.OnReInit()
         logger.info("🟢 OnInit(): state reset to baseline")
 
     def OnReInit(self) -> None:
-        self._on_reinit()
-        logger.info("🔄 OnReInit(): engine reset to fresh topological branch")
-
-    def _step_quaternion_field(self, price: Decimal, prev_price: Optional[Decimal]) -> None:
+        """Faithful port of MQL4 OnReInit().
+        Preserves ohlcv_history and tick counter; resets all scan anchors to y+1.
+        """
         st = self.state
-        st.time_fraction = st.time_fraction + Fraction(1, 100)
-        self._quat_tick_count += 1
-        price_frac = Fraction.from_decimal_string(str(price))
-        prev_price_frac = Fraction.from_decimal_string(str(prev_price)) if prev_price is not None and prev_price > 0 else price_frac
-        delta_price = (price_frac - prev_price_frac).abs()
-        price_magnitude = prev_price_frac if not prev_price_frac.is_zero() else Fraction(1)
-        normalized_delta = delta_price / price_magnitude
-        s_param_time = st.time_fraction * Fraction(4, 10)
-        s_param = s_param_time + normalized_delta
-        theta_base = s_param * Fraction(7, 10)
-        theta_perturb = Fraction.sin_rational(s_param * Fraction(3, 10), 8) * Fraction(2, 10)
-        theta = theta_base + theta_perturb
-        phi_base = s_param * Fraction(3, 10) + Fraction(5, 10)
-        phi_perturb = Fraction.cos_rational(s_param * Fraction(5, 10), 8) * Fraction(1, 10)
-        phi = phi_base + phi_perturb
-        half_theta = theta / Fraction(2, 1)
-        half_phi = phi / Fraction(2, 1)
-        q0 = Fraction.cos_rational(half_theta, 8) * Fraction.cos_rational(half_phi, 8)
-        q1 = Fraction.sin_rational(half_theta, 8) * Fraction.cos_rational(half_phi, 8)
-        q2 = Fraction.cos_rational(half_theta, 8) * Fraction.sin_rational(half_phi, 8)
-        q3 = Fraction.sin_rational(half_theta, 8) * Fraction.sin_rational(half_phi, 8)
-        base = Quat(q0, q1, q2, q3)
-        q_new = base.apply_natalia_fibration(s_param, self._eps, st.time_fraction).normalize()
-        if q_new.norm_sq().is_zero():
-            q_new = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
-        prev_q = st.quat_history[-1]
-        dq = q_new - prev_q
-        dq_norm = dq.norm()
-        self._s_acc_exact = self._s_acc_exact + dq_norm
-        st.quat_history.append(q_new.clone())
-        if len(st.quat_history) > 2000:
-            tail = st.quat_history[-1500:]
-            st.quat_history = [Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))] + tail
-        st.s_squared_exact = self._s_acc_exact * self._s_acc_exact
-        st.r_squared_exact = q_new.norm_sq()
-        st.deviation_exact = st.s_squared_exact - st.r_squared_exact
-        st.re_psi_exact = q_new.a
-        st.q_field = q_new
-        st.dbz_branch = self._apply_dbz_branch(st.deviation_exact, st.re_psi_exact)
-        dev_float = st.deviation_exact.to_float()
-        st.arc_coherent = (abs(dev_float) < ARC_COHERENCE_TOLERANCE)
-        if self._quat_tick_count % 100 == 0:
-            logger.info(
-                f"🌀 Quat tick #{self._quat_tick_count} | "
-                f"s²={st.s_squared_exact} r²={st.r_squared_exact} "
-                f"Δ={st.deviation_exact} Re[Ψ]={st.re_psi_exact} "
-                f"dbz={st.dbz_branch} coherent={st.arc_coherent}"
-            )
+        # Preserve history across reinit (MQL4 does this implicitly via the
+        # persistent history arrays; here we snapshot and restore).
+        saved_ohlcv = self.ohlcv_history.copy()
+        saved_price = st.price
+        saved_Price = st.Price
+        saved_iH = st.iH
+        saved_iL = st.iL
+        saved_tick = st.tick
+        saved_on_track = st.on_track_runs
+        saved_on_stand = st.on_stand_runs
 
-    def _apply_dbz_branch(self, dev: Fraction, re_psi: Fraction) -> int:
-        try:
-            if dev.abs().to_float() < ARC_COHERENCE_TOLERANCE:
-                target = Fraction(1, 100)
-                diff = target - self._eps
-                self._eps = self._eps + diff * Fraction(2, 1000)
-                return 0
-            if re_psi.sign() > 0:
-                self._eps = self._eps * Fraction(97, 100)
-                if self._eps.abs().to_float() < 1e-6:
-                    self._eps = Fraction(1, 100)
-                return 1
-            else:
-                delta = Fraction.sin_rational(self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8) * Fraction(8, 10000)
-                self._eps = self._eps + delta
-                if self._eps.to_float() > 0.05:
-                    self._eps = Fraction(5, 100)
-                if self._eps.to_float() < 0.001:
-                    self._eps = Fraction(1, 1000)
-                return 2
-        except Exception as e:
-            logger.exception(f"_apply_dbz_branch failed: {e}")
-            return 0
+        st.KC = st.invert
 
-    def _verify_arc_length_coherence(self) -> Dict[str, Any]:
+        # MQL4: ArrayInitialize(cA, 0); ... ArrayInitialize(ADX, 0);
+        size = X_PERIOD - Y_START          # = 61
+        for i in range(13):
+            st.cA[i] = [Decimal('0.0')] * size
+            st.iA[i] = [Decimal('0.0')] * size
+            st.kA[i] = [Decimal('0.0')] * size
+            st.lA[i] = [Decimal('0.0')] * size
+
+        st.IHKk = []
+        st.IHKt = []
+        st.RSI = []
+        st.CCI = []
+        st.MOM = []
+        st.AD = []
+        st.OBV = []
+        st.Force = []
+        st.MFI = []
+        st.DeM = []
+        st.RVIm = []
+        st.AC = []
+        st.StdDev = []
+        st.ATR = []
+        st.ADX = []
+
+        # MQL4: ArrayResize(Regime, x-y); ArrayInitialize(Premium, x-y); ...
+        st.Regime = [""] * size
+        st.Premium = [Decimal('0.0')] * size
+        st.Discount = [Decimal('0.0')] * size
+        st.HH = [Decimal('0.0')] * size
+        st.LL = [Decimal('0.0')] * size
+        st.k = [False] * size
+        st.l = [False] * size
+        st.U = []
+        st.R = True
+
+        # MQL4: D=0; E=0; K=false; Z=y+1; z=y+1; O=y+1; o=y+1; r=0;
+        #        W=y+1; w=y+1; I=0; iI=0; J=0; iJ=0; ij=0;
+        #        toll=0; tally="   "; tickTock=false;
+        #        iZ=y+1; iz=y+1; iW=y+1; iw=y+1; iO=y+1; io=y+1; ir=0;
+        st.D = Decimal('0.0')
+        st.E = Decimal('0.0')
+        st.K = False
+        st.Z = Y_START + 1
+        st.z = Y_START + 1
+        st.O = Y_START + 1
+        st.o = Y_START + 1
+        st.r = 0
+        st.W = Y_START + 1
+        st.w = Y_START + 1
+        st.I = 0
+        st.iI = 0
+        st.J = 0
+        st.iJ = 0
+        st.ij = 0
+        st.toll = 0
+        st.tally = "   "
+        st.tick_tock = False
+        st.iZ = Y_START + 1
+        st.iz = Y_START + 1
+        st.iW = Y_START + 1
+        st.iw = Y_START + 1
+        st.iO = Y_START + 1
+        st.io = Y_START + 1
+        st.ir = 0
+
+        # MQL4: S=x; T=x; X=y; Y=y;
+        st.S = X_PERIOD
+        st.T = X_PERIOD
+        st.X_scan = Y_START
+        st.Y_scan = Y_START
+
+        # MQL4: FG=false;
+        st.FG = False
+        st.signature = False
+        st.signal = Decimal('0.0')
+
+        # MQL4: FVG cleanup (chart objects)
+        st.FVG = -1
+        st.BL = []
+        st.bottomLine = "   "
+        st.bL = "   "
+
+        # Parallel symbolic reset (telemetry only)
+        st.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
+        st.quat_history = [st.q_field.clone()]
+        st.time_fraction = Fraction(0, 1)
+        st.s_squared_exact = Fraction(0, 1)
+        st.r_squared_exact = Fraction(1, 1)
+        st.deviation_exact = Fraction(0, 1)
+        st.re_psi_exact = Fraction(1, 1)
+        st.dbz_branch = 0
+        st.arc_coherent = True
+        st.fvg_anchor_map = {}
+        self._eps = Fraction(1, 100)
+        self._s_acc_exact = Fraction(0, 1)
+
+        # Restore preserved state
+        self.ohlcv_history = saved_ohlcv
+        st.price = saved_price
+        st.Price = saved_Price
+        st.iH = saved_iH
+        st.iL = saved_iL
+        st.tick = saved_tick
+        st.on_track_runs = saved_on_track
+        st.on_stand_runs = saved_on_stand
+
+        # MQL4: Print("ReSet   ");
+        logger.info(f"🔄 OnReInit() completed — Tick preserved: {st.tick}")
+
+    # ------------------------------------------------------------------------
+    # MQL4 Unify()
+    # ------------------------------------------------------------------------
+    def _unify(self, j: int) -> Tuple[Decimal, Decimal]:
+        """Faithful port of MQL4 Unify().
+        Computes per-j min-max scaled ATR and StdDev over the last j+1 bars.
+        Writes into state.iATR and state.iStdDev (MQL4's global iATR/iStdDev).
+        Returns (iATR_normalized, iStdDev_normalized)."""
         st = self.state
-        dev_float = st.deviation_exact.to_float()
-        coherent = abs(dev_float) < ARC_COHERENCE_TOLERANCE
-        return {
-            "coherent": bool(coherent),
-            "arc_sq": str(st.s_squared_exact),
-            "radius_sq": str(st.r_squared_exact),
-            "deviation": str(st.deviation_exact),
-            "deviation_float": dev_float,
-            "dbz_branch": int(st.dbz_branch),
-            "re_psi": str(st.re_psi_exact),
-            "initialized": bool(st._initialized),
-            "quat_tick_count": int(self._quat_tick_count),
-        }
+        if j < 1 or len(self.ohlcv_history) < j + 1:
+            st.iATR = Decimal('50.0')
+            st.iStdDev = Decimal('50.0')
+            return st.iATR, st.iStdDev
 
-    def _check_coherence(self) -> str:
-        info = self._verify_arc_length_coherence()
-        if info["coherent"]:
-            return "✅ COHERENT"
+        end = len(self.ohlcv_history)
+        start = end - (j + 1)
+        window = self.ohlcv_history[start:end]
+        high_prices = [d["high"] for d in window]
+        low_prices = [d["low"] for d in window]
+        close_prices = [d["close"] for d in window]
+
+        # MQL4: for(int i=0;i<j+1;i++){ATR[i]=iATR(NULL,0,j,i);}
+        atr_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            atr_list.append(atr(sub_high, sub_low, sub_close, j))
+
+        maxATR = max(atr_list) if atr_list else Decimal('0.0')
+        minATR = min(atr_list) if atr_list else Decimal('0.0')
+        rangeATR = maxATR - minATR
+        if rangeATR != Decimal('0.0'):
+            st.iATR = Decimal('100.0') * ((atr_list[0] - minATR) / rangeATR)
         else:
-            return f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
+            st.iATR = Decimal('50.0')
 
-    def _anchor_fvg_to_leech(self, idx: int, price_fraction: Fraction, fvg_type: str) -> Dict[str, Any]:
-        vec = LeechLatticeAnchor.project_price_to_leech(price_fraction, seed=idx)
-        vhash = LeechLatticeAnchor.vector_hash(vec)
-        anchor = {
-            "idx": idx,
-            "type": fvg_type,
-            "price": str(price_fraction),
-            "vector_24d": [str(v) for v in vec],
-            "vector_hash": vhash,
-            "norm_squared": str(LeechLatticeAnchor.norm_squared(vec)),
-            "is_lattice_point": LeechLatticeAnchor.is_lattice_point(vec),
-            "created": datetime.now().isoformat(),
-        }
-        self.state.fvg_anchor_map[idx] = anchor
-        arr = self.state.Premium if fvg_type == "top" else self.state.Discount
-        if len(arr) > 0:
-            slot = idx % len(arr)
-            arr[slot] = price_fraction.to_decimal()
-            self.state.FVG = max(self.state.FVG, idx)
-        logger.info(
-            f"🔷 FVG anchored to Λ₂₄ vector: idx={idx} hash={vhash[:16]}... "
-            f"‖v‖²={anchor['norm_squared']} is_lattice={anchor['is_lattice_point']}"
-        )
-        return anchor
+        # MQL4: for(int i=0;i<j+1;i++){StdDev[i]=iStdDev(NULL,0,j,0,MODE_SMA,PRICE_CLOSE,i);}
+        sd_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sd_list.append(stddev(sub_close, j))
 
-    def _populate_indicator_matrix(self) -> None:
+        maxSD = max(sd_list) if sd_list else Decimal('0.0')
+        minSD = min(sd_list) if sd_list else Decimal('0.0')
+        rangeSD = maxSD - minSD
+        if rangeSD != Decimal('0.0'):
+            st.iStdDev = Decimal('100.0') * ((sd_list[0] - minSD) / rangeSD)
+        else:
+            st.iStdDev = Decimal('50.0')
+
+        return st.iATR, st.iStdDev
+
+    # ------------------------------------------------------------------------
+    # MQL4 Normalize() — 13 indicators, per-j min-max over j+1 window
+    # ------------------------------------------------------------------------
+    def _normalize(self, j: int) -> None:
+        """Faithful port of MQL4 Normalize().
+        Computes per-j min-max scaled values for all 13 indicators.
+        Writes into state.iA[i][j-(y+1)] and state.cA[i][j-(Y_scan+1)].
+        Also updates state.Suply, state.iSuply, state.Demand, state.iDemand,
+        and state.iIHKk / state.iIHKt."""
         st = self.state
-        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
-            return
-        size = st.X - st.y
-        if size <= 0:
+        y = st.y
+        if j < 1 or len(self.ohlcv_history) < j + 1:
             return
         end = len(self.ohlcv_history)
-        for j in range(st.y + 1, st.X + 1):
-            idx = j - st.y - 1
-            if idx < 0 or idx >= size:
-                continue
-            bars_back = st.X - j
-            bar_end = end - bars_back
-            if bar_end < MIN_HISTORY_WINDOW:
-                for i in range(13):
-                    if i < len(st.iA) and idx < len(st.iA[i]):
-                        st.iA[i][idx] = Decimal('50.0')
-                        st.cA[i][idx] = Decimal('50.0')
-                continue
-            norm_vals = self._normalize_at(bar_end)
-            for i in range(13):
-                if i < len(st.iA) and idx < len(st.iA[i]):
-                    st.iA[i][idx] = norm_vals[i]
-                    st.cA[i][idx] = norm_vals[i]
-                    if i < len(st.kA) and idx < len(st.kA[i]):
-                        st.kA[i][idx] = norm_vals[i]
-                    if i < len(st.lA) and idx < len(st.lA[i]):
-                        st.lA[i][idx] = norm_vals[i]
-        self._indicator_populate_count += 1
-        if self._indicator_populate_count % 20 == 0:
-            sample = [str(st.iA[i][0]) for i in range(13)]
-            sample2 = [str(st.iA[i][min(1, size - 1)]) for i in range(13)]
-            logger.info(f"📊 Indicator matrix populated (pass #{self._indicator_populate_count}) | col0={sample} | col1={sample2}")
+        window = self.ohlcv_history[end - (j + 1):end]
+        close_prices = [d["close"] for d in window]
+        high_prices = [d["high"] for d in window]
+        low_prices = [d["low"] for d in window]
+        volume_data = [d.get("volume", Decimal('0.0')) for d in window]
 
-    def _normalize_at(self, end: int) -> Tuple[Decimal, ...]:
-        if end < MIN_HISTORY_WINDOW:
-            return (Decimal('50.0'),) * 13
-        window = MAX_PERIOD
-        start = max(0, end - window)
-        close_prices = [d["close"] for d in self.ohlcv_history[start:end]]
-        high_prices = [d["high"] for d in self.ohlcv_history[start:end]]
-        low_prices = [d["low"] for d in self.ohlcv_history[start:end]]
-        volume_data = [d.get("volume", Decimal('0.0')) for d in self.ohlcv_history[start:end]]
+        # MQL4: Suply = iBands(NULL,0,j,2,0,PRICE_CLOSE,MODE_UPPER,0);
+        #        iSuply = iBands(NULL,0,j,2,0,PRICE_CLOSE,MODE_UPPER,1);
+        #        Demand = iBands(NULL,0,j,2,0,PRICE_CLOSE,MODE_LOWER,0);
+        #        iDemand = iBands(NULL,0,j,2,0,PRICE_CLOSE,MODE_LOWER,1);
+        if len(close_prices) >= j:
+            upper, _, lower = bollinger_bands(close_prices, j, Decimal('2.0'))
+            st.Suply = upper
+            st.Demand = lower
+            if len(close_prices) >= 2:
+                upper_prev, _, lower_prev = bollinger_bands(close_prices[:-1], j, Decimal('2.0'))
+                st.iSuply = upper_prev
+                st.iDemand = lower_prev
 
-        iadx = self._compute_adx(high_prices, low_prices, close_prices, MAX_PERIOD)
-        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, 14, 3)
-        stoch_val = (k_stoch + d_stoch) / Decimal('2.0')
-        rvi_val = self._compute_rvi(close_prices, MAX_PERIOD)
-        ac_val = self._compute_ac(high_prices, low_prices, close_prices, MAX_PERIOD)
-        force_val = self._compute_force(close_prices, volume_data, MAX_PERIOD)
-        obv_val = self._compute_obv(close_prices, volume_data, MAX_PERIOD)
-        ad_val = self._compute_ad(high_prices, low_prices, close_prices, volume_data, MAX_PERIOD)
-        mfi_val = self._compute_mfi(high_prices, low_prices, close_prices, volume_data, MAX_PERIOD)
-        mom_val = self._compute_momentum(close_prices, MAX_PERIOD)
-        dem_val = self._compute_demarker(high_prices, low_prices, MAX_PERIOD)
-        wpr_val = self._compute_wpr(high_prices, low_prices, close_prices, MAX_PERIOD)
-        cci_val = self._compute_cci(high_prices, low_prices, close_prices, MAX_PERIOD)
-        rsi_val = rsi(close_prices, 14)
-
-        def clamp(v):
-            if v < Decimal('0'): return Decimal('0')
-            if v > Decimal('100'): return Decimal('100')
-            return v
-
-        return (
-            clamp(iadx), clamp(stoch_val), clamp(rvi_val), clamp(ac_val),
-            clamp(force_val), clamp(obv_val), clamp(ad_val), clamp(mfi_val),
-            clamp(mom_val), clamp(dem_val), clamp(wpr_val), clamp(cci_val),
-            clamp(rsi_val),
-        )
-
-    def _normalize(self, j):
-        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
-            return (Decimal('50.0'),) * 13
-        return self._normalize_at(len(self.ohlcv_history))
-
-    def initialize_engine(self) -> None:
-        state = self.state
-        if state._initialized and state.FG:
-            logger.info("⏳ Engine already initialized, skipping...")
+        # Column indices
+        col_i = j - (y + 1)                     # MQL4: (j-(y+1))
+        col_c = j - (st.Y_scan + 1)             # MQL4: (j-(Y+1))
+        if col_i < 0 or col_i >= len(st.iA[0]):
             return
-        state._initialized = True
-        logger.info("🚀 Engine initialization started...")
-        if self.ohlcv_history:
-            latest = self.ohlcv_history[-1]
-            state.price = latest["close"]
-            state.Price = latest["close"]
-            state.iH = latest["high"]
-            state.iL = latest["low"]
-            state.t = datetime.now()
-        else:
-            bid, ask = self.feed.get_current_price()
-            if bid > Decimal('0.0'):
-                state.price = bid
-                state.Price = bid
-                state.t = datetime.now()
-        if state.X <= state.y:
-            state.X = state.y + MAX_PERIOD
-        size = state.X - state.y
-        if size <= 0: size = MAX_PERIOD
-        state.X = state.y + size
-        state.k = [False] * size
-        state.l = [False] * size
-        state.HH = [Decimal('0.0')] * size
-        state.LL = [Decimal('0.0')] * size
-        state.Premium = [Decimal('0.0')] * size
-        state.Discount = [Decimal('0.0')] * size
-        state.Regime = [""] * size
-        state.U = []
-        for i in range(13):
-            if i < len(state.cA):
-                state.cA[i] = [Decimal('0.0')] * size
-                state.iA[i] = [Decimal('0.0')] * size
-                state.kA[i] = [Decimal('0.0')] * size
-                state.lA[i] = [Decimal('0.0')] * size
-        state.D = Decimal('0.0')
-        state.E = Decimal('0.0')
-        state.Z = state.y + 1
-        state.z = state.y + 1
-        state.O = state.y + 1
-        state.o = state.y + 1
-        state.W = state.y + 1
-        state.w = state.y + 1
-        state.iZ = state.y + 1
-        state.iz = state.y + 1
-        state.iW = state.y + 1
-        state.iw = state.y + 1
-        state.iO = state.y + 1
-        state.io = state.y + 1
-        state.S = state.X
-        state.T = state.X
-        state.X = state.y
-        state.Y = state.y
-        if len(self.ohlcv_history) >= 2:
-            state.iH = self.ohlcv_history[-2]["high"]
-            state.iL = self.ohlcv_history[-2]["low"]
-        for j in range(state.y + 1, state.X + 1):
-            self._F(j, state.iH, state.iL)
-        state.FG = False
-        state.tick = 0
-        state.R = True
-        state.signature = False
-        state.signal = Decimal('0.0')
-        self._populate_indicator_matrix()
-        if len(self.ohlcv_history) >= state.y + 1:
-            state.iATR, state.iStdDev = self._unify_volatility(MAX_PERIOD)
-        current_price = state.price
-        self._step_quaternion_field(current_price, None)
-        info = self._verify_arc_length_coherence()
-        self._arc_length_verified = info["coherent"]
-        logger.info(f"✅ Arc-Length Axiom verification: {'COHERENT' if info['coherent'] else 'DEVIATION'}")
-        logger.info("✅ Engine state prepared (FG=false — waiting for first live tick)")
+        if col_c < 0 or col_c >= len(st.cA[0]):
+            col_c = col_i
 
-    def _force_initialization(self) -> None:
-        state = self.state
-        if state.FG: return
-        if state.price <= Decimal('0.0'):
-            logger.warning("⏳ Cannot force-init: price not yet available")
-            return
-        logger.info("🚀 First valid tick detected. Forcing engine initialization...")
+        f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
+        g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
 
-        if not state.signature:
-            state.D = state.price
-            state.E = state.price
+        # --- [0] ADX PROJECTION ---
+        # MQL4: uADX[], lADX[], ADX_temp[] over j+1 samples; max/min union;
+        #       iADX = |100 * (iADX(NULL,0,j,MODE_MAIN,0) - minADX) / rangeADX|
+        #       cADX = |100 * (ADX_temp[1] - minADX) / rangeADX|
+        adx_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            adx_list.append(self._compute_adx(sub_high, sub_low, sub_close, j))
+        if adx_list:
+            maxADX = max(adx_list)
+            minADX = min(adx_list)
+            rangeADX = maxADX - minADX
+            if rangeADX != Decimal('0.0'):
+                iADX_val = abs(Decimal('100.0') * ((adx_list[0] - minADX) / rangeADX))
+                cADX_val = abs(Decimal('100.0') * ((adx_list[1] - minADX) / rangeADX)) \
+                    if len(adx_list) > 1 else iADX_val
+                st.iA[0][col_i] = iADX_val
+                st.cA[0][col_c] = cADX_val
 
-        if state.X <= state.y:
-            state.X = state.y + MAX_PERIOD
-        size = state.X - state.y
-        if size <= 0: size = MAX_PERIOD
-        state.X = state.y + size
-        if len(state.k) != size:
-            state.k = [False] * size
-            state.l = [False] * size
-            state.HH = [Decimal('0.0')] * size
-            state.LL = [Decimal('0.0')] * size
-            state.Premium = [Decimal('0.0')] * size
-            state.Discount = [Decimal('0.0')] * size
-            state.Regime = [""] * size
-        if len(self.ohlcv_history) >= 1:
-            iH = self.ohlcv_history[-1]["high"]
-            iL = self.ohlcv_history[-1]["low"]
-        else:
-            iH = state.price
-            iL = state.price
-        for j in range(state.y + 1, state.X + 1):
-            idx = j - state.y - 1
-            if 0 <= idx < len(state.k):
-                state.k[idx] = False
-                state.l[idx] = False
-                state.HH[idx] = iH
-                state.LL[idx] = iL
-                state.Premium[idx] = iH
-                state.Discount[idx] = iL
-                for i in range(13):
-                    if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
-                        state.kA[i][idx] = state.cA[i][idx]
-                        state.lA[i][idx] = state.cA[i][idx]
-        if state.R and state.FG:
-            state.U.append(True)
-            if all(state.U): state.R = False
-        self._populate_indicator_matrix()
-        state.FG = True
-        state._initialized = True
-        logger.info(f"✅ Engine initialized on first tick at price={state.price:.5f}")
+        # --- [1] STOCHASTIC ---
+        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, j, 3)
+        st.iA[1][col_i] = (k_stoch + d_stoch) / Decimal('2.0')
+        if len(close_prices) > 1:
+            k_p, d_p = stochastic(high_prices[:-1], low_prices[:-1], close_prices[:-1], j, 3)
+            st.cA[1][col_c] = (k_p + d_p) / Decimal('2.0')
 
-    def update_price_from_feed(self) -> None:
-        data = self.feed.get_intraday()
-        if not data:
-            self._consecutive_zero_prices += 1
-            now = datetime.now()
-            if self._last_relay_warn is None or (now - self._last_relay_warn).seconds >= 60:
-                self._last_relay_warn = now
-                logger.warning(f"⚠️ No data from relay for {self.feed.active_symbol()} (consecutive={self._consecutive_zero_prices})")
-            return
-        bid = data["close"]
-        ask = data["close"]
-        if bid <= Decimal('0.0'):
-            self._consecutive_zero_prices += 1
-            now = datetime.now()
-            if self._last_relay_warn is None or (now - self._last_relay_warn).seconds >= 60:
-                self._last_relay_warn = now
-                logger.warning(f"⚠️ Relay returned non-positive bid for {self.feed.active_symbol()}")
-            return
-        volume = data.get("volume", Decimal('0.0'))
-        timestamp = data.get("timestamp", datetime.now())
-        self._consecutive_zero_prices = 0
-        self.update_price(bid, ask, volume, timestamp)
+        # --- [2] RVI ---
+        rvi_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            rvi_list.append(self._compute_rvi(sub_close, j))
+        if rvi_list:
+            maxRVI = max(rvi_list)
+            minRVI = min(rvi_list)
+            rangeRVI = maxRVI - minRVI
+            if rangeRVI != Decimal('0.0'):
+                st.iA[2][col_i] = Decimal('100.0') * ((rvi_list[0] - minRVI) / rangeRVI)
+                st.cA[2][col_c] = Decimal('100.0') * ((rvi_list[1] - minRVI) / rangeRVI) \
+                    if len(rvi_list) > 1 else st.iA[2][col_i]
 
-    def update_price(self, bid, ask, volume=Decimal('0.0'), timestamp=None) -> None:
-        if timestamp is None: timestamp = datetime.now()
-        if bid <= Decimal('0.0'):
-            logger.warning(f"update_price rejected non-positive bid: {bid}")
-            return
-        self.state.price = bid
-        self.state.Price = (bid + ask) / Decimal('2.0')
-        self._price_update_counter += 1
+        # --- [3] AC ---
+        ac_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            ac_list.append(abs(self._compute_ac(high_prices, low_prices, sub_close, j)))
+        if ac_list:
+            maxAC = max(ac_list)
+            minAC = min(ac_list)
+            rangeAC = maxAC - minAC
+            if rangeAC != Decimal('0.0'):
+                st.iA[3][col_i] = abs(Decimal('100.0') * ((ac_list[0] - minAC) / rangeAC))
+                st.cA[3][col_c] = abs(Decimal('100.0') * ((ac_list[1] - minAC) / rangeAC)) \
+                    if len(ac_list) > 1 else st.iA[3][col_i]
 
-        price_data = PriceData(
-            bid=bid, ask=ask, close=(bid + ask) / Decimal('2.0'),
-            open=bid, high=max(bid, ask), low=min(bid, ask),
-            volume=volume, timestamp=timestamp
-        )
-        self.price_history.append(price_data)
-        if len(self.price_history) > 1000: self.price_history = self.price_history[-1000:]
-        if self._last_price_update is None or (timestamp - self._last_price_update).seconds >= 60:
-            self._bar_open = True
-            self._last_price_update = timestamp
-            self._bar_index += 1
-            self.ohlcv_history.append({
-                "open": price_data.open, "high": price_data.high, "low": price_data.low,
-                "close": price_data.close, "volume": price_data.volume, "timestamp": timestamp
-            })
-            if len(self.ohlcv_history) > 200: self.ohlcv_history = self.ohlcv_history[-200:]
-        else:
-            self._bar_open = False
-            if self.ohlcv_history:
-                self.ohlcv_history[-1]["high"] = max(self.ohlcv_history[-1]["high"], price_data.high)
-                self.ohlcv_history[-1]["low"] = min(self.ohlcv_history[-1]["low"], price_data.low)
-                self.ohlcv_history[-1]["close"] = price_data.close
-                self.ohlcv_history[-1]["volume"] += price_data.volume
-        if self._bar_open and len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
-            self._populate_indicator_matrix()
-        if self._bar_open and len(self.ohlcv_history) >= 2:
-            self._on_bar()
-        self._on_tick(price_data)
+        # --- [4] FORCE ---
+        force_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
+            force_list.append(self._compute_force(sub_close, sub_vol, j))
+        if force_list:
+            maxForce = max(force_list)
+            minForce = min(force_list)
+            rangeForce = maxForce - minForce
+            if rangeForce != Decimal('0.0'):
+                st.iA[4][col_i] = Decimal('100.0') * ((force_list[0] - minForce) / rangeForce)
+                st.cA[4][col_c] = Decimal('100.0') * ((force_list[1] - minForce) / rangeForce) \
+                    if len(force_list) > 1 else st.iA[4][col_i]
 
-    def _compute_adx(self, high, low, close, period):
-        if len(close) < period + 1: return Decimal('50.0')
+        # --- [5] OBV ---
+        obv_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
+            obv_list.append(self._compute_obv(sub_close, sub_vol, j))
+        if obv_list:
+            maxOBV = max(obv_list)
+            minOBV = min(obv_list)
+            rangeOBV = maxOBV - minOBV
+            if rangeOBV != Decimal('0.0'):
+                st.iA[5][col_i] = Decimal('100.0') * ((obv_list[0] - minOBV) / rangeOBV)
+                st.cA[5][col_c] = Decimal('100.0') * ((obv_list[1] - minOBV) / rangeOBV) \
+                    if len(obv_list) > 1 else st.iA[5][col_i]
+
+        # --- [6] AD ---
+        ad_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
+            ad_list.append(self._compute_ad(sub_high, sub_low, sub_close, sub_vol, j))
+        if ad_list:
+            maxAD = max(ad_list)
+            minAD = min(ad_list)
+            rangeAD = maxAD - minAD
+            if rangeAD != Decimal('0.0'):
+                st.iA[6][col_i] = Decimal('100.0') * ((ad_list[0] - minAD) / rangeAD)
+                st.cA[6][col_c] = Decimal('100.0') * ((ad_list[1] - minAD) / rangeAD) \
+                    if len(ad_list) > 1 else st.iA[6][col_i]
+
+        # --- [7] MFI ---
+        mfi_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
+            mfi_list.append(self._compute_mfi(sub_high, sub_low, sub_close, sub_vol, j))
+        if mfi_list:
+            maxMFI = max(mfi_list)
+            minMFI = min(mfi_list)
+            rangeMFI = maxMFI - minMFI
+            if rangeMFI != Decimal('0.0'):
+                st.iA[7][col_i] = Decimal('100.0') * ((mfi_list[0] - minMFI) / rangeMFI)
+                st.cA[7][col_c] = Decimal('100.0') * ((mfi_list[1] - minMFI) / rangeMFI) \
+                    if len(mfi_list) > 1 else st.iA[7][col_i]
+
+        # --- [8] MOMENTUM ---
+        mom_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            mom_list.append(self._compute_momentum(sub_close, j))
+        if mom_list:
+            maxMOM = max(mom_list)
+            minMOM = min(mom_list)
+            rangeMOM = maxMOM - minMOM
+            if rangeMOM != Decimal('0.0'):
+                st.iA[8][col_i] = Decimal('100.0') * ((mom_list[0] - minMOM) / rangeMOM)
+                st.cA[8][col_c] = Decimal('100.0') * ((mom_list[1] - minMOM) / rangeMOM) \
+                    if len(mom_list) > 1 else st.iA[8][col_i]
+
+        # --- [9] DEMARKER ---
+        dem_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            dem_list.append(self._compute_demarker(sub_high, sub_low, j))
+        if dem_list:
+            maxDM = max(dem_list)
+            minDM = min(dem_list)
+            rangeDM = maxDM - minDM
+            if rangeDM != Decimal('0.0'):
+                st.iA[9][col_i] = Decimal('100.0') * ((dem_list[0] - minDM) / rangeDM)
+                st.cA[9][col_c] = Decimal('100.0') * ((dem_list[1] - minDM) / rangeDM) \
+                    if len(dem_list) > 1 else st.iA[9][col_i]
+
+        # --- [10] WPR (MQL4 uses +100.0 shift, no min-max) ---
+        wpr_now = self._compute_wpr(high_prices, low_prices, close_prices, j) + Decimal('100.0')
+        st.iA[10][col_i] = wpr_now
+        if len(close_prices) > 1:
+            wpr_prev = self._compute_wpr(
+                high_prices[:-1], low_prices[:-1], close_prices[:-1], j
+            ) + Decimal('100.0')
+            st.cA[10][col_c] = wpr_prev
+
+        # --- [11] CCI ---
+        cci_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            cci_list.append(self._compute_cci(sub_high, sub_low, sub_close, j))
+        if cci_list:
+            maxCCI = max(cci_list)
+            minCCI = min(cci_list)
+            rangeCCI = maxCCI - minCCI
+            if rangeCCI != Decimal('0.0'):
+                st.iA[11][col_i] = Decimal('100.0') * ((cci_list[0] - minCCI) / rangeCCI)
+                st.cA[11][col_c] = Decimal('100.0') * ((cci_list[1] - minCCI) / rangeCCI) \
+                    if len(cci_list) > 1 else st.iA[11][col_i]
+
+        # --- [12] RSI ---
+        rsi_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            rsi_list.append(rsi(sub_close, min(j, 14)))
+        if rsi_list:
+            maxRSI = max(rsi_list)
+            minRSI = min(rsi_list)
+            rangeRSI = maxRSI - minRSI
+            if rangeRSI != Decimal('0.0'):
+                st.iA[12][col_i] = Decimal('100.0') * ((rsi_list[0] - minRSI) / rangeRSI)
+                st.cA[12][col_c] = Decimal('100.0') * ((rsi_list[1] - minRSI) / rangeRSI) \
+                    if len(rsi_list) > 1 else st.iA[12][col_i]
+
+        # --- Ichimoku (MQL4's IHKk / IHKt global scalars) ---
+        # MQL4 fetches per-period; we approximate with the standard periods.
+        ihk = ichimoku(high_prices, low_prices, close_prices)
+        st.iIHKk = ihk["kijun"]
+        st.iIHKt = ihk["tenkan"]
+
+        # Suppress unused-variable warnings on threshold constants (retained
+        # for symbolic parity with MQL4, which references them in M()/N()).
+        _ = f_plus_gf, g_minus_gf
+
+    # ------------------------------------------------------------------------
+    # MQL4 indicator computation helpers (called from _normalize per-j)
+    # ------------------------------------------------------------------------
+    def _compute_adx(self, high, low, close, period: int) -> Decimal:
+        """MQL4 iADX(NULL, 0, period, PRICE_CLOSE, MODE_MAIN, 0) equivalent."""
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0')
         trs, plus_dm, minus_dm = [], [], []
         for i in range(1, period + 1):
-            tr = max(high[-i] - low[-i], abs(high[-i] - close[-i-1]), abs(low[-i] - close[-i-1]))
+            tr = max(
+                high[-i] - low[-i],
+                abs(high[-i] - close[-i - 1]),
+                abs(low[-i] - close[-i - 1]),
+            )
             trs.append(tr)
-            up_move = high[-i] - high[-i-1]
-            dn_move = low[-i-1] - low[-i]
+            up_move = high[-i] - high[-i - 1]
+            dn_move = low[-i - 1] - low[-i]
             plus_dm.append(up_move if up_move > dn_move and up_move > 0 else Decimal('0.0'))
             minus_dm.append(dn_move if dn_move > up_move and dn_move > 0 else Decimal('0.0'))
         atr_val = sum(trs) / Decimal(period)
-        if atr_val == Decimal('0.0'): return Decimal('50.0')
+        if atr_val == Decimal('0.0'):
+            return Decimal('50.0')
         plus_di = Decimal('100.0') * (sum(plus_dm) / Decimal(period)) / atr_val
         minus_di = Decimal('100.0') * (sum(minus_dm) / Decimal(period)) / atr_val
         di_sum = plus_di + minus_di
-        if di_sum == Decimal('0.0'): return Decimal('50.0')
-        dx = Decimal('100.0') * abs(plus_di - minus_di) / di_sum
-        return dx
+        if di_sum == Decimal('0.0'):
+            return Decimal('50.0')
+        return Decimal('100.0') * abs(plus_di - minus_di) / di_sum
 
-    def _compute_rvi(self, close, period):
-        if len(close) < period + 1: return Decimal('50.0')
-        numerator = sum(abs(close[-i] - close[-i-1]) for i in range(1, period + 1))
-        denominator = sum(abs(close[-i] - close[-i-1]) for i in range(1, period + 1))
-        if denominator == Decimal('0.0'): return Decimal('50.0')
+    def _compute_rvi(self, close, period: int) -> Decimal:
+        """Relative Vigor Index main-line equivalent."""
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0')
+        numerator = sum(abs(close[-i] - close[-i - 1]) for i in range(1, period + 1))
+        denominator = sum(abs(close[-i] - close[-i - 1]) for i in range(1, period + 1))
+        if denominator == Decimal('0.0'):
+            return Decimal('50.0')
         ratio = numerator / denominator
         return Decimal('50.0') + Decimal('50.0') * (ratio - Decimal('0.5'))
 
-    def _compute_ac(self, high, low, close, period):
-        if len(close) < period * 2: return Decimal('50.0')
-        ao_now = sum(close[-i] for i in range(1, period+1)) / Decimal(period) - sum(close[-i] for i in range(period+1, 2*period+1)) / Decimal(period)
-        ao_prev = sum(close[-i-1] for i in range(1, period+1)) / Decimal(period) - sum(close[-i-1] for i in range(period+1, 2*period+1)) / Decimal(period)
+    def _compute_ac(self, high, low, close, period: int) -> Decimal:
+        """Accelerator Oscillator (AC = AO - SMA(AO, 5))."""
+        if len(close) < period * 2 or period <= 0:
+            return Decimal('50.0')
+        ao_now = (
+            sum(close[-i] for i in range(1, period + 1)) / Decimal(period)
+            - sum(close[-i] for i in range(period + 1, 2 * period + 1)) / Decimal(period)
+        )
+        ao_prev = (
+            sum(close[-i - 1] for i in range(1, period + 1)) / Decimal(period)
+            - sum(close[-i - 1] for i in range(period + 1, 2 * period + 1)) / Decimal(period)
+        )
         ac = ao_now - ao_prev
         return Decimal('50.0') + ac
 
-    def _compute_force(self, close, volume, period):
-        if len(close) < period + 1: return Decimal('50.0')
-        forces = [volume[-i] * (close[-i] - close[-i-1]) for i in range(1, period + 1)]
+    def _compute_force(self, close, volume, period: int) -> Decimal:
+        """Elder's Force Index smoothed by SMA."""
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0')
+        forces = [volume[-i] * (close[-i] - close[-i - 1]) for i in range(1, period + 1)]
         avg = sum(forces) / Decimal(period)
         return Decimal('50.0') + avg / max(abs(avg), Decimal('1.0')) * Decimal('50.0')
 
-    def _compute_obv(self, close, volume, period):
-        if len(close) < period + 1: return Decimal('50.0')
+    def _compute_obv(self, close, volume, period: int) -> Decimal:
+        """On-Balance Volume."""
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0')
         obv = Decimal('0.0')
         for i in range(1, period + 1):
-            if close[-i] > close[-i-1]: obv += volume[-i]
-            elif close[-i] < close[-i-1]: obv -= volume[-i]
+            if close[-i] > close[-i - 1]:
+                obv += volume[-i]
+            elif close[-i] < close[-i - 1]:
+                obv -= volume[-i]
         max_possible = sum(volume[-period:])
-        if max_possible == Decimal('0.0'): return Decimal('50.0')
+        if max_possible == Decimal('0.0'):
+            return Decimal('50.0')
         return Decimal('50.0') + Decimal('50.0') * obv / max_possible
 
-    def _compute_ad(self, high, low, close, volume, period):
-        if len(close) < period: return Decimal('50.0')
+    def _compute_ad(self, high, low, close, volume, period: int) -> Decimal:
+        """Accumulation/Distribution line."""
+        if len(close) < period or period <= 0:
+            return Decimal('50.0')
         ad = Decimal('0.0')
         for i in range(1, period + 1):
             hl = high[-i] - low[-i]
@@ -1577,987 +1777,1363 @@ class AEEA_Engine:
         max_abs = max(abs(ad), Decimal('1.0'))
         return Decimal('50.0') + Decimal('50.0') * ad / max_abs
 
-    def _compute_mfi(self, high, low, close, volume, period):
-        if len(close) < period + 1: return Decimal('50.0')
+    def _compute_mfi(self, high, low, close, volume, period: int) -> Decimal:
+        """Money Flow Index."""
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0')
         pos_flow, neg_flow = Decimal('0.0'), Decimal('0.0')
         for i in range(1, period + 1):
             tp = (high[-i] + low[-i] + close[-i]) / Decimal('3.0')
-            tp_prev = (high[-i-1] + low[-i-1] + close[-i-1]) / Decimal('3.0')
+            tp_prev = (high[-i - 1] + low[-i - 1] + close[-i - 1]) / Decimal('3.0')
             mf = tp * volume[-i]
-            if tp > tp_prev: pos_flow += mf
-            elif tp < tp_prev: neg_flow += mf
-        if neg_flow == Decimal('0.0'): return Decimal('100.0')
+            if tp > tp_prev:
+                pos_flow += mf
+            elif tp < tp_prev:
+                neg_flow += mf
+        if neg_flow == Decimal('0.0'):
+            return Decimal('100.0')
         mr = pos_flow / neg_flow
         return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + mr))
 
-    def _compute_momentum(self, close, period):
-        if len(close) < period + 1: return Decimal('50.0')
-        mom = close[-1] - close[-period-1]
-        ref = abs(close[-period-1]) if close[-period-1] != Decimal('0.0') else Decimal('1.0')
+    def _compute_momentum(self, close, period: int) -> Decimal:
+        """Momentum oscillator (percentage)."""
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0')
+        mom = close[-1] - close[-period - 1]
+        ref = abs(close[-period - 1]) if close[-period - 1] != Decimal('0.0') else Decimal('1.0')
         pct = mom / ref * Decimal('100.0')
         return Decimal('50.0') + max(Decimal('-50.0'), min(Decimal('50.0'), pct))
 
-    def _compute_demarker(self, high, low, period):
-        if len(high) < period + 1: return Decimal('50.0')
+    def _compute_demarker(self, high, low, period: int) -> Decimal:
+        """DeMarker oscillator."""
+        if len(high) < period + 1 or period <= 0:
+            return Decimal('50.0')
         demax, demin = Decimal('0.0'), Decimal('0.0')
         for i in range(1, period + 1):
-            if high[-i] > high[-i-1]: demax += high[-i] - high[-i-1]
-            if low[-i] < low[-i-1]: demin += low[-i-1] - low[-i]
+            if high[-i] > high[-i - 1]:
+                demax += high[-i] - high[-i - 1]
+            if low[-i] < low[-i - 1]:
+                demin += low[-i - 1] - low[-i]
         total = demax + demin
-        if total == Decimal('0.0'): return Decimal('50.0')
+        if total == Decimal('0.0'):
+            return Decimal('50.0')
         return Decimal('100.0') * demax / total
 
-    def _compute_wpr(self, high, low, close, period):
-        if len(close) < period: return Decimal('50.0')
+    def _compute_wpr(self, high, low, close, period: int) -> Decimal:
+        """Williams %R (MQL4's iWPR returns [-100, 0])."""
+        if len(close) < period or period <= 0:
+            return Decimal('50.0')
         hh = max(high[-period:])
         ll = min(low[-period:])
         rng = hh - ll
-        if rng == Decimal('0.0'): return Decimal('50.0')
-        wpr = Decimal('-100.0') * (hh - close[-1]) / rng
-        return Decimal('100.0') + wpr
+        if rng == Decimal('0.0'):
+            return Decimal('50.0')
+        return Decimal('-100.0') * (hh - close[-1]) / rng
 
-    def _compute_cci(self, high, low, close, period):
-        if len(close) < period: return Decimal('50.0')
-        tp = [(high[-i] + low[-i] + close[-i]) / Decimal('3.0') for i in range(1, period+1)]
+    def _compute_cci(self, high, low, close, period: int) -> Decimal:
+        """Commodity Channel Index."""
+        if len(close) < period or period <= 0:
+            return Decimal('50.0')
+        tp = [(high[-i] + low[-i] + close[-i]) / Decimal('3.0') for i in range(1, period + 1)]
         sma_tp = sum(tp) / Decimal(period)
         mad = sum(abs(x - sma_tp) for x in tp) / Decimal(period)
-        if mad == Decimal('0.0'): return Decimal('50.0')
+        if mad == Decimal('0.0'):
+            return Decimal('50.0')
         cci = (tp[0] - sma_tp) / (Decimal('0.015') * mad)
         return Decimal('50.0') + max(Decimal('-50.0'), min(Decimal('50.0'), cci / Decimal('4.0')))
 
-    def _unify_volatility(self, j):
-        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
-            return Decimal('50.0'), Decimal('50.0')
-        window = max(j, MIN_HISTORY_WINDOW)
-        end = len(self.ohlcv_history)
-        start = max(0, end - window)
-        close_prices = [d["close"] for d in self.ohlcv_history[start:end]]
-        high_prices = [d["high"] for d in self.ohlcv_history[start:end]]
-        low_prices = [d["low"] for d in self.ohlcv_history[start:end]]
-        atr_val = atr(high_prices, low_prices, close_prices, MAX_PERIOD)
-        std_val = stddev(close_prices, MAX_PERIOD)
-
-        atr_list, std_list = [], []
-        for i in range(max(0, len(self.ohlcv_history) - window * 2), len(self.ohlcv_history) - window):
-            sub_high = [d["high"] for d in self.ohlcv_history[i:i+window]]
-            sub_low = [d["low"] for d in self.ohlcv_history[i:i+window]]
-            sub_close = [d["close"] for d in self.ohlcv_history[i:i+window]]
-            if len(sub_high) == window:
-                atr_list.append(atr(sub_high, sub_low, sub_close, MAX_PERIOD))
-                std_list.append(stddev(sub_close, MAX_PERIOD))
-
-        atr_norm, std_norm = Decimal('50.0'), Decimal('50.0')
-        if len(atr_list) >= 2:
-            mn, mx = min(atr_list), max(atr_list)
-            if mx - mn > Decimal('0.0'):
-                atr_norm = Decimal('100.0') * (atr_val - mn) / (mx - mn)
-        if len(std_list) >= 2:
-            mn, mx = min(std_list), max(std_list)
-            if mx - mn > Decimal('0.0'):
-                std_norm = Decimal('100.0') * (std_val - mn) / (mx - mn)
-        return atr_norm, std_norm
-
-    def _M(self, j, price, Price, iA, cA, kA, HH):
+    # ------------------------------------------------------------------------
+    # MQL4 M() — bullish/overbought count
+    # ------------------------------------------------------------------------
+    def _M(self, j: int) -> int:
+        """Faithful port of MQL4 M().
+        Returns m (count of bullish/overbought indicators) for bar j.
+        Side effect: if Price > HH[j], refreshes HH[j] and syncs kA from cA.
+        """
+        st = self.state
+        y = st.y
         m = 0
-        y = self.state.y
-        f = F_THRESHOLD_D + GF_TOLERANCE_D
-        g_minus = G_THRESHOLD_D - GF_TOLERANCE_D
-        idx = j - y - 1
-        if idx < 0 or idx >= len(HH): return 0
+        idx_i = j - (y + 1)                 # MQL4: (j-(y+1))
+        idx_c = j - (st.Y_scan + 1)         # MQL4: (j-(Y+1))
+        if idx_i < 0 or idx_i >= len(st.iA[0]):
+            return 0
+        if idx_c < 0 or idx_c >= len(st.cA[0]):
+            idx_c = idx_i
+
+        f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
+        g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
+
+        hh_val = st.HH[idx_i] if idx_i < len(st.HH) else Decimal('0.0')
+
+        # MQL4 loop: for(int i=0;i<13;i++){ ... }
         for i in range(13):
-            if i >= len(iA): continue
-            if idx >= len(iA[i]): continue
-            val_iA = iA[i][idx]
-            val_cA = cA[i][idx] if i < len(cA) and idx < len(cA[i]) else Decimal('50.0')
-            val_kA = kA[i][idx] if i < len(kA) and idx < len(kA[i]) else Decimal('50.0')
-            if Price > HH[idx]:
-                if val_iA > f or val_cA < val_kA: m += 1
-            elif price > HH[idx]:
-                if val_iA > f or val_iA < val_kA: m += 1
-            elif val_iA > f: m += 1
-        if len(iA) > 0 and len(iA[0]) > idx:
-            if iA[0][idx] > f or iA[0][idx] < g_minus: m += 1
-        if self.state.iIHKt > f and self.state.iIHKk > f: m += 1
+            iA_val = st.iA[i][idx_i]
+            cA_val = st.cA[i][idx_c]
+            kA_val = st.kA[i][idx_c]
+            if st.Price > hh_val:
+                if iA_val > f_plus_gf or cA_val < kA_val:
+                    m += 1
+            elif st.price > hh_val:
+                if iA_val > f_plus_gf or iA_val < kA_val:
+                    m += 1
+            elif iA_val > f_plus_gf:
+                m += 1
+
+        # MQL4: if((iA[0*(S-Y)+(j-(Y+1))] > f+gf) || (iA[0*(S-Y)+(j-(Y+1))] < g-gf)) m++;
+        adx_val = st.iA[0][idx_i]
+        if adx_val > f_plus_gf or adx_val < g_minus_gf:
+            m += 1
+
+        # MQL4: if((iIHKt > f+gf) && (iIHKk > f+gf)) m++;
+        if st.iIHKt > f_plus_gf and st.iIHKk > f_plus_gf:
+            m += 1
+
+        # MQL4: if(Price > HH[j-(y+1)]){ ... HH[j-(y+1)]=Price; }
+        if st.Price > hh_val:
+            for i in range(13):
+                st.kA[i][idx_c] = st.cA[i][idx_c]
+            if idx_i < len(st.HH):
+                st.HH[idx_i] = st.Price
+
         return m
 
-    def _N(self, j, price, Price, iA, cA, lA, LL):
+    # ------------------------------------------------------------------------
+    # MQL4 N() — bearish/oversold count
+    # ------------------------------------------------------------------------
+    def _N(self, j: int) -> int:
+        """Faithful port of MQL4 N().
+        Returns n (count of bearish/oversold indicators) for bar j.
+        Side effect: if Price < LL[j], refreshes LL[j] and syncs lA from cA.
+        """
+        st = self.state
+        y = st.y
         n = 0
-        y = self.state.y
-        f = F_THRESHOLD_D + GF_TOLERANCE_D
-        g_minus = G_THRESHOLD_D - GF_TOLERANCE_D
-        idx = j - y - 1
-        if idx < 0 or idx >= len(LL): return 0
+        idx_i = j - (y + 1)
+        idx_c = j - (st.Y_scan + 1)
+        if idx_i < 0 or idx_i >= len(st.iA[0]):
+            return 0
+        if idx_c < 0 or idx_c >= len(st.cA[0]):
+            idx_c = idx_i
+
+        f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
+        g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
+
+        ll_val = st.LL[idx_i] if idx_i < len(st.LL) else Decimal('0.0')
+
         for i in range(13):
-            if i >= len(iA): continue
-            if idx >= len(iA[i]): continue
-            val_iA = iA[i][idx]
-            val_cA = cA[i][idx] if i < len(cA) and idx < len(cA[i]) else Decimal('50.0')
-            val_lA = lA[i][idx] if i < len(lA) and idx < len(lA[i]) else Decimal('50.0')
-            if Price < LL[idx]:
-                if val_iA < g_minus or val_cA > val_lA: n += 1
-            elif price < LL[idx]:
-                if val_iA < g_minus or val_iA > val_lA: n += 1
-            elif val_iA < g_minus: n += 1
-        if len(iA) > 0 and len(iA[0]) > idx:
-            if iA[0][idx] > f or iA[0][idx] < g_minus: n += 1
-        if self.state.iIHKt < g_minus and self.state.iIHKk < g_minus: n += 1
+            iA_val = st.iA[i][idx_i]
+            cA_val = st.cA[i][idx_c]
+            lA_val = st.lA[i][idx_c]
+            if st.Price < ll_val:
+                if iA_val < g_minus_gf or cA_val > lA_val:
+                    n += 1
+            elif st.price < ll_val:
+                if iA_val < g_minus_gf or iA_val > lA_val:
+                    n += 1
+            elif iA_val < g_minus_gf:
+                n += 1
+
+        adx_val = st.iA[0][idx_i]
+        if adx_val > f_plus_gf or adx_val < g_minus_gf:
+            n += 1
+
+        if st.iIHKt < g_minus_gf and st.iIHKk < g_minus_gf:
+            n += 1
+
+        if st.Price < ll_val:
+            for i in range(13):
+                st.lA[i][idx_c] = st.cA[i][idx_c]
+            if idx_i < len(st.LL):
+                st.LL[idx_i] = st.Price
+
         return n
 
-    def _classify_regime(self, iStdDev, iATR):
-        if iStdDev < Decimal('50.0') and iATR > Decimal('50.0'): return "sVolatile"
-        elif iStdDev < Decimal('50.0') and iATR < Decimal('50.0'): return "sRange"
-        else: return "sTrend"
+    # ------------------------------------------------------------------------
+    # MQL4 H() / L() — set k/l flags based on m/n >= 12
+    # ------------------------------------------------------------------------
+    def _H(self, j: int) -> None:
+        """Faithful port of MQL4 H(): m = M(j); k[j-(y+1)] = (m >= 12); m = 0;"""
+        st = self.state
+        idx = j - (st.y + 1)
+        if idx < 0 or idx >= len(st.k):
+            return
+        m = self._M(j)
+        st.m = m
+        st.k[idx] = (m >= 12)
+        st.m = 0
 
-    def _on_hold(self, inp, inp0, inp1):
-        idx = inp - self.state.y - 1
-        if idx < 0 or idx >= len(self.state.Regime): return False
-        return self.state.Regime[idx] == inp0 or self.state.Regime[idx] == inp1
+    def _L(self, j: int) -> None:
+        """Faithful port of MQL4 L(): n = N(j); l[j-(y+1)] = (n >= 12); n = 0;"""
+        st = self.state
+        idx = j - (st.y + 1)
+        if idx < 0 or idx >= len(st.l):
+            return
+        n = self._N(j)
+        st.n = n
+        st.l[idx] = (n >= 12)
+        st.n = 0
 
-    def _on_fire(self, inp, inp0, inp1):
-        idx = inp - self.state.y - 1
-        if idx < 0 or idx >= len(self.state.Regime): return False
-        return self.state.Regime[idx] != inp0 and self.state.Regime[idx] != inp1
+    # ------------------------------------------------------------------------
+    # MQL4 F() — branch reset at index j
+    # ------------------------------------------------------------------------
+    def _F(self, j: int, iH: Decimal, iL: Decimal) -> None:
+        """Faithful port of MQL4 F().
+        Calls Normalize() at top; resets k/l flags and HH/LL/Premium/Discount
+        at index j; re-syncs kA/lA from cA; updates the R/U closure counter.
+        """
+        st = self.state
+        y = st.y
+        idx = j - (y + 1)
+        if idx < 0 or idx >= len(st.k):
+            return
+        # MQL4 calls Normalize() at the top of F()
+        self._normalize(j)
 
-    def _F(self, j, iH, iL):
-        state = self.state
-        y = state.y
-        idx = j - y - 1
-        if idx < 0 or idx >= len(state.k): return
-        state.k[idx] = False
-        state.l[idx] = False
-        state.HH[idx] = iH
-        state.LL[idx] = iL
-        state.Premium[idx] = iH
-        state.Discount[idx] = iL
+        st.k[idx] = False
+        st.l[idx] = False
+        st.HH[idx] = iH
+        st.LL[idx] = iL
+        st.Premium[idx] = iH
+        st.Discount[idx] = iL
+
+        idx_c = j - (st.Y_scan + 1)
+        if idx_c < 0 or idx_c >= len(st.cA[0]):
+            idx_c = idx
         for i in range(13):
-            if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
-                state.kA[i][idx] = state.cA[i][idx]
-                state.lA[i][idx] = state.cA[i][idx]
-        if state.R and state.FG:
-            state.U.append(True)
-            if all(state.U): state.R = False
+            if idx_c < len(st.kA[i]) and idx_c < len(st.cA[i]):
+                st.kA[i][idx_c] = st.cA[i][idx_c]
+                st.lA[i][idx_c] = st.cA[i][idx_c]
 
-    def _G(self):
-        if len(self.ohlcv_history) < 2: return
+        # MQL4: if((R==true) && (FG==true)){ ArrayResize(U,x-y); int V=0;
+        #        U[j-(y+1)]=true; for(int i=y+1;i<x;i++){if(U[i-(y+1)]==true) V++;}
+        #        if(V==x-y){R=false;} V=0; }
+        if st.R and st.FG:
+            target_size = X_PERIOD - Y_START
+            while len(st.U) < target_size:
+                st.U.append(False)
+            if idx < len(st.U):
+                st.U[idx] = True
+            V = 0
+            for i in range(y + 1, X_PERIOD):
+                ui = i - (y + 1)
+                if 0 <= ui < len(st.U) and st.U[ui]:
+                    V += 1
+            if V == target_size:
+                st.R = False
+
+    # ------------------------------------------------------------------------
+    # MQL4 G() — signal-event reset
+    # ------------------------------------------------------------------------
+    def _G(self) -> None:
+        """Faithful port of MQL4 G().
+        Re-anchors HH/LL/Premium/Discount to the previous bar's high/low
+        for all j in [y+1, h+1). Sets k/l flags to false, re-syncs kA/lA.
+        Called from OnGoe()/OnToe() when a signal fires."""
+        st = self.state
+        y = st.y
+        if len(self.ohlcv_history) < 2:
+            return
         H = self.ohlcv_history[-2]["high"]
         L = self.ohlcv_history[-2]["low"]
-        state = self.state
-        y = state.y
-        for j in range(y + 1, state.h + 1):
-            if j == state.X - 1: break
-            idx = j - y - 1
-            if idx < 0 or idx >= len(state.k): continue
-            state.k[idx] = False
-            state.l[idx] = False
-            state.HH[idx] = H
-            state.LL[idx] = L
-            state.Premium[idx] = H
-            state.Discount[idx] = L
+
+        for j in range(y + 1, st.h + 1):
+            if j == X_PERIOD:
+                break
+            idx = j - (y + 1)
+            if idx < 0 or idx >= len(st.k):
+                continue
+            st.k[idx] = False
+            st.l[idx] = False
+            st.HH[idx] = H
+            st.LL[idx] = L
+            st.Premium[idx] = H
+            st.Discount[idx] = L
+            idx_c = j - (st.Y_scan + 1)
+            if idx_c < 0 or idx_c >= len(st.cA[0]):
+                idx_c = idx
             for i in range(13):
-                if i < len(state.kA) and idx < len(state.kA[i]) and i < len(state.cA) and idx < len(state.cA[i]):
-                    state.kA[i][idx] = state.cA[i][idx]
-                    state.lA[i][idx] = state.cA[i][idx]
+                if idx_c < len(st.kA[i]) and idx_c < len(st.cA[i]):
+                    st.kA[i][idx_c] = st.cA[i][idx_c]
+                    st.lA[i][idx_c] = st.cA[i][idx_c]
 
-    def _J(self):
-        state = self.state
-        if state.I == state.iZ: state.J = state.iW
-        else: state.J = state.iZ
-        if state.iI == state.iz: state.iJ = state.iw
-        else: state.iJ = state.iz
-
-    def _O(self, inp, inp0, inp1):
-        state = self.state
-        regime_idx = inp0 - state.y - 1
-        if regime_idx < 0 or regime_idx >= len(state.Regime):
-            return
-        regime = state.Regime[regime_idx]
-
-        if inp0 == state.O:
-            if (inp < inp1) and (regime == "sRange" or regime == "tRange"):
-                state.C = state.Cc
-            elif (regime != "sRange") and (regime != "tRange"):
-                state.C = not state.Cc
-            else:
-                state.C = not state.Cc
-        elif inp0 == state.o:
-            if (inp < inp1) and (regime == "sRange" or regime == "tRange"):
-                state.c = state.Cc
-            elif (regime != "sRange") and (regime != "tRange"):
-                state.c = not state.cC
-            else:
-                state.c = not state.cC
-
-    def _R(self, j):
-        state = self.state
-        if j <= state.J:
-            state.O = j
-            state.iO = j
-        if j > state.J and j < state.r:
-            state.O = j
-            state.iO = j
-            state.r = j
-        elif j > state.J: state.r = j
-        if j <= state.iJ:
-            state.o = j
-            state.io = j
-        if j > state.iJ and j < state.ir:
-            state.o = j
-            state.io = j
-            state.ir = j
-        elif j > state.iJ: state.ir = j
-
-    def _KC(self):
-        state = self.state
-        if state.E != Decimal('0.0') and not state.A and not state.B and state.v and state.signal < state.E:
-            state.invert = not state.KC
-        if state.D != Decimal('0.0') and not state.B and not state.A and state.u and state.signal > state.D:
-            state.invert = not state.KC
-
-    def _on_call(self):
-        state = self.state
-        y = state.y
-        for j in range(y + 1, state.X + 2):
-            idx = j - y - 1
-            if idx < 0 or idx >= len(state.Regime): break
-            if state.Suply <= state.price or state.iSuply <= state.price or state.iSuply <= state.iH:
-                i = j
-                state.I = state.iW
-                state.iZ = i
-                state.Z = i
-                state.iC = state.C
-                if state.iw != 0 and state.jC == state.Cc: state.h = state.I
-                state.jC = not state.C
-                m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                if idx < len(state.k): state.k[idx] = (m >= 12)
-                if self._on_hold(j, "sTrend", "tTrend"):
-                    state.iz = i
-                    state.z = i
-                    state.iI = state.iw
-                if state.X != state.X - 1: state.X += 1
-            if state.Demand >= state.price or state.iDemand >= state.price or state.iDemand >= state.iL:
-                i = j
-                state.I = state.iZ
-                state.iW = i
-                state.W = i
-                state.jC = state.C
-                if state.iz != 0 and state.iC == state.Cc: state.h = state.I
-                state.iC = not state.C
-                n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                if idx < len(state.l): state.l[idx] = (n >= 12)
-                if self._on_hold(j, "sTrend", "tTrend"):
-                    state.iw = i
-                    state.w = i
-                    state.iI = state.iz
-                if state.X != state.X - 1: state.X += 1
-        state.X = y
-
-    def _on_point(self):
-        state = self.state
-        y = state.y
-        for j in range(y + 1, state.X):
-            idx = j - y - 1
-            if idx < 0 or idx >= len(state.Regime): break
-            iATR_norm, iStdDev_norm = self._unify_volatility(MAX_PERIOD)
-            if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
-                if state.Regime[idx] != "Stable":
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.k):
-                        state.k[idx] = m >= 12
-                    if idx < len(state.l):
-                        state.l[idx] = n >= 12
-                    if self._on_fire(j, "sVolatile", "tVolatile"): state.Regime[idx] = "sVolatile"
-                else:
-                    if idx < len(state.k): state.k[idx] = False
-                    if idx < len(state.l): state.l[idx] = False
-            elif iStdDev_norm < Decimal('50.0') and iATR_norm < Decimal('50.0'):
-                if state.Regime[idx] != "Stable":
-                    self._R(j)
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.k):
-                        state.k[idx] = m >= 12
-                    if idx < len(state.l):
-                        state.l[idx] = n >= 12
-                    if self._on_fire(j, "sRange", "tRange"): state.Regime[idx] = "sRange"
-                else:
-                    if idx < len(state.k): state.k[idx] = False
-                    if idx < len(state.l): state.l[idx] = False
-            elif self._on_fire(j, "sTrend", "tTrend"):
-                state.Regime[idx] = "sTrend"
-                if idx < len(state.k): state.k[idx] = False
-                if idx < len(state.l): state.l[idx] = False
-            else:
-                if idx < len(state.k): state.k[idx] = False
-                if idx < len(state.l): state.l[idx] = False
-
-    def _anchor_j(self, j):
+    # ------------------------------------------------------------------------
+    # MQL4 J() — directional derivative
+    # ------------------------------------------------------------------------
+    def _J(self) -> None:
+        """Faithful port of MQL4 J():
+        if(I==iZ){J=iW;} else if(I==iW){J=iZ;}
+        if(iI==iz){iJ=iw;} else if(iI==iw){iJ=iz;}
+        """
         st = self.state
-        if not self.ohlcv_history:
-            return (st.iH, st.iL)
-        bars_back = max(0, st.X - j)
-        idx = len(self.ohlcv_history) - 1 - bars_back
-        if idx < 0:
-            idx = 0
-        return (self.ohlcv_history[idx]["high"], self.ohlcv_history[idx]["low"])
+        if st.I == st.iZ:
+            st.J = st.iW
+        elif st.I == st.iW:
+            st.J = st.iZ
+        if st.iI == st.iz:
+            st.iJ = st.iw
+        elif st.iI == st.iw:
+            st.iJ = st.iz
 
-    def _on_bar(self):
-        state = self.state
-        y = state.y
-        for j in range(y + 1, state.X):
-            idx = j - y - 1
-            if idx < 0 or idx >= len(state.Regime): break
-            iATR_norm, iStdDev_norm = self._unify_volatility(MAX_PERIOD)
-            if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
-                if state.Regime[idx] != "Stable":
-                    if state.Regime[idx] != "tVolatile":
-                        _H_j, _L_j = self._anchor_j(j)
-                        self._F(j, _H_j, _L_j)
-                        m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                        n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                        if idx < len(state.k): state.k[idx] = m >= 12
-                        if idx < len(state.l): state.l[idx] = n >= 12
-                        state.Regime[idx] = "tVolatile"
-                    else:
-                        m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                        n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                        if idx < len(state.k): state.k[idx] = m >= 12
-                        if idx < len(state.l): state.l[idx] = n >= 12
-                else:
-                    if idx < len(state.k): state.k[idx] = False
-                    if idx < len(state.l): state.l[idx] = False
-            elif iStdDev_norm < Decimal('50.0') and iATR_norm < Decimal('50.0'):
-                if state.Regime[idx] != "Stable":
+    # ------------------------------------------------------------------------
+    # MQL4 O() — regime mutation of C / c
+    # ------------------------------------------------------------------------
+    def _O(self, inp: int, inp0: int, inp1: int, which: str = "C") -> None:
+        """Faithful port of MQL4 O(int inp,int inp0,int inp1,bool inp2,bool inp3).
+        MQL4 passes inp2/inp3 by value; the caller assigns the mutated value
+        back. Here we mutate state.C or state.c directly based on `which`:
+          - which="C": mutates state.C using state.Cc as the target
+          - which="c": mutates state.c using state.cC as the target
+        """
+        st = self.state
+        regime_idx = inp0 - (st.y + 1)
+        if regime_idx < 0 or regime_idx >= len(st.Regime):
+            return
+        regime = st.Regime[regime_idx]
+
+        if which == "C":
+            target = st.Cc
+        elif which == "c":
+            target = st.cC
+        else:
+            return
+
+        if (inp < inp1) and (regime == "sRange" or regime == "tRange"):
+            new_val = target
+        else:
+            new_val = not target
+
+        if which == "C":
+            st.C = new_val
+        else:
+            st.c = new_val
+
+    # ------------------------------------------------------------------------
+    # MQL4 R() — anchor O/o to current topological branch
+    # ------------------------------------------------------------------------
+    def _R(self, j: int) -> None:
+        """Faithful port of MQL4 R():
+        if(j<=J){O=j;iO=j;}
+        if((j>J)&&(j<r)){O=j;iO=j;r=j;} else if(j>J){r=j;}
+        if(j<=iJ){o=j;io=j;}
+        if((j>iJ)&&(j<ir)){o=j;io=j;ir=j;} else if(j>iJ){ir=j;}
+        """
+        st = self.state
+        if j <= st.J:
+            st.O = j
+            st.iO = j
+        if (j > st.J) and (j < st.r):
+            st.O = j
+            st.iO = j
+            st.r = j
+        elif j > st.J:
+            st.r = j
+
+        if j <= st.iJ:
+            st.o = j
+            st.io = j
+        if (j > st.iJ) and (j < st.ir):
+            st.o = j
+            st.io = j
+            st.ir = j
+        elif j > st.iJ:
+            st.ir = j
+
+    # ------------------------------------------------------------------------
+    # MQL4 KC() — non-Hermitian binary inversion
+    # ------------------------------------------------------------------------
+    def _KC(self) -> None:
+        """Faithful port of MQL4 KC():
+        if((E!=0)&&(A==false)&&(B==false)&&(v==true)&&(signal<E)) invert=!KC;
+        if((D!=0)&&(B==false)&&(A==false)&&(u==true)&&(signal>D)) invert=!KC;
+        """
+        st = self.state
+        if st.E != Decimal('0.0') and (not st.A) and (not st.B) and st.v and st.signal < st.E:
+            st.invert = not st.KC
+        if st.D != Decimal('0.0') and (not st.B) and (not st.A) and st.u and st.signal > st.D:
+            st.invert = not st.KC
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnHold() / OnFire() — regime membership tests
+    # ------------------------------------------------------------------------
+    def _on_hold(self, inp: int, inp0: str, inp1: str) -> bool:
+        """Faithful port of MQL4 OnHold():
+        return ((Regime[inp-(y+1)]==inp0)||(Regime[inp-(y+1)]==inp1));
+        """
+        st = self.state
+        idx = inp - (st.y + 1)
+        if idx < 0 or idx >= len(st.Regime):
+            return False
+        return st.Regime[idx] == inp0 or st.Regime[idx] == inp1
+
+    def _on_fire(self, inp: int, inp0: str, inp1: str) -> bool:
+        """Faithful port of MQL4 OnFire():
+        return ((Regime[inp-(y+1)]!=inp0) && (Regime[inp-(y+1)]!=inp1));
+        """
+        st = self.state
+        idx = inp - (st.y + 1)
+        if idx < 0 or idx >= len(st.Regime):
+            return False
+        return st.Regime[idx] != inp0 and st.Regime[idx] != inp1
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnPoint() — per-tick regime classification
+    # ------------------------------------------------------------------------
+    def _on_point(self) -> None:
+        """Faithful port of MQL4 OnPoint().
+        for(j=y+1; j<x; j++){
+            Unify(); Normalize();
+            if((iStdDev <50.0) &&(iATR >50.0))
+                if(Regime[j-(y+1)]!= "Stable "){ H(); L();
+                    if(OnFire(j, "sVolatile ", "tVolatile ")) Regime[j-(y+1)]="sVolatile "; }
+            else if((iStdDev <50.0) &&(iATR <50.0)){
+                if(Regime[j-(y+1)]!= "Stable "){ R(); H(); L();
+                    if(OnFire(j, "sRange ", "tRange ")) Regime[j-(y+1)]="sRange "; } }
+            else if(OnFire(j, "sTrend ", "tTrend ")) Regime[j-(y+1)]="sTrend ";
+        }
+        """
+        st = self.state
+        y = st.y
+        for j in range(y + 1, X_PERIOD):
+            idx = j - (y + 1)
+            if idx < 0 or idx >= len(st.Regime):
+                break
+            self._unify(j)
+            self._normalize(j)
+            if st.iStdDev < Decimal('50.0') and st.iATR > Decimal('50.0'):
+                if st.Regime[idx] != "Stable":
+                    self._H(j)
+                    self._L(j)
+                    if self._on_fire(j, "sVolatile", "tVolatile"):
+                        st.Regime[idx] = "sVolatile"
+            elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                if st.Regime[idx] != "Stable":
                     self._R(j)
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                    if idx < len(state.l): state.l[idx] = n >= 12
-                    if state.Regime[idx] != "tRange":
-                        _H_j, _L_j = self._anchor_j(j)
-                        self._F(j, _H_j, _L_j)
-                        state.Regime[idx] = "tRange"
-                else:
-                    if idx < len(state.k): state.k[idx] = False
-                    if idx < len(state.l): state.l[idx] = False
-            elif (state.Regime[idx] != "tTrend" and state.Regime[idx] != "sTrend" and
-                  idx < len(state.LL) and idx < len(state.Discount) and
-                  idx < len(state.HH) and idx < len(state.Premium) and
-                  state.LL[idx] < state.Discount[idx] and state.HH[idx] > state.Premium[idx]):
-                state.Regime[idx] = "Stable"
-                if idx < len(state.k): state.k[idx] = False
-                if idx < len(state.l): state.l[idx] = False
+                    self._H(j)
+                    self._L(j)
+                    if self._on_fire(j, "sRange", "tRange"):
+                        st.Regime[idx] = "sRange"
+            elif self._on_fire(j, "sTrend", "tTrend"):
+                st.Regime[idx] = "sTrend"
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnBar() — bar-close regime reclassification
+    # ------------------------------------------------------------------------
+    def _on_bar(self) -> None:
+        """Faithful port of MQL4 OnBar().
+        for(j=y+1; j<x; j++){
+            Unify(); Normalize();
+            if((iStdDev<50)&&(iATR>50)){
+                if(Regime[j-(y+1)]!="Stable"){
+                    if(Regime[j-(y+1)]!="tVolatile"){ F(); H(); L(); Regime[j-(y+1)]="tVolatile"; } } }
+            else if((iStdDev<50)&&(iATR<50)){
+                if(Regime[j-(y+1)]!="Stable"){ R(); H(); L();
+                    if(Regime[j-(y+1)]!="tRange"){ F(); Regime[j-(y+1)]="tRange"; } } }
+            else if((Regime[j-(y+1)]!="tTrend")&&(Regime[j-(y+1)]!="sTrend")&&
+                    (LL[j-(y+1)]<Discount[j-(y+1)])&&(HH[j-(y+1)]>Premium[j-(y+1)])){
+                Regime[j-(y+1)]="Stable"; }
+            else{ if(Regime[j-(y+1)]!="tTrend"){ F(); Regime[j-(y+1)]="tTrend"; } }
+        }
+        """
+        st = self.state
+        y = st.y
+        for j in range(y + 1, X_PERIOD):
+            idx = j - (y + 1)
+            if idx < 0 or idx >= len(st.Regime):
+                break
+            self._unify(j)
+            self._normalize(j)
+            if st.iStdDev < Decimal('50.0') and st.iATR > Decimal('50.0'):
+                if st.Regime[idx] != "Stable":
+                    if st.Regime[idx] != "tVolatile":
+                        self._F(j, st.iH, st.iL)
+                        self._H(j)
+                        self._L(j)
+                        st.Regime[idx] = "tVolatile"
+            elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                if st.Regime[idx] != "Stable":
+                    self._R(j)
+                    self._H(j)
+                    self._L(j)
+                    if st.Regime[idx] != "tRange":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tRange"
+            elif (st.Regime[idx] != "tTrend" and st.Regime[idx] != "sTrend"
+                  and idx < len(st.LL) and idx < len(st.Discount)
+                  and idx < len(st.HH) and idx < len(st.Premium)
+                  and st.LL[idx] < st.Discount[idx]
+                  and st.HH[idx] > st.Premium[idx]):
+                st.Regime[idx] = "Stable"
             else:
-                if state.Regime[idx] != "tTrend":
-                    _H_j, _L_j = self._anchor_j(j)
-                    self._F(j, _H_j, _L_j)
-                    state.Regime[idx] = "tTrend"
-                if idx < len(state.k): state.k[idx] = False
-                if idx < len(state.l): state.l[idx] = False
+                if st.Regime[idx] != "tTrend":
+                    self._F(j, st.iH, st.iL)
+                    st.Regime[idx] = "tTrend"
+
+        # MQL4 tail of OnBar():
+        #   Stock = iBands(NULL,0,y,2,0,PRICE_CLOSE,MODE_UPPER,0);
+        #   Sale  = iBands(NULL,0,y,2,0,PRICE_CLOSE,MODE_LOWER,0);
+        #   iStock= iBands(NULL,0,y,2,0,PRICE_CLOSE,MODE_UPPER,1);
+        #   iSale = iBands(NULL,0,y,2,0,PRICE_CLOSE,MODE_LOWER,1);
+        #   iopen = iOpen(Symbol(),0,2); iPrice = iClose(Symbol(),0,2);
         if len(self.ohlcv_history) >= y + 1:
             close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
-            state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
-            state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0.0'), Decimal('0.0'), Decimal('0.0'))
-
-    def _on_tick(self, price_data):
-        state = self.state
-        state.tick += 1
-        self._tick_log_counter += 1
-        if self._tick_log_counter >= 100:
-            self._tick_log_counter = 0
-            logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}, FG={state.FG}, Coherent={state.arc_coherent}")
-
-        # Trailing stop is evaluated first, mirroring MQL4's T() at the top of OnTick.
-        self._execute_trailing_stop()
-
-        prev_price = self._last_price_for_quat
-        self._step_quaternion_field(price_data.bid, prev_price)
-        self._last_price_for_quat = price_data.bid
-
-        state.price = price_data.bid
-        state.Price = price_data.close
-
-        if state.price <= Decimal('0.0'):
-            logger.warning(f"⚠️ Tick #{state.tick} with non-positive price: {state.price}. Skipping state machine.")
-            return
-
-        if not state.FG:
-            self._force_initialization()
-        if not state.FG:
-            logger.warning(f"⏳ Engine not yet initialized (FG=false) on tick #{state.tick}, waiting for valid tick...")
-            return
-
-        if len(self.ohlcv_history) >= 2:
-            state.iopen = self.ohlcv_history[-2]["open"]
-            state.iPrice = self.ohlcv_history[-2]["close"]
-            state.iH = self.ohlcv_history[-2]["high"]
-            state.iL = self.ohlcv_history[-2]["low"]
-
-        y = state.y
-        idx = state.Z - y - 1
-        if idx < 0:
-            idx = 0
-        if len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
-            norm_vals = self._normalize_at(len(self.ohlcv_history))
-            for i in range(min(13, len(norm_vals))):
-                if i < len(state.iA):
-                    while len(state.iA[i]) <= idx:
-                        state.iA[i].append(Decimal('50.0'))
-                    while len(state.cA[i]) <= idx:
-                        state.cA[i].append(Decimal('50.0'))
-                    state.iA[i][idx] = norm_vals[i]
-                    state.cA[i][idx] = norm_vals[i]
-            close_prices = [d["close"] for d in self.ohlcv_history[-y-1:]]
-            state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
-            state.iStock, _, state.iSale = bollinger_bands(close_prices[:-1], y) if len(close_prices) > 1 else (Decimal('0'), Decimal('0'), Decimal('0'))
-            state.iATR, state.iStdDev = self._unify_volatility(MAX_PERIOD)
-            high_prices = [d["high"] for d in self.ohlcv_history]
-            low_prices = [d["low"] for d in self.ohlcv_history]
-            close_all = [d["close"] for d in self.ohlcv_history]
-            if len(close_all) >= 52:
-                ihk = ichimoku(high_prices, low_prices, close_all)
-                state.iIHKk = ihk["kijun"]
-                state.iIHKt = ihk["tenkan"]
+            st.Stock, _, st.Sale = bollinger_bands(close_prices, y)
+            if len(close_prices) > 1:
+                st.iStock, _, st.iSale = bollinger_bands(close_prices[:-1], y)
             else:
-                state.iIHKk = Decimal('50.0')
-                state.iIHKt = Decimal('50.0')
+                st.iStock = st.Stock
+                st.iSale = st.Sale
+        if len(self.ohlcv_history) >= 2:
+            st.iopen = self.ohlcv_history[-2]["open"]
+            st.iPrice = self.ohlcv_history[-2]["close"]
 
-        self._on_point()
-        self._O(state.iO, state.O, state.J)
-        self._O(state.io, state.o, state.iJ)
-        self._on_call()
-        self._J()
-        if len(self.ohlcv_history) > 1 and self.ohlcv_history[-1]["timestamp"] != state.t:
-            self._on_bar()
-            self._O(state.iO, state.O, state.J)
-            self._O(state.io, state.o, state.iJ)
-        if state.J == state.y + 1 and state.J != 2:
-            self._on_stand()
-            self._J()
-            self._O(state.iO, state.O, state.J)
-            self._O(state.io, state.o, state.iJ)
-            if state.iO != 2:
-                if state.J >= state.iO: state.O = state.y
-                else: state.O = state.y + 1
-            else: state.O = 2
-            if state.io != 2:
-                if state.iJ >= state.io: state.o = state.y
-                else: state.o = state.y + 1
-            else: state.o = 2
-        if state.J == state.X - 1:
-            self._on_track()
-            self._J()
-            self._O(state.iO, state.O, state.J)
-            self._O(state.io, state.o, state.iJ)
-            if state.iO != 4 * state.X:
-                if state.J >= state.iO: state.O = state.X - 2
-                else: state.O = state.X - 1
-            else: state.O = state.X - 1
-            if state.io != 4 * state.X:
-                if state.iJ >= state.io: state.o = state.X - 2
-                else: state.o = state.X - 1
-            else: state.o = state.X - 1
-        state.t = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else None
-        if state.Z != state.X - 1:
-            if state.Z != state.y + 1 and (0 <= state.iZ - state.y - 1 < len(state.k)) and state.k[state.iZ - state.y - 1]:
-                state.h = state.iZ
-                self._on_goe()
-            elif (0 <= state.iz - state.y - 1 < len(state.k)) and state.k[state.iz - state.y - 1]:
-                if state.z != state.y + 1 and state.z != state.X - 1:
-                    state.h = state.iz
-                    self._on_goe()
-            elif (0 <= state.io - state.y - 1 < len(state.k)) and state.k[state.io - state.y - 1]:
-                if state.o != state.y + 1 and state.o != state.X - 1:
-                    state.h = state.io
-                    self._on_goe()
-            elif (0 <= state.iO - state.y - 1 < len(state.k)) and state.k[state.iO - state.y - 1]:
-                if state.O != state.y + 1 and state.O != state.X - 1:
-                    state.h = state.iO
-                    self._on_goe()
-        if state.W != state.X - 1:
-            if state.W != state.y + 1 and (0 <= state.iW - state.y - 1 < len(state.l)) and state.l[state.iW - state.y - 1]:
-                state.h = state.iW
-                self._on_toe()
-            elif (0 <= state.iw - state.y - 1 < len(state.l)) and state.l[state.iw - state.y - 1]:
-                if state.w != state.y + 1 and state.w != state.X - 1:
-                    state.h = state.iw
-                    self._on_toe()
-            elif (0 <= state.io - state.y - 1 < len(state.l)) and state.l[state.io - state.y - 1]:
-                if state.o != state.y + 1 and state.o != state.X - 1:
-                    state.h = state.io
-                    self._on_toe()
-            elif (0 <= state.iO - state.y - 1 < len(state.l)) and state.l[state.iO - state.y - 1]:
-                if state.O != state.y + 1 and state.O != state.X - 1:
-                    state.h = state.iO
-                    self._on_toe()
-        if state.GF:
-            self._on_reinit()
-            state.GF = False
-        if state.signature and state.chat_id:
-            self._send_signal_alert()
+    # ------------------------------------------------------------------------
+    # MQL4 OnCall() — observer layer, boundary scan
+    # ------------------------------------------------------------------------
+    def _on_call(self) -> None:
+        """Faithful port of MQL4 OnCall().
+        for(j=y+1; j<X+2; j++){
+            Unify(); Normalize();
+            if((Suply<=price)||(iSuply<=price)||(iSuply<=iH)){
+                int i=j; I=iW; iZ=i; Z=i; iC=C;
+                if((iw!=0)&&(jC==Cc)){ h=I; } jC=!C;
+                if(OnHold(j,"sTrend","tTrend")){ iz=i; z=i; iI=iw; H(); }
+                if(X!=x-1) X++;
+            }
+            if((Demand>=price)||(iDemand>=price)||(iDemand>=iL)){
+                int i=j; I=iZ; iW=i; W=i; jC=C;
+                if((iz!=0)&&(iC==Cc)){ h=I; } iC=!C;
+                if(OnHold(j,"sTrend","tTrend")){ iw=i; w=i; iI=iz; L(); }
+                if(X!=x-1) X++;
+            }
+        }
+        X = y;
+        """
+        st = self.state
+        y = st.y
+        for j in range(y + 1, st.X_scan + 2):
+            idx = j - (y + 1)
+            if idx < 0 or idx >= len(st.Regime):
+                break
+            self._unify(j)
+            self._normalize(j)
 
-    def _on_track(self):
-        state = self.state
-        state.on_track_runs += 1
-        y = state.y
-        s = state.X - 1
+            # Supply-side boundary contact
+            if st.Suply <= st.price or st.iSuply <= st.price or st.iSuply <= st.iH:
+                i = j
+                st.I = st.iW
+                st.iZ = i
+                st.Z = i
+                st.iC = st.C
+                if st.iw != 0 and st.jC == st.Cc:
+                    st.h = st.I
+                st.jC = not st.C
+                if self._on_hold(j, "sTrend", "tTrend"):
+                    st.iz = i
+                    st.z = i
+                    st.iI = st.iw
+                    self._H(j)
+                if st.X_scan != X_PERIOD - 1:
+                    st.X_scan += 1
+
+            # Demand-side boundary contact
+            if st.Demand >= st.price or st.iDemand >= st.price or st.iDemand >= st.iL:
+                i = j
+                st.I = st.iZ
+                st.iW = i
+                st.W = i
+                st.jC = st.C
+                if st.iz != 0 and st.iC == st.Cc:
+                    st.h = st.I
+                st.iC = not st.C
+                if self._on_hold(j, "sTrend", "tTrend"):
+                    st.iw = i
+                    st.w = i
+                    st.iI = st.iz
+                    self._L(j)
+                if st.X_scan != X_PERIOD - 1:
+                    st.X_scan += 1
+
+        # MQL4: X = y;
+        st.X_scan = y
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnTrack() — upside extremum scanner
+    # ------------------------------------------------------------------------
+    def _on_track(self) -> None:
+        """Faithful port of MQL4 OnTrack().
+        Upside regime scanner: scans from x-1 up to 4*max (bounded), extending
+        the analysis horizon beyond the normal bar range when price breaches
+        Bollinger boundaries.
+        """
+        st = self.state
+        st.on_track_runs += 1
+        y = st.y
+        # MQL4: S=x; T=x; X=y; Y=y;
+        st.S = X_PERIOD
+        st.T = X_PERIOD
+        st.X_scan = y
+        st.Y_scan = y
+        is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
+
+        # First loop: state.x-1 → S (mutated). Terminates at 4*max.
         scan_limit = 4 * MAX_PERIOD
-        while s < state.S:
+        s = X_PERIOD - 1
+        while s < st.S:
             if s == scan_limit:
                 break
-            idx = s - y - 1
+            if s < 0:
+                s += 1
+                continue
+            idx = s - (y + 1)
             if idx < 0:
                 s += 1
                 continue
-            if idx >= len(state.Regime):
-                ext = idx - len(state.Regime) + 1
-                state.Regime.extend([""] * ext)
-                state.k.extend([False] * ext)
-                state.l.extend([False] * ext)
-                state.HH.extend([Decimal('0.0')] * ext)
-                state.LL.extend([Decimal('0.0')] * ext)
-                state.Premium.extend([Decimal('0.0')] * ext)
-                state.Discount.extend([Decimal('0.0')] * ext)
+            if idx >= len(st.Regime):
+                ext = idx - len(st.Regime) + 1
+                st.Regime.extend([""] * ext)
+                st.k.extend([False] * ext)
+                st.l.extend([False] * ext)
+                st.HH.extend([Decimal('0.0')] * ext)
+                st.LL.extend([Decimal('0.0')] * ext)
+                st.Premium.extend([Decimal('0.0')] * ext)
+                st.Discount.extend([Decimal('0.0')] * ext)
             j = s
-            if state.Suply <= state.price or state.iSuply <= state.price or state.iSuply <= state.iH:
-                state.I = state.iW
-                state.Z = state.X - 1
-                state.iZ = s
-                state.T += 1
-                state.iC = state.C
-                if state.iw != 0 and state.jC == state.Cc: state.h = state.I
-                state.jC = not state.C
-                if state.iStdDev > Decimal('50.0'):
-                    state.iz = s
-                    state.iI = state.iw
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                elif state.iATR < Decimal('50.0'):
-                    state.iO = s
-                    state.io = s
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                else:
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                    if self._on_fire(j, "Stable", "tVolatile"):
-                        self._F(j, state.iH, state.iL)
-                        state.Regime[idx] = "tVolatile"
-                    else:
-                        state.Regime[idx] = "sVolatile"
-                    state.S += 1
-            if state.Demand >= state.price or state.iDemand >= state.price or state.iDemand >= state.iL:
-                state.I = state.iZ
-                state.W = state.X - 1
-                state.iW = s
-                state.T += 1
-                state.jC = state.C
-                if state.iz != 0 and state.iC == state.Cc: state.h = state.I
-                state.iC = not state.C
-                if state.iStdDev > Decimal('50.0'):
-                    state.iw = s
-                    state.iI = state.iz
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.l): state.l[idx] = n >= 12
-                elif state.iATR < Decimal('50.0'):
-                    state.iO = s
-                    state.io = s
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.l): state.l[idx] = n >= 12
-                else:
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.l): state.l[idx] = n >= 12
-                    if self._on_fire(j, "Stable", "tVolatile"):
-                        self._F(j, state.iH, state.iL)
-                        state.Regime[idx] = "tVolatile"
-                    else:
-                        state.Regime[idx] = "sVolatile"
-                    state.S += 1
-            s += 1
-        state.S = state.X
-        state.T = state.X
-        if state.Z != scan_limit:
-            if state.Z >= state.z: state.z = state.X - 2
-            else: state.z = state.X - 1
-        else: state.z = state.X - 1
-        if state.W != scan_limit:
-            if state.W >= state.w: state.w = state.X - 2
-            else: state.w = state.X - 1
-        else: state.w = state.X - 1
+            self._normalize(j)
+            self._unify(j)
 
-    def _on_stand(self):
-        state = self.state
-        state.on_stand_runs += 1
-        y = state.y
+            if st.Suply <= st.price or st.iSuply <= st.price or st.iSuply <= st.iH:
+                i = s
+                st.I = st.iW
+                st.Z = MAX_PERIOD
+                st.iZ = i
+                st.T += 1
+                st.iC = st.C
+                if st.iw != 0 and st.jC == st.Cc:
+                    st.h = st.I
+                st.jC = not st.C
+                if st.iStdDev > Decimal('50.0'):
+                    st.S += 1
+                    st.iz = i
+                    st.iI = st.iw
+                    self._H(j)
+                elif st.iATR < Decimal('50.0'):
+                    st.S += 1
+                    st.iO = i
+                    st.io = i
+                    self._H(j)
+                else:
+                    self._H(j)
+                    if is_now != st.t:
+                        if self._on_fire(j, "Stable", "tVolatile"):
+                            self._F(j, st.iH, st.iL)
+                            st.Regime[idx] = "tVolatile"
+                    else:
+                        st.Regime[idx] = "sVolatile"
+                    st.S += 1
+
+            if st.Demand >= st.price or st.iDemand >= st.price or st.iDemand >= st.iL:
+                i = s
+                st.I = st.iZ
+                st.W = MAX_PERIOD
+                st.iW = i
+                st.T += 1
+                st.jC = st.C
+                if st.iz != 0 and st.iC == st.Cc:
+                    st.h = st.I
+                st.iC = not st.C
+                if st.iStdDev > Decimal('50.0'):
+                    st.S += 1
+                    st.iw = i
+                    st.iI = st.iz
+                    self._L(j)
+                elif st.iATR < Decimal('50.0'):
+                    st.S += 1
+                    st.iO = i
+                    st.io = i
+                    self._L(j)
+                else:
+                    self._L(j)
+                    if is_now != st.t:
+                        if self._on_fire(j, "Stable", "tVolatile"):
+                            self._F(j, st.iH, st.iL)
+                            st.Regime[idx] = "tVolatile"
+                    else:
+                        st.Regime[idx] = "sVolatile"
+                    st.S += 1
+
+            s += 1
+
+        # Second loop: R/L/H over ranging regime
+        s = X_PERIOD - 1
+        while s < st.S:
+            idx = s - (y + 1)
+            if idx < 0:
+                s += 1
+                continue
+            j = s
+            self._normalize(j)
+            self._unify(j)
+            if st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                self._R(j)
+                self._L(j)
+                self._H(j)
+            s += 1
+
+        # MQL4: S=x; T=x;
+        st.S = X_PERIOD
+        st.T = X_PERIOD
+
+        # Z adjustment (upside anchor)
+        if st.Z != scan_limit and st.Z >= st.z:
+            j = MAX_PERIOD - 1
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+        elif st.Z != scan_limit and st.Z < st.z:
+            j = MAX_PERIOD
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+        else:
+            j = X_PERIOD - 1
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+
+        # W adjustment (upside anchor)
+        if st.W != scan_limit and st.W >= st.w:
+            j = MAX_PERIOD - 1
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+        elif st.W != scan_limit and st.W < st.w:
+            j = MAX_PERIOD
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+        else:
+            j = X_PERIOD - 1
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnStand() — downside extremum scanner
+    # ------------------------------------------------------------------------
+    def _on_stand(self) -> None:
+        """Faithful port of MQL4 OnStand().
+        Downside regime scanner: scans from y+1 down to Y_scan (bounded at 1),
+        extending analysis below the normal bar range.
+        """
+        st = self.state
+        st.on_stand_runs += 1
+        y = st.y
+        # MQL4: S=x; T=x; X=y; Y=y;
+        st.S = X_PERIOD
+        st.T = X_PERIOD
+        st.X_scan = y
+        st.Y_scan = y
+        is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
+
         s = y + 1
-        while s > state.Y:
+        while s > st.Y_scan:
             if s == 1:
                 break
             if s < 0:
                 break
-            idx = s - y - 1
+            idx = s - (y + 1)
             if idx < 0:
                 s -= 1
                 continue
-            if idx >= len(state.Regime):
-                ext = idx - len(state.Regime) + 1
-                state.Regime.extend([""] * ext)
-                state.k.extend([False] * ext)
-                state.l.extend([False] * ext)
-                state.HH.extend([Decimal('0.0')] * ext)
-                state.LL.extend([Decimal('0.0')] * ext)
-                state.Premium.extend([Decimal('0.0')] * ext)
-                state.Discount.extend([Decimal('0.0')] * ext)
+            if idx >= len(st.Regime):
+                ext = idx - len(st.Regime) + 1
+                st.Regime.extend([""] * ext)
+                st.k.extend([False] * ext)
+                st.l.extend([False] * ext)
+                st.HH.extend([Decimal('0.0')] * ext)
+                st.LL.extend([Decimal('0.0')] * ext)
+                st.Premium.extend([Decimal('0.0')] * ext)
+                st.Discount.extend([Decimal('0.0')] * ext)
             j = s
-            state.ir = 0
-            state.ij = 0
-            if state.Suply <= state.price or state.iSuply <= state.price or state.iSuply <= state.iH:
-                state.I = state.iW
-                state.Z = y + 1
-                state.iZ = s
-                state.T -= 1
-                state.iC = state.C
-                if state.iw != 0 and state.jC == state.Cc: state.h = state.I
-                state.jC = not state.C
-                if state.X != state.Y and state.iz == 0 and state.iStdDev > Decimal('50.0'):
-                    state.ij = s
-                    state.iz = s
-                    state.iI = state.iw
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                    if state.ir == 0 and state.Y != 2: state.Y -= 1
-                elif state.X != state.Y and state.iO == 0 and state.iATR < Decimal('50.0'):
-                    state.iO = s
-                    state.ir = s
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                    if state.ij == 0 and state.Y != 2: state.Y -= 1
-                elif state.X == state.Y:
-                    m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                    if self._on_fire(j, "Stable", "tVolatile"):
-                        self._F(j, state.iH, state.iL)
-                        state.Regime[idx] = "tVolatile"
+            st.ir = 0
+            st.ij = 0
+            self._normalize(j)
+            self._unify(j)
+
+            if st.Suply <= st.price or st.iSuply <= st.price or st.iSuply <= st.iH:
+                i = s
+                st.I = st.iW
+                st.Z = MIN_PERIOD + 1
+                st.iZ = i
+                st.T -= 1
+                st.iC = st.C
+                if st.iw != 0 and st.jC == st.Cc:
+                    st.h = st.I
+                st.jC = not st.C
+                if st.X_scan != st.Y_scan and st.iz == 0 and st.iStdDev > Decimal('50.0'):
+                    st.ij = i
+                    st.iz = i
+                    st.iI = st.iw
+                    self._H(j)
+                    if st.ir == 0 and st.Y_scan != 2:
+                        st.Y_scan -= 1
+                elif st.X_scan != st.Y_scan and st.iO == 0 and st.iATR < Decimal('50.0'):
+                    st.iO = i
+                    st.ir = i
+                    self._H(j)
+                    if st.ij == 0 and st.Y_scan != 2:
+                        st.Y_scan -= 1
+                elif st.X_scan == st.Y_scan:
+                    self._H(j)
+                    if is_now != st.t:
+                        if self._on_fire(j, "Stable", "tVolatile"):
+                            self._F(j, st.iH, st.iL)
+                            st.Regime[idx] = "tVolatile"
                     else:
-                        state.Regime[idx] = "sVolatile"
-                    if state.Y != 2 and state.X != 2:
-                        state.Y -= 1
-                        state.X -= 1
-            if state.Demand >= state.price or state.iDemand >= state.price or state.iDemand >= state.iL:
-                state.I = state.iZ
-                state.W = y + 1
-                state.iW = s
-                state.T -= 1
-                state.jC = state.C
-                if state.iz != 0 and state.iC == state.Cc: state.h = state.I
-                state.iC = not state.C
-                if state.X != state.Y and state.iw == 0 and state.iStdDev > Decimal('50.0'):
-                    state.ij = s
-                    state.iw = s
-                    state.iI = state.iz
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.l): state.l[idx] = n >= 12
-                    if state.ir == 0 and state.Y != 2: state.Y -= 1
-                elif state.X != state.Y and state.iO == 0 and state.iATR < Decimal('50.0'):
-                    state.iO = s
-                    state.io = s
-                    state.ir = 0
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.l): state.l[idx] = n >= 12
-                    if state.ij == 0 and state.Y != 2: state.Y -= 1
-                elif state.X == state.Y:
-                    n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.l): state.l[idx] = n >= 12
-                    if self._on_fire(j, "Stable", "tVolatile"):
-                        self._F(j, state.iH, state.iL)
-                        state.Regime[idx] = "tVolatile"
+                        st.Regime[idx] = "sVolatile"
+                    if st.Y_scan != 2 and st.X_scan != 2:
+                        st.Y_scan -= 1
+                        st.X_scan -= 1
+
+            if st.Demand >= st.price or st.iDemand >= st.price or st.iDemand >= st.iL:
+                i = s
+                st.I = st.iZ
+                st.W = MIN_PERIOD + 1
+                st.iW = i
+                st.T -= 1
+                st.jC = st.C
+                if st.iz != 0 and st.iC == st.Cc:
+                    st.h = st.I
+                st.iC = not st.C
+                if st.X_scan != st.Y_scan and st.iw == 0 and st.iStdDev > Decimal('50.0'):
+                    st.ij = i
+                    st.iw = i
+                    st.iI = st.iz
+                    self._L(j)
+                    if st.ir == 0 and st.Y_scan != 2:
+                        st.Y_scan -= 1
+                elif st.X_scan != st.Y_scan and st.iO == 0 and st.iATR < Decimal('50.0'):
+                    st.iO = i
+                    st.io = i
+                    st.ir = 0
+                    self._L(j)
+                    if st.ij == 0 and st.Y_scan != 2:
+                        st.Y_scan -= 1
+                elif st.X_scan == st.Y_scan:
+                    self._L(j)
+                    if is_now != st.t:
+                        if self._on_fire(j, "Stable", "tVolatile"):
+                            self._F(j, st.iH, st.iL)
+                            st.Regime[idx] = "tVolatile"
                     else:
-                        state.Regime[idx] = "sVolatile"
-                    if state.Y != 2 and state.X != 2:
-                        state.Y -= 1
-                        state.X -= 1
+                        st.Regime[idx] = "sVolatile"
+                    if st.Y_scan != 2 and st.X_scan != 2:
+                        st.Y_scan -= 1
+                        st.X_scan -= 1
             else:
-                if state.Y != 2 and state.X != 2:
-                    state.Y -= 1
-                    state.X -= 1
+                if st.Y_scan != 2 and st.X_scan != 2:
+                    st.Y_scan -= 1
+                    st.X_scan -= 1
             s -= 1
-        state.X = state.y
-        state.Y = state.y
-        if state.Z != 2:
-            if state.Z >= state.z: state.z = state.y
-            else: state.z = state.y + 1
-        else: state.z = state.y + 1
-        if state.W != 2:
-            if state.W >= state.w: state.w = state.y
-            else: state.w = state.y + 1
-        else: state.w = state.y + 1
 
-    def _on_goe(self):
-        state = self.state
-        if state.signal != Decimal('0.0'): return
-        if self._on_gaurd(0) and state.KC:
-            if ((state.h == state.io and state.z > state.o) or (state.h == state.iO and state.Z > state.O) or
-                (state.h == state.iz and state.Z > state.z) or (state.h == state.iZ and state.Z < state.z)):
-                state.prime = 1
-                self._signal()
-                state.tick_tock = True
-                state.tag = 1
-            elif ((state.h == state.io) or (state.h == state.iZ) or (state.h == state.iz) or (state.h == state.iO)):
-                state.prime = 1
-                self._signal()
-                state.tick_tock = True
-                state.tag = 1
-        elif self._on_gaurd(0) != state.KC:
-            if ((state.h == state.io and state.z > state.o) or (state.h == state.iO and state.Z > state.O) or
-                (state.h == state.iz and state.Z > state.z) or (state.h == state.iZ and state.Z < state.z)):
-                state.prime = 1
-                self._signal()
-                state.tick_tock = True
-                state.tag = 1
-            elif ((state.h == state.io) or (state.h == state.iZ) or (state.h == state.iz) or (state.h == state.iO)):
-                state.prime = 1
-                self._signal()
-                state.tick_tock = True
-                state.tag = 1
-        self._KC()
+        # Second loop: R/L/H over ranging regime (Y_scan+1 → y+1)
+        s = st.Y_scan + 1
+        while s < y + 1:
+            idx = s - (y + 1)
+            if idx < 0:
+                s += 1
+                continue
+            j = s
+            self._normalize(j)
+            self._unify(j)
+            if st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                self._R(j)
+                self._L(j)
+                self._H(j)
+            s += 1
 
-    def _on_toe(self):
-        state = self.state
-        if state.signal != Decimal('0.0'): return
-        if self._on_gaurd(0) and state.KC:
-            if ((state.h == state.io and state.w > state.o) or (state.h == state.iO and state.W > state.O) or
-                (state.h == state.iw and state.W > state.w) or (state.h == state.iW and state.W < state.w)):
-                state.prime = 0
-                self._signal()
-                state.tick_tock = True
-                state.tag = 0
-            elif ((state.h == state.io) or (state.h == state.iW) or (state.h == state.iw) or (state.h == state.iO)):
-                state.prime = 0
-                self._signal()
-                state.tick_tock = True
-                state.tag = 0
-        elif self._on_gaurd(0) != state.KC:
-            if ((state.h == state.io and state.w > state.o) or (state.h == state.iO and state.W > state.O) or
-                (state.h == state.iw and state.W > state.w) or (state.h == state.iW and state.W < state.w)):
-                state.prime = 0
-                self._signal()
-                state.tick_tock = True
-                state.tag = 0
-            elif ((state.h == state.io) or (state.h == state.iW) or (state.h == state.iw) or (state.h == state.iO)):
-                state.prime = 0
-                self._signal()
-                state.tick_tock = True
-                state.tag = 0
-        self._KC()
+        # MQL4: X=y; Y=y;
+        st.X_scan = y
+        st.Y_scan = y
 
-    def _signal(self):
-        state = self.state
-        if state.price <= Decimal('0.0'):
-            logger.warning("_signal suppressed: no valid price")
+        # Z adjustment (downside anchor)
+        if st.Z != 2 and st.Z >= st.z:
+            j = MIN_PERIOD
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+        elif st.Z != 2 and st.Z < st.z:
+            j = MIN_PERIOD + 1
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+        else:
+            j = y + 1
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+
+        # W adjustment (downside anchor)
+        if st.W != 2 and st.W >= st.w:
+            j = MIN_PERIOD
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+        elif st.W != 2 and st.W < st.w:
+            j = MIN_PERIOD + 1
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+        else:
+            j = y + 1
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                else:
+                    st.Regime[idx] = "sTrend"
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnGoe() — bearish reversal signal
+    # ------------------------------------------------------------------------
+    def _on_goe(self) -> None:
+        """Faithful port of MQL4 OnGoe().
+        if(signal == 0){
+            if((OnGaurd(0)) && (KC == true)){
+                if(((h==io)&&(z>o)) || ((h==iO)&&(Z>O)) || ((h==iz)&&(Z>z)) || ((h==iZ)&&(Z<z))){
+                    if((C==false)&&(c==false)){ prime=1; G(); Signal(); tickTock=true; tag=1; ... }
+                    else{ prime=1; G(); Signal(); tickTock=true; tag=1; ... } }
+                else if(((h==io)||(h==iZ)||(h==iz)||(h==iO))){
+                    if((C==false)&&(c==false)){ prime=1; G(); Signal(); tickTock=true; tag=1; ... }
+                    else{ prime=1; G(); Signal(); tickTock=true; tag=1; ... } } }
+            else if(OnGaurd(0) != KC){
+                // ... mirrored with (C==false)||(c==false) ...
+                KC(); }
+        }
+        """
+        st = self.state
+        if st.signal != Decimal('0.0'):
             return
-        h_idx = state.h - state.y - 1
-        if h_idx < 0 or h_idx >= len(state.k):
-            logger.info(f"📡 Signal suppressed: h={state.h} maps to invalid index {h_idx}")
+        if self._on_gaurd(0) and st.KC:
+            if ((st.h == st.io and st.z > st.o)
+                    or (st.h == st.iO and st.Z > st.O)
+                    or (st.h == st.iz and st.Z > st.z)
+                    or (st.h == st.iZ and st.Z < st.z)):
+                if (not st.C) and (not st.c):
+                    st.prime = 1
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1
+                else:
+                    st.prime = 1
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1
+            elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
+                if (not st.C) and (not st.c):
+                    st.prime = 1
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1
+                else:
+                    st.prime = 1
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1
+        elif self._on_gaurd(0) != st.KC:
+            if ((st.h == st.io and st.z > st.o)
+                    or (st.h == st.iO and st.Z > st.O)
+                    or (st.h == st.iz and st.Z > st.z)
+                    or (st.h == st.iZ and st.Z < st.z)):
+                if (not st.C) or (not st.c):
+                    st.prime = 1
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1
+                else:
+                    st.prime = 1
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1
+            elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
+                if (not st.C) or (not st.c):
+                    st.prime = 1
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1
+                else:
+                    st.prime = 1
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1
+            self._KC()
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnToe() — bullish reversal signal
+    # ------------------------------------------------------------------------
+    def _on_toe(self) -> None:
+        """Faithful port of MQL4 OnToe().
+        Symmetric to OnGoe() with W/w/iW/iw replacing Z/z/iZ/iz.
+        """
+        st = self.state
+        if st.signal != Decimal('0.0'):
             return
+        if self._on_gaurd(0) and st.KC:
+            if ((st.h == st.io and st.w > st.o)
+                    or (st.h == st.iO and st.W > st.O)
+                    or (st.h == st.iw and st.W > st.w)
+                    or (st.h == st.iW and st.W < st.w)):
+                if (not st.C) and (not st.c):
+                    st.prime = 0
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0
+                else:
+                    st.prime = 0
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0
+            elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
+                if (not st.C) and (not st.c):
+                    st.prime = 0
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0
+                else:
+                    st.prime = 0
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0
+        elif self._on_gaurd(0) != st.KC:
+            if ((st.h == st.io and st.w > st.o)
+                    or (st.h == st.iO and st.W > st.O)
+                    or (st.h == st.iw and st.W > st.w)
+                    or (st.h == st.iW and st.W < st.w)):
+                if (not st.C) or (not st.c):
+                    st.prime = 0
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0
+                else:
+                    st.prime = 0
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0
+            elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
+                if (not st.C) or (not st.c):
+                    st.prime = 0
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0
+                else:
+                    st.prime = 0
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0
+            self._KC()
 
-        m_local = self._M(state.h, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-        n_local = self._N(state.h, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-
-        if m_local < 12 and n_local < 12:
+    # ------------------------------------------------------------------------
+    # MQL4 Signal() — anchor signal to current price
+    # ------------------------------------------------------------------------
+    def _signal(self) -> None:
+        """Faithful port of MQL4 Signal():
+        ab=!ba; count=0; toll=0; tally=" "; signal=price;
+        """
+        st = self.state
+        if st.price <= Decimal('0.0'):
+            return
+        st.ab = not st.ba
+        st.count = 0
+        st.toll = 0
+        st.tally = " "
+        st.signal = st.price
+        st.signature = True
+        # Kronecker δ(m-n-2)=1 gate: record local m/n at h
+        h_idx = st.h - (st.y + 1)
+        if 0 <= h_idx < len(st.k):
+            m_local = self._M(st.h)
+            n_local = self._N(st.h)
+            st.last_kronecker_m = m_local
+            st.last_kronecker_n = n_local
+            st.last_kronecker_h = st.h
+            self._last_kronecker_bar = st.h
+            self._imbalance_fire_count += 1
+            self._last_signal_time = datetime.now()
             logger.info(
-                f"📡 Signal suppressed: m_local={m_local} < 12 and n_local={n_local} < 12 at h={state.h}"
+                f"📡 SIGNAL #{self._imbalance_fire_count}: "
+                f"price={st.price:.5f}, tick={st.tick}, h={st.h}, "
+                f"m_local={m_local}, n_local={n_local}, "
+                f"prime={st.prime}, dime={st.dime}"
             )
-            return
 
-        bullish_fire = (m_local >= 12) and bool(state.k[h_idx])
-        bearish_fire = (n_local >= 12) and bool(state.l[h_idx])
-
-        if not (bullish_fire or bearish_fire):
-            logger.info(
-                f"📡 Signal suppressed: h={state.h} | "
-                f"k[h]={bool(state.k[h_idx])} l[h]={bool(state.l[h_idx])} | "
-                f"m_local={m_local} n_local={n_local}"
-            )
-            return
-        state.ab = not state.ba
-        state.count = 0
-        state.toll = 0
-        state.tally = " "
-        state.signal = state.price
-        state.signature = True
-        state.last_kronecker_m = m_local
-        state.last_kronecker_n = n_local
-        state.last_kronecker_h = state.h
-        self._last_signal_time = datetime.now()
-        self._imbalance_fire_count += 1
-        self._last_kronecker_bar = state.h
-        logger.info(
-            f"📡 SIGNAL GENERATED #{self._imbalance_fire_count}: "
-            f"price={state.price:.5f}, tick={state.tick}, h={state.h}, "
-            f"dbz={state.dbz_branch}, bullish={bullish_fire}, bearish={bearish_fire}, "
-            f"m_local={m_local}, n_local={n_local}, prime={state.prime}, dime={state.dime}"
-        )
-
-    def _on_gaurd(self, inp):
-        state = self.state
-        if state.price > state.E and state.E != Decimal('0.0'):
-            if state.signature and inp != -1:
-                state.dime = 0
-                state.mem = 0
+    # ------------------------------------------------------------------------
+    # MQL4 OnGaurd() — passive inversion of binary logic
+    # ------------------------------------------------------------------------
+    def _on_gaurd(self, inp: int) -> bool:
+        """Faithful port of MQL4 OnGaurd(int inp):
+        if((price >E) &&(E!=0)){ if((signature==true) &&(inp!=-1)){dime=0;} return true; }
+        else{ if((signature==true) &&(inp!=-1)){dime=1;} return false; }
+        if((price <D) &&(D!=0)){ if((signature==true) &&(inp!=-1)){dime=1;} return true; }
+        else{ if((signature==true) &&(inp!=-1)){dime=0;} return false; }
+        """
+        st = self.state
+        if st.price > st.E and st.E != Decimal('0.0'):
+            if st.signature and inp != -1:
+                st.dime = 0
+                st.mem = 0
             return True
-        elif state.price < state.D and state.D != Decimal('0.0'):
-            if state.signature and inp != -1:
-                state.dime = 1
-                state.mem = 1
+        elif st.price < st.D and st.D != Decimal('0.0'):
+            if st.signature and inp != -1:
+                st.dime = 1
+                st.mem = 1
             return True
         else:
-            if state.signature and inp != -1:
-                state.dime = 1
-                state.mem = 1
+            if st.signature and inp != -1:
+                st.dime = 1
+                st.mem = 1
             return False
 
-    def _on_reinit(self):
-        state = self.state
-        saved_ohlcv = self.ohlcv_history.copy()
-        saved_price = state.price
-        saved_Price = state.Price
-        saved_iH = state.iH
-        saved_iL = state.iL
-        saved_tick = state.tick
-        saved_on_track = state.on_track_runs
-        saved_on_stand = state.on_stand_runs
-        state.KC = state.invert
-        if state.X <= state.y:
-            state.X = state.y + MAX_PERIOD
-        size = state.X - state.y
-        if size <= 0: size = MAX_PERIOD
-        state.X = state.y + size
-        for i in range(13):
-            if i < len(state.cA):
-                state.cA[i] = [Decimal('0.0')] * size
-                state.iA[i] = [Decimal('0.0')] * size
-                state.kA[i] = [Decimal('0.0')] * size
-                state.lA[i] = [Decimal('0.0')] * size
-        state.IHKk = []
-        state.IHKt = []
-        state.RSI = []
-        state.CCI = []
-        state.MOM = []
-        state.AD = []
-        state.OBV = []
-        state.Force = []
-        state.MFI = []
-        state.DeM = []
-        state.RVIm = []
-        state.AC = []
-        state.StdDev = []
-        state.ATR = []
-        state.ADX = []
-        state.Regime = [""] * size
-        state.Premium = [Decimal('0.0')] * size
-        state.Discount = [Decimal('0.0')] * size
-        state.HH = [Decimal('0.0')] * size
-        state.LL = [Decimal('0.0')] * size
-        state.k = [False] * size
-        state.l = [False] * size
-        state.U = []
-        state.R = True
-        state.D = Decimal('0.0')
-        state.E = Decimal('0.0')
-        state.K = False
-        state.Z = state.y + 1
-        state.z = state.y + 1
-        state.O = state.y + 1
-        state.o = state.y + 1
-        state.r = 0
-        state.W = state.y + 1
-        state.w = state.y + 1
-        state.I = 0
-        state.iI = 0
-        state.J = 0
-        state.iJ = 0
-        state.ij = 0
-        state.toll = 0
-        state.tally = "   "
-        state.tick_tock = False
-        state.iZ = state.y + 1
-        state.iz = state.y + 1
-        state.iW = state.y + 1
-        state.iw = state.y + 1
-        state.iO = state.y + 1
-        state.io = state.y + 1
-        state.ir = 0
-        state.S = state.X
-        state.T = state.X
-        state.X = state.y
-        state.Y = state.y
-        state.FG = False
-        state.signature = False
-        state.signal = Decimal('0.0')
-        state.FVG = -1
-        state.BL = []
-        state.bottomLine = "   "
-        state.bL = "   "
-        state.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
-        state.quat_history = [state.q_field.clone()]
-        state.time_fraction = Fraction(0, 1)
-        state.s_squared_exact = Fraction(0, 1)
-        state.r_squared_exact = Fraction(1, 1)
-        state.deviation_exact = Fraction(0, 1)
-        state.re_psi_exact = Fraction(1, 1)
-        state.dbz_branch = 0
-        state.arc_coherent = True
-        state.fvg_anchor_map = {}
-        self._eps = Fraction(1, 100)
-        self._s_acc_exact = Fraction(0, 1)
-        self.ohlcv_history = saved_ohlcv
-        state.price = saved_price
-        state.Price = saved_Price
-        state.iH = saved_iH
-        state.iL = saved_iL
-        state.tick = saved_tick
-        state.on_track_runs = saved_on_track
-        state.on_stand_runs = saved_on_stand
-        self._populate_indicator_matrix()
-        logger.info(f"🔄 OnReInit() completed — Tick preserved: {state.tick}")
+    # ------------------------------------------------------------------------
+    # MQL4 A() / B() — close positions
+    # ------------------------------------------------------------------------
+    def _A(self, price: Decimal) -> None:
+        """Faithful port of MQL4 A():
+        if((v==true) && (lOrder_id!=-1)){ OrderClose(lOrder_id,lot,Bid,slip,Blue); lOrder_id=-1; }
+        else if((v==true) && (kOrder_id!=-1)){ OrderClose(kOrder_id,lot,Bid,slip,Blue); kOrder_id=-1; }
+        E=0; A=true; B=false; K=false; Buy=-1;
+        """
+        st = self.state
+        if st.v and st.lOrder_id != -1:
+            logger.info(f"🔴 A(): Close long #{st.lOrder_id} at {price}")
+            st.lOrder_id = -1
+            st.has_open_long = False
+        elif st.v and st.kOrder_id != -1:
+            logger.info(f"🔴 A(): Close short #{st.kOrder_id} at {price}")
+            st.kOrder_id = -1
+            st.has_open_short = False
+        st.E = Decimal('0.0')
+        st.A = True
+        st.B = False
+        st.K = False
+        st.Buy = -1
+        st.trailing_stop_active = False
+        st.trailing_stop_price = Decimal('0.0')
+        st.trailing_take_profit = Decimal('0.0')
 
-    def _execute_trailing_stop(self):
-        state = self.state
-        has_long = state.has_open_long
-        has_short = state.has_open_short
+    def _B(self, price: Decimal) -> None:
+        """Faithful port of MQL4 B():
+        if((u==true) && (kOrder_id!=-1)){ OrderClose(kOrder_id,lot,Ask,slip,Red); kOrder_id=-1; }
+        else if((u==true) && (lOrder_id!=-1)){ OrderClose(lOrder_id,lot,Ask,slip,Red); lOrder_id=-1; }
+        D=0; A=false; B=true; K=false; Sell=-1;
+        """
+        st = self.state
+        if st.u and st.kOrder_id != -1:
+            logger.info(f"🔵 B(): Close short #{st.kOrder_id} at {price}")
+            st.kOrder_id = -1
+            st.has_open_short = False
+        elif st.u and st.lOrder_id != -1:
+            logger.info(f"🔵 B(): Close long #{st.lOrder_id} at {price}")
+            st.lOrder_id = -1
+            st.has_open_long = False
+        st.D = Decimal('0.0')
+        st.A = False
+        st.B = True
+        st.K = False
+        st.Sell = -1
+        st.trailing_stop_active = False
+        st.trailing_stop_price = Decimal('0.0')
+        st.trailing_take_profit = Decimal('0.0')
+
+    # ------------------------------------------------------------------------
+    # MQL4 P() / Q() — open positions
+    # ------------------------------------------------------------------------
+    def _P(self, price: Decimal) -> None:
+        """Faithful port of MQL4 P().
+        BUY execution: opens long if the next topological target yields PnL
+        that exceeds spread + commission. Simulated state-only (no broker)."""
+        st = self.state
+        target = self._get_next_topological_target("BUY", price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "BUY"):
+            if st.Buy != -1 and (st.A or not st.B) and (st.u or not st.v):
+                if st.C:
+                    st.lOrder_id = 1          # simulated ticket
+                    st.has_open_long = True
+                    st.trailing_stop_entry = price
+                    st.trailing_stop_side = "LONG"
+            st.Buy += 1
+            logger.info(f"🟢 P(): BUY executed at {price:.5f}, target={target:.5f}")
+        else:
+            self._A(price)
+            logger.info("🟢 P(): BUY rejected — projected PnL <= spread friction")
+
+    def _Q(self, price: Decimal) -> None:
+        """Faithful port of MQL4 Q().
+        SELL execution: opens short if the next topological target yields PnL
+        that exceeds spread + commission. Simulated state-only (no broker)."""
+        st = self.state
+        target = self._get_next_topological_target("SELL", price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "SELL"):
+            if st.Sell != -1 and (not st.A or st.B) and (not st.u or st.v):
+                if not st.C:
+                    st.kOrder_id = 1          # simulated ticket
+                    st.has_open_short = True
+                    st.trailing_stop_entry = price
+                    st.trailing_stop_side = "SHORT"
+            st.Sell += 1
+            logger.info(f"🔴 Q(): SELL executed at {price:.5f}, target={target:.5f}")
+        else:
+            self._B(price)
+            logger.info("🔴 Q(): SELL rejected — projected PnL <= spread friction")
+
+    # ------------------------------------------------------------------------
+    # MQL4 S() — SL/TP boundary setting
+    # ------------------------------------------------------------------------
+    def _S(self) -> None:
+        """Faithful port of MQL4 S():
+        if(SL!=0){sSL =Bid+SL-com; bSL=Ask-SL+com;}
+        if(TP!=0){sTP=Bid-TP;    bTP=Ask+ TP;}
+        """
+        st = self.state
+        if STOP_LOSS != Decimal('0.0'):
+            self._sSL = st.price + STOP_LOSS - COMMISSION
+            self._bSL = st.price - STOP_LOSS + COMMISSION
+        if TAKE_PROFIT != Decimal('0.0'):
+            self._sTP = st.price - TAKE_PROFIT
+            self._bTP = st.price + TAKE_PROFIT
+
+    # ------------------------------------------------------------------------
+    # MQL4 T() — trailing stop with friction clearance
+    # ------------------------------------------------------------------------
+    def _execute_trailing_stop(self) -> None:
+        """Faithful port of MQL4 T().
+        Dynamically adjusts SL/TP to lock in compounded geometric growth
+        before topological decoherence forces a regime transition.
+        Adjustments only activate when projected PnL > spread + commission.
+        """
+        st = self.state
+        has_long = st.has_open_long
+        has_short = st.has_open_short
         if not (has_long or has_short):
-            if state.trailing_stop_active:
+            if st.trailing_stop_active:
                 logger.info("📉 Trailing stop deactivated — no open orders")
-                state.trailing_stop_active = False
-                state.trailing_stop_price = Decimal('0.0')
-                state.trailing_take_profit = Decimal('0.0')
-                state.trailing_stop_entry = Decimal('0.0')
-                state.trailing_stop_side = ""
+                st.trailing_stop_active = False
+                st.trailing_stop_price = Decimal('0.0')
+                st.trailing_take_profit = Decimal('0.0')
+                st.trailing_stop_entry = Decimal('0.0')
+                st.trailing_stop_side = ""
             return
-        idx = state.Z - state.y - 1
-        if idx < 0 or idx >= len(state.Regime):
+
+        # Regime-aware: skip trailing in Stable / Coherent phases
+        idx = st.Z - (st.y + 1)
+        if 0 <= idx < len(st.Regime):
+            regime = st.Regime[idx]
+            if regime in ("tStable", "tCoherent", "sStable", "sCoherent", "Stable"):
+                return
+        if st.price <= Decimal('0.0'):
             return
-        regime = state.Regime[idx]
-        if regime in ("tStable", "tCoherent", "sStable", "sCoherent", "Stable"):
-            return
-        if state.price <= Decimal('0.0'):
-            return
-        if not state.trailing_stop_active:
-            state.trailing_stop_active = True
-            state.trailing_stop_entry = state.price
-            state.trailing_stop_price = state.price
-            state.trailing_stop_side = "LONG" if has_long else "SHORT"
+
+        # First activation
+        if not st.trailing_stop_active:
+            st.trailing_stop_active = True
+            st.trailing_stop_entry = st.price
+            st.trailing_stop_price = st.price
+            st.trailing_stop_side = "LONG" if has_long else "SHORT"
             if has_long:
-                state.trailing_take_profit = state.price * Decimal('1.02')
+                st.trailing_take_profit = st.price * Decimal('1.02')
             else:
-                state.trailing_take_profit = state.price * Decimal('0.98')
+                st.trailing_take_profit = st.price * Decimal('0.98')
             logger.info(
-                f"📈 Trailing stop ACTIVATED at {state.trailing_stop_price:.5f}, "
-                f"TP={state.trailing_take_profit:.5f}, "
-                f"direction={state.trailing_stop_side}"
+                f"📈 Trailing stop ACTIVATED at {st.trailing_stop_price:.5f}, "
+                f"TP={st.trailing_take_profit:.5f}, direction={st.trailing_stop_side}"
             )
             return
 
+        # Friction calculation
         if len(self.price_history) > 0:
             last = self.price_history[-1]
             current_spread = last.ask - last.bid
@@ -2565,102 +3141,208 @@ class AEEA_Engine:
             current_spread = Decimal('0.0')
         commission_abs = abs(COMMISSION)
         point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
-        friction_points = ((current_spread + commission_abs) / point_size)
+        friction_points = (current_spread + commission_abs) / point_size
         safety_buffer = Decimal('1.0')
         min_trail_threshold = (friction_points + safety_buffer) * point_size
 
+        # PnL in points
         if has_long:
-            pnl_points = (state.price - state.trailing_stop_entry) / point_size
+            pnl_points = (st.price - st.trailing_stop_entry) / point_size
         else:
-            pnl_points = (state.trailing_stop_entry - state.price) / point_size
-
+            pnl_points = (st.trailing_stop_entry - st.price) / point_size
         if pnl_points <= (friction_points + safety_buffer):
             return
 
+        # Geometric trail step: ~30% of open profit
         trail_step = max(min_trail_threshold, pnl_points * point_size * Decimal('0.3'))
-        new_sl = state.trailing_stop_price
+        new_sl = st.trailing_stop_price
         topological_target = Decimal('0.0')
+
         if has_long:
-            for ji in range(state.y + 1, state.X):
-                if ji < len(state.Premium) and state.Premium[ji] > state.price and state.Premium[ji] != Decimal('0.0'):
-                    topological_target = state.Premium[ji]
+            # Search Premium[] for next anchor above price
+            for ji in range(st.y + 1, X_PERIOD):
+                jidx = ji - (st.y + 1)
+                if jidx < len(st.Premium) and st.Premium[jidx] > st.price and st.Premium[jidx] != Decimal('0.0'):
+                    topological_target = st.Premium[jidx]
                     break
             slDistance = max(trail_step, SLIPPAGE * point_size)
-            proposedSL = state.price - slDistance
-            if ((proposedSL > state.trailing_stop_price or state.trailing_stop_price == Decimal('0.0'))
-                and (topological_target == Decimal('0.0') or proposedSL < (topological_target - min_trail_threshold))):
+            proposedSL = st.price - slDistance
+            if ((proposedSL > st.trailing_stop_price or st.trailing_stop_price == Decimal('0.0'))
+                    and (topological_target == Decimal('0.0')
+                         or proposedSL < (topological_target - min_trail_threshold))):
                 new_sl = proposedSL
             tpDistance = Decimal('0.0')
             if topological_target > Decimal('0.0'):
-                tpDistance = max(topological_target - state.price, TAKE_PROFIT * point_size)
+                tpDistance = max(topological_target - st.price, TAKE_PROFIT * point_size)
             else:
                 tpDistance = max(trail_step * Decimal('2.0'), TAKE_PROFIT * point_size)
-            proposedTP = state.price + tpDistance
-            if proposedTP > (state.price + min_trail_threshold):
-                state.trailing_take_profit = proposedTP
+            proposedTP = st.price + tpDistance
+            if proposedTP > (st.price + min_trail_threshold):
+                st.trailing_take_profit = proposedTP
         else:
-            for ji in range(state.y + 1, state.X):
-                if ji < len(state.Discount) and state.Discount[ji] < state.price and state.Discount[ji] != Decimal('0.0'):
-                    topological_target = state.Discount[ji]
+            # Search Discount[] for next anchor below price
+            for ji in range(st.y + 1, X_PERIOD):
+                jidx = ji - (st.y + 1)
+                if jidx < len(st.Discount) and st.Discount[jidx] < st.price and st.Discount[jidx] != Decimal('0.0'):
+                    topological_target = st.Discount[jidx]
                     break
             slDistance = max(trail_step, SLIPPAGE * point_size)
-            proposedSL = state.price + slDistance
-            if ((state.trailing_stop_price == Decimal('0.0') or proposedSL < state.trailing_stop_price)
-                and (topological_target == Decimal('0.0') or proposedSL > (topological_target + min_trail_threshold))):
+            proposedSL = st.price + slDistance
+            if ((st.trailing_stop_price == Decimal('0.0') or proposedSL < st.trailing_stop_price)
+                    and (topological_target == Decimal('0.0')
+                         or proposedSL > (topological_target + min_trail_threshold))):
                 new_sl = proposedSL
             tpDistance = Decimal('0.0')
             if topological_target > Decimal('0.0'):
-                tpDistance = max(state.price - topological_target, TAKE_PROFIT * point_size)
+                tpDistance = max(st.price - topological_target, TAKE_PROFIT * point_size)
             else:
                 tpDistance = max(trail_step * Decimal('2.0'), TAKE_PROFIT * point_size)
-            proposedTP = state.price - tpDistance
-            if proposedTP < (state.price - min_trail_threshold):
-                state.trailing_take_profit = proposedTP
-        if new_sl != state.trailing_stop_price:
-            state.trailing_stop_price = new_sl
+            proposedTP = st.price - tpDistance
+            if proposedTP < (st.price - min_trail_threshold):
+                st.trailing_take_profit = proposedTP
+
+        if new_sl != st.trailing_stop_price:
+            st.trailing_stop_price = new_sl
             logger.info(
-                f"📈 Trailing stop updated to {state.trailing_stop_price:.5f} "
+                f"📈 Trailing stop updated to {st.trailing_stop_price:.5f} "
                 f"(PnL={pnl_points:.1f}pts, friction={friction_points:.1f}pts)"
             )
-        if has_long and state.price >= state.trailing_take_profit:
-            logger.info(f"✅ TAKE PROFIT hit (LONG) at {state.price:.5f} / TP={state.trailing_take_profit:.5f}")
-            state.trailing_stop_active = False
-            state.trailing_stop_price = Decimal('0.0')
-            state.trailing_take_profit = Decimal('0.0')
-            state.trailing_stop_entry = Decimal('0.0')
-            state.trailing_stop_side = ""
-            state.has_open_long = False
-            state.lOrder_id = -1
-        elif has_short and state.price <= state.trailing_take_profit:
-            logger.info(f"✅ TAKE PROFIT hit (SHORT) at {state.price:.5f} / TP={state.trailing_take_profit:.5f}")
-            state.trailing_stop_active = False
-            state.trailing_stop_price = Decimal('0.0')
-            state.trailing_take_profit = Decimal('0.0')
-            state.trailing_stop_entry = Decimal('0.0')
-            state.trailing_stop_side = ""
-            state.has_open_short = False
-            state.kOrder_id = -1
 
-    def _send_signal_alert(self):
-        state = self.state
-        target_chat = state.chat_id
-        if target_chat is None and state.webapp_user_id is not None:
-            target_chat = state.webapp_user_id
-        if not target_chat or not self.application: return
+        # Take-profit hit?
+        if has_long and st.price >= st.trailing_take_profit:
+            logger.info(f"✅ TP hit (LONG) at {st.price:.5f} / TP={st.trailing_take_profit:.5f}")
+            st.trailing_stop_active = False
+            st.trailing_stop_price = Decimal('0.0')
+            st.trailing_take_profit = Decimal('0.0')
+            st.trailing_stop_entry = Decimal('0.0')
+            st.trailing_stop_side = ""
+            st.has_open_long = False
+            st.lOrder_id = -1
+        elif has_short and st.price <= st.trailing_take_profit:
+            logger.info(f"✅ TP hit (SHORT) at {st.price:.5f} / TP={st.trailing_take_profit:.5f}")
+            st.trailing_stop_active = False
+            st.trailing_stop_price = Decimal('0.0')
+            st.trailing_take_profit = Decimal('0.0')
+            st.trailing_stop_entry = Decimal('0.0')
+            st.trailing_stop_side = ""
+            st.has_open_short = False
+            st.kOrder_id = -1
+
+    # ------------------------------------------------------------------------
+    # Topological target lookup (helper for P/Q/T)
+    # ------------------------------------------------------------------------
+    def _get_next_topological_target(self, side: str, current_price: Decimal) -> Decimal:
+        """Search Premium/Discount arrays for the nearest valid anchor
+        that satisfies the arc-length coherence condition (s ≈ r).
+        Mirrors the search inside MQL4 T()."""
+        st = self.state
+        for ji in range(st.y + 1, X_PERIOD):
+            jidx = ji - (st.y + 1)
+            if side == "BUY":
+                if jidx < len(st.Premium) and st.Premium[jidx] > current_price and st.Premium[jidx] != Decimal('0.0'):
+                    return st.Premium[jidx]
+            elif side == "SELL":
+                if jidx < len(st.Discount) and st.Discount[jidx] < current_price and st.Discount[jidx] != Decimal('0.0'):
+                    return st.Discount[jidx]
+        # Fallback to recent FVG (Stock / Sale)
+        if side == "BUY" and st.Sale > current_price:
+            return st.Sale
+        if side == "SELL" and st.Stock < current_price:
+            return st.Stock
+        return Decimal('0.0')
+
+    # ------------------------------------------------------------------------
+    # Spread / commission clearance check (helper for P/Q)
+    # ------------------------------------------------------------------------
+    def _will_pass_spread_in_pnl(self, entry_price: Decimal, target_price: Decimal, side: str) -> bool:
+        """Evaluates if the projected topological target yields PnL > spread + commission.
+        Mirrors the body of MQL4 WillPassSpreadInPnL().
+        """
+        if len(self.price_history) > 0:
+            last = self.price_history[-1]
+            current_spread = last.ask - last.bid
+        else:
+            current_spread = Decimal('0.0')
+        point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        friction_points = (current_spread + abs(COMMISSION)) / point_size
+        projected_distance = abs(target_price - entry_price)
+        projected_pnl_points = projected_distance / point_size
+        safety_buffer = Decimal('1.0')
+        if side == "BUY":
+            if target_price <= entry_price:
+                return False
+            return projected_pnl_points > (friction_points + safety_buffer)
+        elif side == "SELL":
+            if target_price >= entry_price:
+                return False
+            return projected_pnl_points > (friction_points + safety_buffer)
+        return False
+
+    # ------------------------------------------------------------------------
+    # MQL4 Top() / Bott() — draw horizontal FVG lines
+    # ------------------------------------------------------------------------
+    def _Top(self) -> None:
+        """Faithful port of MQL4 Top():
+        Draw a blue horizontal line at current price (premium FVG).
+        In the Python bridge, this delegates to the /fvg bridge endpoint.
+        """
+        st = self.state
+        price_str = f"{st.price:.5f}"
+        # MQL4 deduplicates by object name; here we dedupe by stored price
+        if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
+            st.BL.append(st.price)
+            st.FVG += 1
+            st.bL = price_str
+            logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}")
+            if self._bridge_publish_callback:
+                try:
+                    self._bridge_publish_callback("top", price_str)
+                except Exception as e:
+                    logger.warning(f"_bridge_publish_callback failed: {e}")
+
+    def _Bott(self) -> None:
+        """Faithful port of MQL4 Bott():
+        Draw a red horizontal line at current price (discount FVG).
+        """
+        st = self.state
+        price_str = f"{st.price:.5f}"
+        if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
+            st.BL.append(st.price)
+            st.FVG += 1
+            st.bL = price_str
+            logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}")
+            if self._bridge_publish_callback:
+                try:
+                    self._bridge_publish_callback("bott", price_str)
+                except Exception as e:
+                    logger.warning(f"_bridge_publish_callback failed: {e}")
+
+    # ------------------------------------------------------------------------
+    # Signal alert dispatch to Telegram
+    # ------------------------------------------------------------------------
+    def _send_signal_alert(self) -> None:
+        """Sends a Kronecker-δ signal alert to the Telegram chat.
+        Called from _on_tick when state.signature is True and chat_id is set.
+        Rate-limited by _signal_cooldown seconds."""
+        st = self.state
+        target_chat = st.chat_id
+        if target_chat is None and st.webapp_user_id is not None:
+            target_chat = st.webapp_user_id
+        if not target_chat or not self.application:
+            return
         if self._last_signal_time:
             elapsed = (datetime.now() - self._last_signal_time).seconds
-            if elapsed < self._signal_cooldown: return
-        direction = "📈 BUY" if state.price > state.signal else "📉 SELL"
-        m_local = state.last_kronecker_m
-        n_local = state.last_kronecker_n
-        h_idx = state.h - state.y - 1
-        m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
-        n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
+            if elapsed < self._signal_cooldown:
+                return
+        direction = "📈 BUY" if st.price > st.signal else "📉 SELL"
+        m_local = st.last_kronecker_m
+        n_local = st.last_kronecker_n
+        h_idx = st.h - (st.y + 1)
+        m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
+        n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
         condition_met = (m_local >= 12) or (n_local >= 12)
-        bid, ask = self.feed.get_current_price()
-        price_str = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
-        idx = state.Z - state.y - 1
-        regime = state.Regime[idx] if 0 <= idx < len(state.Regime) else "Unknown"
+        idx = st.Z - (st.y + 1)
+        regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
         info = self._verify_arc_length_coherence()
         if info["coherent"]:
             coherence_str = "✅ COHERENT"
@@ -2669,14 +3351,14 @@ class AEEA_Engine:
         msg = (
             f"🚨 *ÆEA SIGNAL ALERT*\n"
             f"📊 *Direction:* {direction}\n"
-            f"💰 *Signal Level:* {state.signal:.5f}\n"
-            f"💰 *Current Price:* {price_str}\n"
+            f"💰 *Signal Level:* {st.signal:.5f}\n"
+            f"💰 *Current Price:* {st.price:.5f}\n"
             f"📊 *Regime:* {regime}\n"
-            f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
+            f"⚖️ *Imbalance @ h={st.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"✅ *δ(m-n-2)=1 (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
             f"🧠 *Arc-Length Coherence:* {coherence_str}\n"
-            f"🔄 *Tick Count:* {state.tick}\n"
+            f"🔄 *Tick Count:* {st.tick}\n"
             f"💎 Natalia Tanyatia"
         )
         try:
@@ -2686,39 +3368,42 @@ class AEEA_Engine:
         except Exception as e:
             logger.error(f"❌ Failed to send signal alert: {e}")
 
-    def get_signal_status(self):
-        state = self.state
-        h_idx = state.h - state.y - 1
-        m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
-        n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
-        m_local = self._M(state.h, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
-        n_local = self._N(state.h, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
+    # ------------------------------------------------------------------------
+    # Full engine status snapshot (used by /status command)
+    # ------------------------------------------------------------------------
+    def get_signal_status(self) -> Dict[str, Any]:
+        st = self.state
+        h_idx = st.h - (st.y + 1)
+        m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
+        n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
+        m_local = self._M(st.h) if st.h > 0 else 0
+        n_local = self._N(st.h) if st.h > 0 else 0
         condition_met = (m_local >= 12) or (n_local >= 12)
         info = self._verify_arc_length_coherence()
-        idx = state.Z - state.y - 1
-        regime = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
+        idx = st.Z - (st.y + 1)
+        regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else "Unknown"
         return {
-            "signal": float(state.signal),
-            "price": float(state.price),
-            "signature": state.signature,
-            "KC": bool(state.KC),
-            "prime": int(state.prime),
-            "dime": int(state.dime),
-            "mem": int(state.mem),
-            "tag": int(state.tag),
-            "invert": bool(state.invert),
+            "signal": float(st.signal),
+            "price": float(st.price),
+            "signature": st.signature,
+            "KC": bool(st.KC),
+            "prime": int(st.prime),
+            "dime": int(st.dime),
+            "mem": int(st.mem),
+            "tag": int(st.tag),
+            "invert": bool(st.invert),
             "m_count": m_local,
             "n_count": n_local,
             "m_at_h": m_at_h,
             "n_at_h": n_at_h,
-            "h_bar": int(state.h),
+            "h_bar": int(st.h),
             "condition_met": condition_met,
             "regime": regime,
             "coherence": self._check_coherence(),
             "symbol": SYMBOL,
-            "tick": state.tick,
+            "tick": st.tick,
             "timestamp": datetime.now().isoformat(),
-            "engine_initialized": state.FG,
+            "engine_initialized": st.FG,
             "dbz_branch": info["dbz_branch"],
             "arc_sq": info["arc_sq"],
             "radius_sq": info["radius_sq"],
@@ -2727,23 +3412,26 @@ class AEEA_Engine:
             "quat_tick_count": int(self._quat_tick_count),
             "indicator_populate_count": int(self._indicator_populate_count),
             "imbalance_fire_count": int(self._imbalance_fire_count),
-            "trailing_stop_active": state.trailing_stop_active,
-            "trailing_stop_price": str(state.trailing_stop_price),
-            "trailing_take_profit": str(state.trailing_take_profit),
-            "trailing_stop_entry": str(state.trailing_stop_entry),
-            "trailing_stop_side": state.trailing_stop_side,
-            "has_open_long": bool(state.has_open_long),
-            "has_open_short": bool(state.has_open_short),
-            "lOrder_id": int(state.lOrder_id),
-            "kOrder_id": int(state.kOrder_id),
-            "on_track_runs": int(state.on_track_runs),
-            "on_stand_runs": int(state.on_stand_runs),
+            "trailing_stop_active": st.trailing_stop_active,
+            "trailing_stop_price": str(st.trailing_stop_price),
+            "trailing_take_profit": str(st.trailing_take_profit),
+            "trailing_stop_entry": str(st.trailing_stop_entry),
+            "trailing_stop_side": st.trailing_stop_side,
+            "has_open_long": bool(st.has_open_long),
+            "has_open_short": bool(st.has_open_short),
+            "lOrder_id": int(st.lOrder_id),
+            "kOrder_id": int(st.kOrder_id),
+            "on_track_runs": int(st.on_track_runs),
+            "on_stand_runs": int(st.on_stand_runs),
             "last_kronecker_bar": int(self._last_kronecker_bar),
-            "last_kronecker_m": int(state.last_kronecker_m),
-            "last_kronecker_n": int(state.last_kronecker_n),
-            "last_kronecker_h": int(state.last_kronecker_h),
+            "last_kronecker_m": int(st.last_kronecker_m),
+            "last_kronecker_n": int(st.last_kronecker_n),
+            "last_kronecker_h": int(st.last_kronecker_h),
         }
 
+    # ------------------------------------------------------------------------
+    # Record entry / exit (state-only; no broker)
+    # ------------------------------------------------------------------------
     def _record_entry(self, side: str, price: Decimal) -> None:
         if side == "LONG":
             self.state.has_open_long = True
@@ -2762,70 +3450,629 @@ class AEEA_Engine:
             self.state.has_open_short = False
             self.state.kOrder_id = -1
 
-    # MQL4 A()/B()/P()/Q() equivalents, translated to state-only semantics.
-    def _A(self, price: Decimal) -> None:
-        self._record_exit("LONG")
-        self.state.A = True
-        self.state.B = False
-        self.state.K = False
-        self.state.Buy = -1
+    # ------------------------------------------------------------------------
+    # Parallel symbolic layer (telemetry only; does NOT influence trading)
+    # ------------------------------------------------------------------------
+    def _step_quaternion_field(self, price: Decimal, prev_price: Optional[Decimal]) -> None:
+        """Maintains a quaternion trajectory for the Mini App's symbolic
+        coherence panel. Called as a side-effect from _on_tick.
 
-    def _B(self, price: Decimal) -> None:
-        self._record_exit("SHORT")
-        self.state.A = False
-        self.state.B = True
-        self.state.K = False
-        self.state.Sell = -1
+        This is EXPLICITLY NOT the MQL4 arc-length axiom (s=r). It is a
+        parallel symbolic layer that computes s²=‖q‖² of a quaternion path
+        under Natalia's Fibrations. It does not feed into _M, _N, _on_goe,
+        _on_toe, or any trading decision.
+        """
+        st = self.state
+        st.time_fraction = st.time_fraction + Fraction(1, 100)
+        self._quat_tick_count += 1
+        price_frac = Fraction.from_decimal_string(str(price))
+        prev_price_frac = (
+            Fraction.from_decimal_string(str(prev_price))
+            if prev_price is not None and prev_price > 0
+            else price_frac
+        )
+        delta_price = (price_frac - prev_price_frac).abs()
+        price_magnitude = prev_price_frac if not prev_price_frac.is_zero() else Fraction(1)
+        normalized_delta = delta_price / price_magnitude
 
-    def _P(self, price: Decimal) -> None:
-        self.state.Buy += 1
-        self._record_entry("LONG", price)
+        s_param_time = st.time_fraction * Fraction(4, 10)
+        s_param = s_param_time + normalized_delta
+        theta_base = s_param * Fraction(7, 10)
+        theta_perturb = Fraction.sin_rational(s_param * Fraction(3, 10), 8) * Fraction(2, 10)
+        theta = theta_base + theta_perturb
+        phi_base = s_param * Fraction(3, 10) + Fraction(5, 10)
+        phi_perturb = Fraction.cos_rational(s_param * Fraction(5, 10), 8) * Fraction(1, 10)
+        phi = phi_base + phi_perturb
 
-    def _Q(self, price: Decimal) -> None:
-        self.state.Sell += 1
-        self._record_entry("SHORT", price)
+        half_theta = theta / Fraction(2, 1)
+        half_phi = phi / Fraction(2, 1)
+
+        q0 = Fraction.cos_rational(half_theta, 8) * Fraction.cos_rational(half_phi, 8)
+        q1 = Fraction.sin_rational(half_theta, 8) * Fraction.cos_rational(half_phi, 8)
+        q2 = Fraction.cos_rational(half_theta, 8) * Fraction.sin_rational(half_phi, 8)
+        q3 = Fraction.sin_rational(half_theta, 8) * Fraction.sin_rational(half_phi, 8)
+
+        base = Quat(q0, q1, q2, q3)
+        q_new = base.apply_natalia_fibration(s_param, self._eps, st.time_fraction).normalize()
+
+        if q_new.norm_sq().is_zero():
+            q_new = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
+
+        prev_q = st.quat_history[-1]
+        dq = q_new - prev_q
+        dq_norm = dq.norm()
+        self._s_acc_exact = self._s_acc_exact + dq_norm
+
+        st.quat_history.append(q_new.clone())
+        if len(st.quat_history) > 2000:
+            tail = st.quat_history[-1500:]
+            st.quat_history = [Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))] + tail
+
+        st.s_squared_exact = self._s_acc_exact * self._s_acc_exact
+        st.r_squared_exact = q_new.norm_sq()
+        st.deviation_exact = st.s_squared_exact - st.r_squared_exact
+        st.re_psi_exact = q_new.a
+        st.q_field = q_new
+
+        st.dbz_branch = self._apply_dbz_branch(st.deviation_exact, st.re_psi_exact)
+        dev_float = st.deviation_exact.to_float()
+        st.arc_coherent = (abs(dev_float) < ARC_COHERENCE_TOLERANCE)
+
+        if self._quat_tick_count % 100 == 0:
+            logger.info(
+                f"🌀 Quat tick #{self._quat_tick_count} | "
+                f"s²={st.s_squared_exact} r²={st.r_squared_exact} "
+                f"Δ={st.deviation_exact} Re[Ψ]={st.re_psi_exact} "
+                f"dbz={st.dbz_branch} coherent={st.arc_coherent}"
+            )
+
+    def _apply_dbz_branch(self, dev: Fraction, re_psi: Fraction) -> int:
+        """Deciding-by-Zero branching on the symbolic deviation.
+        Branch 0: coherent (deviation below tolerance); relax ε toward 1/100.
+        Branch 1: critical-line projection (Re[Ψ] > 0); contract ε.
+        Branch 2: Natalia fibration (Re[Ψ] ≤ 0); expand ε.
+        """
+        try:
+            if dev.abs().to_float() < ARC_COHERENCE_TOLERANCE:
+                target = Fraction(1, 100)
+                diff = target - self._eps
+                self._eps = self._eps + diff * Fraction(2, 1000)
+                return 0
+            if re_psi.sign() > 0:
+                self._eps = self._eps * Fraction(97, 100)
+                if self._eps.abs().to_float() < 1e-6:
+                    self._eps = Fraction(1, 100)
+                return 1
+            else:
+                delta = (
+                    Fraction.sin_rational(
+                        self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8
+                    ) * Fraction(8, 10000)
+                )
+                self._eps = self._eps + delta
+                if self._eps.to_float() > 0.05:
+                    self._eps = Fraction(5, 100)
+                if self._eps.to_float() < 0.001:
+                    self._eps = Fraction(1, 1000)
+                return 2
+        except Exception as e:
+            logger.exception(f"_apply_dbz_branch failed: {e}")
+            return 0
+
+    def _verify_arc_length_coherence(self) -> Dict[str, Any]:
+        """Returns the symbolic s²/r² coherence snapshot for the Mini App panel.
+        NOT the MQL4 s=r arc-length axiom."""
+        st = self.state
+        dev_float = st.deviation_exact.to_float()
+        coherent = abs(dev_float) < ARC_COHERENCE_TOLERANCE
+        return {
+            "coherent": bool(coherent),
+            "arc_sq": str(st.s_squared_exact),
+            "radius_sq": str(st.r_squared_exact),
+            "deviation": str(st.deviation_exact),
+            "deviation_float": dev_float,
+            "dbz_branch": int(st.dbz_branch),
+            "re_psi": str(st.re_psi_exact),
+            "initialized": bool(st._initialized),
+            "quat_tick_count": int(self._quat_tick_count),
+        }
+
+    def _check_coherence(self) -> str:
+        """Returns a human-readable coherence string for /status."""
+        info = self._verify_arc_length_coherence()
+        if info["coherent"]:
+            return "✅ COHERENT"
+        else:
+            return f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
+
+    # ------------------------------------------------------------------------
+    # Indicator matrix population (MQL4's per-bar Normalize over all j)
+    # ------------------------------------------------------------------------
+    def _populate_indicator_matrix(self) -> None:
+        """Populates the 13 × (X_PERIOD - Y_START) indicator matrix.
+        Called from _force_initialization and from _on_tick when a bar opens.
+        Equivalent to MQL4's per-j Normalize() calls during initialization.
+        """
+        st = self.state
+        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
+            return
+        size = X_PERIOD - Y_START
+        if size <= 0:
+            return
+        end = len(self.ohlcv_history)
+        for j in range(Y_START + 1, X_PERIOD + 1):
+            idx = j - (Y_START + 1)
+            if idx < 0 or idx >= size:
+                continue
+            bars_back = X_PERIOD - j
+            bar_end = end - bars_back
+            if bar_end < MIN_HISTORY_WINDOW:
+                for i in range(13):
+                    if i < len(st.iA) and idx < len(st.iA[i]):
+                        st.iA[i][idx] = Decimal('50.0')
+                        st.cA[i][idx] = Decimal('50.0')
+                        st.kA[i][idx] = Decimal('50.0')
+                        st.lA[i][idx] = Decimal('50.0')
+                continue
+            # _normalize(j) writes into state.iA[i][j-(y+1)] and
+            # state.cA[i][j-(Y_scan+1)]. During population, Y_scan == y,
+            # so both indices coincide (col_i == col_c). This matches MQL4's
+            # initialization pattern where Y == y during the seed loop.
+            self._normalize(j)
+            self._unify(j)
+        self._indicator_populate_count += 1
+        if self._indicator_populate_count % 20 == 0:
+            sample = [str(st.iA[i][0]) for i in range(13)]
+            logger.info(
+                f"📊 Indicator matrix populated (pass #{self._indicator_populate_count}) "
+                f"| col0={sample}"
+            )
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnTick() initialization branch (forced on first valid tick)
+    # ------------------------------------------------------------------------
+    def _force_initialization(self) -> None:
+        """Faithful port of MQL4's initialization block inside OnTick():
+        if(FG == false){
+            if(signature == false){ D = price; E = price; }
+            ArrayResize(k, x - y); ...
+            for(j = y + 1; j < x; j++){ F(); }
+            FG = true;
+        }
+        """
+        st = self.state
+        if st.FG:
+            return
+        if st.price <= Decimal('0.0'):
+            logger.warning("⏳ Cannot force-init: price not yet available")
+            return
+        logger.info("🚀 First valid tick detected. Forcing engine initialization...")
+
+        # MQL4: if(signature == false){ D = price; E = price; }
+        if not st.signature:
+            st.D = st.price
+            st.E = st.price
+
+        # MQL4: ArrayResize(k, x - y); ... ArrayResize(Regime, x - y);
+        size = X_PERIOD - st.y
+        if size <= 0:
+            size = X_PERIOD - Y_START
+        st.X_scan = st.y
+        st.Y_scan = st.y
+        if len(st.k) != size:
+            st.k = [False] * size
+            st.l = [False] * size
+            st.HH = [Decimal('0.0')] * size
+            st.LL = [Decimal('0.0')] * size
+            st.Premium = [Decimal('0.0')] * size
+            st.Discount = [Decimal('0.0')] * size
+            st.Regime = [""] * size
+
+        # MQL4: for(j = y + 1; j < x; j++){ F(); }
+        iH = self.ohlcv_history[-1]["high"] if self.ohlcv_history else st.price
+        iL = self.ohlcv_history[-1]["low"] if self.ohlcv_history else st.price
+        for j in range(st.y + 1, X_PERIOD):
+            self._F(j, iH, iL)
+
+        # MQL4: FG = true;
+        st.FG = True
+        st._initialized = True
+        logger.info(f"✅ Engine initialized on first tick at price={st.price:.5f}")
+
+    # ------------------------------------------------------------------------
+    # MQL4 OnTick() master loop
+    # ------------------------------------------------------------------------
+    def _on_tick(self, price_data: PriceData) -> None:
+        """Faithful port of MQL4 OnTick().
+        Master execution loop.
+        CRITICAL: uses X_PERIOD (constant 62) for all MQL4 'x' references,
+        and state.X_scan (mutable) only for the OnCall loop bound.
+        """
+        st = self.state
+        st.tick += 1
+        self._tick_log_counter += 1
+        if self._tick_log_counter >= 100:
+            self._tick_log_counter = 0
+            idx = st.Z - (st.y + 1)
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
+            logger.info(
+                f"⚡ Tick #{st.tick}: Price={st.price:.5f}, Signal={st.signal:.5f}, "
+                f"FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}"
+            )
+
+        # MQL4: price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+        st.price = price_data.bid
+        st.Price = price_data.close
+
+        # MQL4: Price = iClose(Symbol(),0,1); open = iOpen(Symbol(),0,1);
+        #        iH = iHigh(Symbol(),0,1); iL = iLow(Symbol(),0,1);
+        if len(self.ohlcv_history) >= 2:
+            st.iPrice = self.ohlcv_history[-2]["close"]
+            st.open = self.ohlcv_history[-2]["open"]
+            st.iH = self.ohlcv_history[-2]["high"]
+            st.iL = self.ohlcv_history[-2]["low"]
+        else:
+            st.iPrice = st.price
+            st.open = st.price
+            st.iH = st.price
+            st.iL = st.price
+
+        # Guard: non-positive price
+        if st.price <= Decimal('0.0'):
+            logger.warning(f"⚠️ Tick #{st.tick} with non-positive price. Skipping state machine.")
+            return
+
+        # Parallel symbolic layer (telemetry only; does not affect trading)
+        prev_price = self._last_price_for_quat
+        self._step_quaternion_field(st.price, prev_price)
+        self._last_price_for_quat = st.price
+
+        # [MQL4 initialization branch]
+        if not st.FG:
+            self._force_initialization()
+        if not st.FG:
+            logger.warning(f"⏳ Engine not yet initialized (FG=false) on tick #{st.tick}")
+            return
+
+        # MQL4: T(); — trailing stop
+        self._execute_trailing_stop()
+
+        # MQL4: OnPoint();
+        self._on_point()
+        # MQL4: O(iO, O, J, C, Cc); O(io, o, iJ, c, cC);
+        self._O(st.iO, st.O, st.J, "C")
+        self._O(st.io, st.o, st.iJ, "c")
+        # MQL4: OnCall();
+        self._on_call()
+        # MQL4: J();
+        self._J()
+
+        # MQL4: if(is != t){ OnBar(); O(...); O(...); }
+        is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
+        if is_now != st.t:
+            self._on_bar()
+            self._O(st.iO, st.O, st.J, "C")
+            self._O(st.io, st.o, st.iJ, "c")
+
+        # MQL4: if((J == y + 1) && (J != 2)){ OnStand(); ... }
+        if st.J == st.y + 1 and st.J != 2:
+            self._on_stand()
+            self._J()
+            self._O(st.iO, st.O, st.J, "C")
+            self._O(st.io, st.o, st.iJ, "c")
+            # MQL4: if((iO != 2) && (J >= iO)){ j = min; O = j; ... }
+            if st.iO != 2:
+                if st.J >= st.iO:
+                    j = MIN_PERIOD
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+                else:
+                    j = MIN_PERIOD + 1
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+            else:
+                st.O = 2
+            if st.io != 2:
+                if st.iJ >= st.io:
+                    st.o = MIN_PERIOD
+                else:
+                    st.o = MIN_PERIOD + 1
+            else:
+                st.o = 2
+
+        # MQL4: if(J == x - 1){ OnTrack(); ... }  ← uses X_PERIOD (constant 62)
+        if st.J == X_PERIOD - 1:
+            self._on_track()
+            self._J()
+            self._O(st.iO, st.O, st.J, "C")
+            self._O(st.io, st.o, st.iJ, "c")
+            if st.iO != 4 * MAX_PERIOD:
+                if st.J >= st.iO:
+                    j = MAX_PERIOD - 1
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+                else:
+                    j = MAX_PERIOD
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+            else:
+                st.O = X_PERIOD - 1
+            if st.io != 4 * MAX_PERIOD:
+                if st.iJ >= st.io:
+                    st.o = MAX_PERIOD - 1
+                else:
+                    st.o = MAX_PERIOD
+            else:
+                st.o = X_PERIOD - 1
+
+        st.t = is_now
+
+        # MQL4: if(Z != x - 1){ ... OnGoe(); ... }  ← uses X_PERIOD
+        if st.Z != X_PERIOD - 1:
+            h_idx = st.iZ - (st.y + 1)
+            if st.Z != st.y + 1 and 0 <= h_idx < len(st.k) and st.k[h_idx]:
+                st.h = st.iZ
+                self._on_goe()
+            else:
+                h_idx = st.iz - (st.y + 1)
+                if (0 <= h_idx < len(st.k) and st.k[h_idx]
+                        and st.z != st.y + 1 and st.z != X_PERIOD - 1):
+                    st.h = st.iz
+                    self._on_goe()
+                else:
+                    h_idx = st.io - (st.y + 1)
+                    if (0 <= h_idx < len(st.k) and st.k[h_idx]
+                            and st.o != st.y + 1 and st.o != X_PERIOD - 1):
+                        st.h = st.io
+                        self._on_goe()
+                    else:
+                        h_idx = st.iO - (st.y + 1)
+                        if (0 <= h_idx < len(st.k) and st.k[h_idx]
+                                and st.O != st.y + 1 and st.O != X_PERIOD - 1):
+                            st.h = st.iO
+                            self._on_goe()
+
+        # MQL4: if(W != x - 1){ ... OnToe(); ... }  ← uses X_PERIOD
+        if st.W != X_PERIOD - 1:
+            h_idx = st.iW - (st.y + 1)
+            if st.W != st.y + 1 and 0 <= h_idx < len(st.l) and st.l[h_idx]:
+                st.h = st.iW
+                self._on_toe()
+            else:
+                h_idx = st.iw - (st.y + 1)
+                if (0 <= h_idx < len(st.l) and st.l[h_idx]
+                        and st.w != st.y + 1 and st.w != X_PERIOD - 1):
+                    st.h = st.iw
+                    self._on_toe()
+                else:
+                    h_idx = st.io - (st.y + 1)
+                    if (0 <= h_idx < len(st.l) and st.l[h_idx]
+                            and st.o != st.y + 1 and st.o != X_PERIOD - 1):
+                        st.h = st.io
+                        self._on_toe()
+                    else:
+                        h_idx = st.iO - (st.y + 1)
+                        if (0 <= h_idx < len(st.l) and st.l[h_idx]
+                                and st.O != st.y + 1 and st.O != X_PERIOD - 1):
+                            st.h = st.iO
+                            self._on_toe()
+
+        # MQL4: if(GF == true){ OnReInit(); GF = false; }
+        if st.GF:
+            self.OnReInit()
+            st.GF = False
+
+        # Signal alert dispatch (rate-limited internally)
+        if st.signature and st.chat_id:
+            self._send_signal_alert()
+
+        # MQL4: if(ab!=ba){ab=ba;} tickTock = false;
+        if st.ab != st.ba:
+            st.ab = st.ba
+        st.tick_tock = False
+
+    # ------------------------------------------------------------------------
+    # Feed ingestion: update from relay, then trigger OnTick
+    # ------------------------------------------------------------------------
+    def update_price_from_feed(self) -> None:
+        """Fetch intraday bar from the relay and feed it into update_price."""
+        data = self.feed.get_intraday()
+        if not data:
+            self._consecutive_zero_prices += 1
+            now = datetime.now()
+            if self._last_relay_warn is None or (now - self._last_relay_warn).seconds >= 60:
+                self._last_relay_warn = now
+                logger.warning(
+                    f"⚠️ No data from relay for {self.feed.active_symbol()} "
+                    f"(consecutive={self._consecutive_zero_prices})"
+                )
+            return
+        bid = data["close"]
+        ask = data["close"]
+        if bid <= Decimal('0.0'):
+            self._consecutive_zero_prices += 1
+            return
+        volume = data.get("volume", Decimal('0.0'))
+        timestamp = data.get("timestamp", datetime.now())
+        self._consecutive_zero_prices = 0
+        self.update_price(bid, ask, volume, timestamp)
+
+    def update_price(
+        self,
+        bid: Decimal,
+        ask: Decimal,
+        volume: Decimal = Decimal('0.0'),
+        timestamp: Optional[datetime] = None,
+    ) -> None:
+        """Ingest a single price update. Appends to price_history; opens a new
+        bar in ohlcv_history on 60-second boundaries; calls _populate_indicator_matrix
+        on bar open; calls _on_tick."""
+        if timestamp is None:
+            timestamp = datetime.now()
+        if bid <= Decimal('0.0'):
+            logger.warning(f"update_price rejected non-positive bid: {bid}")
+            return
+        self.state.price = bid
+        self.state.Price = (bid + ask) / Decimal('2.0')
+        self._price_update_counter += 1
+
+        price_data = PriceData(
+            bid=bid,
+            ask=ask,
+            close=(bid + ask) / Decimal('2.0'),
+            open=bid,
+            high=max(bid, ask),
+            low=min(bid, ask),
+            volume=volume,
+            timestamp=timestamp,
+        )
+        self.price_history.append(price_data)
+        if len(self.price_history) > 1000:
+            self.price_history = self.price_history[-1000:]
+
+        # Bar-open detection (60s boundary)
+        if self._last_price_update is None or (timestamp - self._last_price_update).seconds >= 60:
+            self._bar_open = True
+            self._last_price_update = timestamp
+            self._bar_index += 1
+            self.ohlcv_history.append({
+                "open": price_data.open,
+                "high": price_data.high,
+                "low": price_data.low,
+                "close": price_data.close,
+                "volume": price_data.volume,
+                "timestamp": timestamp,
+            })
+            if len(self.ohlcv_history) > 200:
+                self.ohlcv_history = self.ohlcv_history[-200:]
+        else:
+            self._bar_open = False
+            if self.ohlcv_history:
+                self.ohlcv_history[-1]["high"] = max(
+                    self.ohlcv_history[-1]["high"], price_data.high
+                )
+                self.ohlcv_history[-1]["low"] = min(
+                    self.ohlcv_history[-1]["low"], price_data.low
+                )
+                self.ohlcv_history[-1]["close"] = price_data.close
+                self.ohlcv_history[-1]["volume"] += price_data.volume
+
+        # Populate indicator matrix on bar open
+        if self._bar_open and len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
+            self._populate_indicator_matrix()
+
+        # Fire OnTick
+        self._on_tick(price_data)
 
 # ============================================================================
-# HTTP BRIDGE
+# BRIDGE STATE — publishes per-tick snapshots for the Mini App
 # ============================================================================
 class BridgeState:
     def __init__(self):
         self._lock = threading.Lock()
         self._snapshot: Dict[str, Any] = {
-            "symbol": SYMBOL, "price": "0.0", "ask": "0.0", "bid": "0.0", "signal": "0.0",
-            "regime": "Unknown", "tick": 0, "m_count": 0, "n_count": 0, "coherent": False,
-            "arc_sq": "0", "radius_sq": "0", "deviation": "0", "timestamp": datetime.now().isoformat(),
-            "endpoint": None, "webapp_user_id": None, "webapp_username": None, "last_price_update": None,
-            "engine_initialized": False, "consecutive_zero_prices": 0,
-            "dbz_branch": 0, "re_psi": "0", "relay_url": RELAY_URL,
-            "indicator_populate_count": 0, "imbalance_fire_count": 0,
-            "trailing_stop_active": False, "trailing_stop_price": "0.0", "trailing_take_profit": "0.0",
-            "trailing_stop_entry": "0.0", "trailing_stop_side": "",
-            "KC": True, "prime": -1, "dime": -1, "mem": -1, "tag": -1, "invert": True,
-            "m_at_h": 0, "n_at_h": 0, "h_bar": 0,
-            "on_track_runs": 0, "on_stand_runs": 0, "last_kronecker_bar": -1,
-            "last_kronecker_m": 0, "last_kronecker_n": 0, "last_kronecker_h": -1,
-            "has_open_long": False, "has_open_short": False,
-            "lOrder_id": -1, "kOrder_id": -1,
+            "symbol": SYMBOL,
+            "price": "0.0",
+            "ask": "0.0",
+            "bid": "0.0",
+            "signal": "0.0",
+            "regime": "Unknown",
+            "tick": 0,
+            "m_count": 0,
+            "n_count": 0,
+            "coherent": False,
+            "arc_sq": "0",
+            "radius_sq": "0",
+            "deviation": "0",
+            "timestamp": datetime.now().isoformat(),
+            "endpoint": None,
+            "webapp_user_id": None,
+            "webapp_username": None,
+            "last_price_update": None,
+            "engine_initialized": False,
+            "consecutive_zero_prices": 0,
+            "dbz_branch": 0,
+            "re_psi": "0",
+            "relay_url": RELAY_URL,
+            "indicator_populate_count": 0,
+            "imbalance_fire_count": 0,
+            "trailing_stop_active": False,
+            "trailing_stop_price": "0.0",
+            "trailing_take_profit": "0.0",
+            "trailing_stop_entry": "0.0",
+            "trailing_stop_side": "",
+            "KC": True,
+            "prime": -1,
+            "dime": -1,
+            "mem": -1,
+            "tag": -1,
+            "invert": True,
+            "m_at_h": 0,
+            "n_at_h": 0,
+            "h_bar": 0,
+            "on_track_runs": 0,
+            "on_stand_runs": 0,
+            "last_kronecker_bar": -1,
+            "last_kronecker_m": 0,
+            "last_kronecker_n": 0,
+            "last_kronecker_h": -1,
+            "has_open_long": False,
+            "has_open_short": False,
+            "lOrder_id": -1,
+            "kOrder_id": -1,
+            "X_scan": Y_START,
+            "Y_scan": Y_START,
         }
-        self._fvgs: Dict[int, Dict[str, str]] = {}
+        self._fvgs: Dict[int, Dict[str, Any]] = {}
         self._next_fvg_idx = 0
         self._webapp_sessions: Dict[int, Dict[str, Any]] = {}
         self._handshake_lock = threading.Lock()
 
-    def publish(self, snapshot):
+    def publish(self, snapshot: Dict[str, Any]) -> None:
         with self._lock:
             self._snapshot = dict(snapshot)
 
-    def get_snapshot(self):
+    def get_snapshot(self) -> Dict[str, Any]:
         with self._lock:
             return dict(self._snapshot)
 
-    def register_webapp_session(self, user_id, username, chat_id=None):
+    def register_webapp_session(self, user_id: int, username: Optional[str], chat_id: Optional[int] = None) -> bool:
         with self._handshake_lock:
             self._webapp_sessions[user_id] = {
-                "user_id": user_id, "username": username, "chat_id": chat_id,
-                "first_seen": self._webapp_sessions.get(user_id, {}).get("first_seen", datetime.now().isoformat()),
+                "user_id": user_id,
+                "username": username,
+                "chat_id": chat_id,
+                "first_seen": self._webapp_sessions.get(user_id, {}).get(
+                    "first_seen", datetime.now().isoformat()
+                ),
                 "last_seen": datetime.now().isoformat(),
             }
             with self._lock:
@@ -2845,7 +4092,7 @@ class BridgeState:
             logger.info(f"🌐 Web App session registered: user_id={user_id}, username={username}")
         return True
 
-    def add_fvg(self, fvg_type, price_str, user_id=None, requested_idx=None):
+    def add_fvg(self, fvg_type: str, price_str: str, user_id: Optional[int] = None, requested_idx: Optional[int] = None) -> int:
         if fvg_type not in ("top", "bott"):
             raise ValueError("fvg_type must be 'top' or 'bott'")
         try:
@@ -2855,17 +4102,6 @@ class BridgeState:
         if price_dec <= Decimal('0.0'):
             raise ValueError("price must be > 0")
         with self._lock:
-            engine = BRIDGE_ENGINE_REF.get("engine")
-            if engine is not None:
-                info = engine._verify_arc_length_coherence()
-                if info["initialized"] and not info["coherent"]:
-                    dev_float = info["deviation_float"]
-                    if abs(dev_float) > 1.0:
-                        raise ValueError(
-                            "ARC-LENGTH DEVIATION: s²={} ≠ r²={} (dev={:.6f})".format(
-                                info["arc_sq"], info["radius_sq"], dev_float
-                            )
-                        )
             if requested_idx is not None and isinstance(requested_idx, int) and requested_idx >= 0:
                 idx = requested_idx
                 if idx >= self._next_fvg_idx:
@@ -2873,57 +4109,35 @@ class BridgeState:
             else:
                 idx = self._next_fvg_idx
                 self._next_fvg_idx += 1
-            self._fvgs[idx] = {
-                "type": fvg_type, "price": str(price_dec), "idx": idx,
-                "created": datetime.now().isoformat(), "user_id": user_id
-            }
-            self._inject_into_engine(fvg_type, price_dec, idx)
-        return idx
 
-    def add_fvg_rational(self, fvg_type, num, den, user_id=None, requested_idx=None):
-        try:
-            num_i = int(num)
-            den_i = int(den)
-        except (TypeError, ValueError):
-            raise ValueError("num and den must be integers")
-        if den_i == 0:
-            raise ValueError("den must be non-zero")
-        if num_i <= 0 or den_i < 0:
-            raise ValueError("price must be > 0")
-        price_frac = Fraction(num_i, den_i)
-        if price_frac.to_decimal() <= Decimal('0.0'):
-            raise ValueError("price must be > 0")
-        with self._lock:
-            engine = BRIDGE_ENGINE_REF.get("engine")
-            if engine is not None:
-                info = engine._verify_arc_length_coherence()
-                if info["initialized"] and not info["coherent"]:
-                    dev_float = info["deviation_float"]
-                    if abs(dev_float) > 1.0:
-                        raise ValueError(
-                            "ARC-LENGTH DEVIATION: s²={} ≠ r²={} (dev={:.6f})".format(
-                                info["arc_sq"], info["radius_sq"], dev_float
-                            )
-                        )
-            if requested_idx is not None and isinstance(requested_idx, int) and requested_idx >= 0:
-                idx = requested_idx
-                if idx >= self._next_fvg_idx:
-                    self._next_fvg_idx = idx + 1
-            else:
-                idx = self._next_fvg_idx
-                self._next_fvg_idx += 1
             self._fvgs[idx] = {
                 "type": fvg_type,
-                "price": f"{num_i}/{den_i}",
-                "num": num_i, "den": den_i,
+                "price": str(price_dec),
                 "idx": idx,
                 "created": datetime.now().isoformat(),
                 "user_id": user_id,
             }
-            self._inject_into_engine(fvg_type, price_frac, idx)
+
+            # Inject into engine's Premium[]/Discount[] as a horizontal anchor
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is not None:
+                st = engine.state
+                target_len = len(st.Premium)
+                if target_len > 0:
+                    target_idx = idx % target_len
+                    if fvg_type == "top":
+                        st.Premium[target_idx] = price_dec
+                    else:
+                        st.Discount[target_idx] = price_dec
+                st.fvg_anchor_map[idx] = {
+                    "idx": idx,
+                    "type": fvg_type,
+                    "price": str(price_dec),
+                    "created": datetime.now().isoformat(),
+                }
         return idx
 
-    def remove_fvg(self, idx):
+    def remove_fvg(self, idx: int) -> bool:
         with self._lock:
             if idx in self._fvgs:
                 del self._fvgs[idx]
@@ -2933,26 +4147,18 @@ class BridgeState:
                 return True
         return False
 
-    def list_fvgs(self):
+    def list_fvgs(self) -> List[Dict[str, Any]]:
         with self._lock:
             return list(self._fvgs.values())
 
-    def _inject_into_engine(self, fvg_type, price_fraction, idx):
-        engine = BRIDGE_ENGINE_REF.get("engine")
-        if engine is None:
-            return
-        try:
-            anchor = engine._anchor_fvg_to_leech(idx, price_fraction, fvg_type)
-            with self._lock:
-                if idx in self._fvgs:
-                    self._fvgs[idx]["leech_hash"] = anchor["vector_hash"]
-                    self._fvgs[idx]["leech_vector"] = anchor["vector_24d"]
-        except Exception as e:
-            logger.warning(f"BridgeState._inject_into_engine: {e}")
 
 BRIDGE_STATE = BridgeState()
 BRIDGE_ENGINE_REF: Dict[str, Any] = {"engine": None, "bot": None, "public_url": None}
 
+
+# ============================================================================
+# TUNNEL MANAGER — spawns cloudflared / ngrok / serveo for public HTTPS
+# ============================================================================
 class TunnelManager:
     URL_RE_CLOUDFLARED = _re_bridge.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
     URL_RE_NGROK = _re_bridge.compile(r"https://[a-z0-9\-]+\.ngrok(?:-free)?\.app")
@@ -2966,15 +4172,21 @@ class TunnelManager:
         self.public_url: Optional[str] = None
         self.provider: Optional[str] = None
 
-    def _which(self, name):
+    def _which(self, name: str) -> Optional[str]:
         from shutil import which
         return which(name)
 
-    def _spawn(self, cmd):
+    def _spawn(self, cmd: List[str]) -> subprocess.Popen:
         logger.info(f"🌐 Spawning tunnel: {' '.join(cmd)}")
-        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1, universal_newlines=True)
+        return subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True,
+        )
 
-    def _scan_for_url(self, proc, regex, deadline):
+    def _scan_for_url(self, proc: subprocess.Popen, regex: "_re_bridge.Pattern[str]", deadline: float) -> Optional[str]:
         assert proc.stdout is not None
         for raw in proc.stdout:
             line = raw.rstrip("\n")
@@ -2987,11 +4199,15 @@ class TunnelManager:
                 return None
         return None
 
-    def _try_cloudflared(self):
+    def _try_cloudflared(self) -> Optional[str]:
         if not self._which("cloudflared"):
             return None
         try:
-            proc = self._spawn(["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{self.port}", "--no-autoupdate"])
+            proc = self._spawn([
+                "cloudflared", "tunnel",
+                "--url", f"http://127.0.0.1:{self.port}",
+                "--no-autoupdate",
+            ])
         except Exception as e:
             logger.warning(f"cloudflared spawn failed: {e}")
             return None
@@ -3008,7 +4224,7 @@ class TunnelManager:
             pass
         return None
 
-    def _try_ngrok(self):
+    def _try_ngrok(self) -> Optional[str]:
         if not self._which("ngrok"):
             return None
         try:
@@ -3029,11 +4245,17 @@ class TunnelManager:
             pass
         return None
 
-    def _try_serveo(self):
+    def _try_serveo(self) -> Optional[str]:
         if not self._which("ssh"):
             return None
         try:
-            proc = self._spawn(["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-R", f"80:127.0.0.1:{self.port}", "serveo.net"])
+            proc = self._spawn([
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ServerAliveInterval=30",
+                "-R", f"80:127.0.0.1:{self.port}",
+                "serveo.net",
+            ])
         except Exception as e:
             logger.warning(f"serveo spawn failed: {e}")
             return None
@@ -3050,7 +4272,7 @@ class TunnelManager:
             pass
         return None
 
-    def start(self):
+    def start(self) -> Optional[str]:
         if TELEGRAM_WEBAPP_URL:
             self.public_url = TELEGRAM_WEBAPP_URL
             self.provider = "explicit"
@@ -3074,7 +4296,7 @@ class TunnelManager:
         logger.warning("⚠️ No tunnel available. Telegram Mini App will require manual TELEGRAM_WEBAPP_URL.")
         return None
 
-    def stop(self):
+    def stop(self) -> None:
         if self.process is None:
             return
         try:
@@ -3088,21 +4310,28 @@ class TunnelManager:
         self.process = None
         logger.info("🌐 Tunnel stopped")
 
+
+# ============================================================================
+# BRIDGE HANDLER — HTTP routes
+# ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/Final"
+    server_version = "AEI-Bridge/2.0"
 
     def log_message(self, fmt, *args):
         return
 
-    def _set_cors(self):
+    def _set_cors(self) -> None:
         origin = CORS_ORIGIN
         self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data, X-Relay-Key")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Accept, Authorization, X-Telegram-Init-Data, X-Relay-Key",
+        )
         if origin != "*":
             self.send_header("Vary", "Origin")
 
-    def _send_json(self, code, payload):
+    def _send_json(self, code: int, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, default=str).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -3112,7 +4341,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_html(self, code, html):
+    def _send_html(self, code: int, html: str) -> None:
         body = html.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -3122,19 +4351,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _read_body(self):
+    def _read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length <= 0:
             return b""
         return self.rfile.read(length)
 
-    def do_OPTIONS(self):
+    def do_OPTIONS(self) -> None:
         self.send_response(204)
         self._set_cors()
         self.end_headers()
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         path = urlparse(self.path).path
+
         if path == "/health":
             snap = BRIDGE_STATE.get_snapshot()
             last = snap.get("last_price_update")
@@ -3175,8 +4405,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "last_kronecker_m": snap.get("last_kronecker_m", 0),
                 "last_kronecker_n": snap.get("last_kronecker_n", 0),
                 "last_kronecker_h": snap.get("last_kronecker_h", -1),
+                "X_scan": snap.get("X_scan", Y_START),
+                "Y_scan": snap.get("Y_scan", Y_START),
             })
             return
+
         if path == "/config":
             self._send_json(200, {
                 "public_url": BRIDGE_ENGINE_REF.get("public_url"),
@@ -3188,8 +4421,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "cors_origin": CORS_ORIGIN,
                 "relay_url": RELAY_URL,
                 "relay_gated": bool(RELAY_KEY),
+                "x_period_constant": X_PERIOD,
+                "y_start_constant": Y_START,
             })
             return
+
         if path == "/state":
             snap = BRIDGE_STATE.get_snapshot()
             public = BRIDGE_ENGINE_REF.get("public_url")
@@ -3202,9 +4438,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             snap["relay_url"] = RELAY_URL
             self._send_json(200, snap)
             return
+
         if path == "/fvg":
             self._send_json(200, {"fvgs": BRIDGE_STATE.list_fvgs()})
             return
+
         if path == "/probe":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3218,6 +4456,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 pass
             self._send_json(200, probe_data)
             return
+
         if path == "/diagnostics":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3229,11 +4468,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 diag["quat_history_depth"] = len(engine.state.quat_history)
                 diag["ohlcv_history_depth"] = len(engine.ohlcv_history)
                 diag["indicator_sample_col0"] = [str(engine.state.iA[i][0]) for i in range(13)]
-                diag["indicator_sample_col1"] = [str(engine.state.iA[i][1]) for i in range(13)] if len(engine.state.iA[0]) > 1 else []
+                diag["indicator_sample_col1"] = (
+                    [str(engine.state.iA[i][1]) for i in range(13)]
+                    if len(engine.state.iA[0]) > 1 else []
+                )
+                diag["x_period_constant"] = X_PERIOD
+                diag["y_start_constant"] = Y_START
                 self._send_json(200, diag)
             except Exception as e:
                 self._send_json(500, {"error": "diagnostics_failed", "detail": str(e)})
             return
+
         if path == "/" or path == "/index.html":
             try:
                 base = os.path.dirname(os.path.abspath(__file__))
@@ -3242,17 +4487,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     with open(html_path, "r", encoding="utf-8") as f:
                         self._send_html(200, f.read())
                 else:
-                    self._send_html(200,
-                        "<!DOCTYPE html><html><body style='font-family:monospace;background:#050510;color:#aaccff;padding:40px;'>"
+                    self._send_html(
+                        200,
+                        "<!DOCTYPE html><html><body style='font-family:monospace;"
+                        "background:#050510;color:#aaccff;padding:40px;'>"
                         "<h2>⚡ ÆEA Mini App Bridge Online</h2>"
-                        "<p>index.html not found in <code>" + base + "</code>.</p></body></html>")
+                        "<p>index.html not found in <code>" + base + "</code>.</p></body></html>",
+                    )
             except Exception as e:
                 self._send_json(500, {"error": "read_index_failed", "detail": str(e)})
             return
+
         self._send_json(404, {"error": "not_found", "path": path})
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         path = urlparse(self.path).path
+
         if path == "/handshake":
             try:
                 raw = self._read_body()
@@ -3273,13 +4523,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 BRIDGE_STATE.register_webapp_session(user_id, username, chat_id=chat_id)
                 logger.info(f"🤝 Handshake OK: user_id={user_id}, username={username}, chat_id={chat_id}")
                 self._send_json(200, {
-                    "ok": True, "user_id": user_id, "username": username,
+                    "ok": True,
+                    "user_id": user_id,
+                    "username": username,
                     "public_url": BRIDGE_ENGINE_REF.get("public_url"),
                 })
             except Exception as e:
                 logger.error(f"Handshake error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
         if path == "/fvg":
             user_id, username, verified = _extract_auth_headers(self)
             try:
@@ -3291,36 +4544,39 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 den = data.get("den")
                 requested_idx = data.get("idx")
                 if fvg_type is None:
-                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price|num+den"]})
+                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price"]})
                     return
                 try:
                     requested_idx_int = int(requested_idx) if requested_idx is not None else None
                 except (TypeError, ValueError):
                     requested_idx_int = None
                 if num is not None and den is not None:
-                    idx = BRIDGE_STATE.add_fvg_rational(
-                        fvg_type, num, den, user_id=user_id, requested_idx=requested_idx_int
-                    )
                     price_label = f"{int(num)}/{int(den)}"
+                    price_dec = Decimal(int(num)) / Decimal(int(den))
                 elif price_str is not None:
-                    idx = BRIDGE_STATE.add_fvg(
-                        fvg_type, price_str, user_id=user_id, requested_idx=requested_idx_int
-                    )
                     price_label = str(price_str)
+                    price_dec = Decimal(str(price_str))
                 else:
-                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price|num+den"]})
+                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price"]})
                     return
+                idx = BRIDGE_STATE.add_fvg(
+                    fvg_type, str(price_dec), user_id=user_id, requested_idx=requested_idx_int,
+                )
                 anchor_info = {}
                 engine = BRIDGE_ENGINE_REF.get("engine")
                 if engine is not None and idx in engine.state.fvg_anchor_map:
                     anchor_info = engine.state.fvg_anchor_map[idx]
-                logger.info(f"🔷 FVG committed: type={fvg_type} price={price_label} idx={idx} verified={verified} user={username}")
+                logger.info(
+                    f"🔷 FVG committed: type={fvg_type} price={price_label} "
+                    f"idx={idx} verified={verified} user={username}"
+                )
                 self._send_json(201, {
-                    "ok": True, "idx": idx, "type": fvg_type, "price": price_label,
+                    "ok": True,
+                    "idx": idx,
+                    "type": fvg_type,
+                    "price": price_label,
                     "verified": verified,
-                    "leech_hash": anchor_info.get("vector_hash") if anchor_info else None,
-                    "leech_norm_sq": anchor_info.get("norm_squared") if anchor_info else None,
-                    "is_lattice_point": anchor_info.get("is_lattice_point") if anchor_info else None,
+                    "anchor": anchor_info,
                 })
             except ValueError as ve:
                 logger.warning(f"FVG rejected: {ve}")
@@ -3329,6 +4585,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 logger.error(f"FVG POST error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
         if path == "/reset":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3338,16 +4595,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 engine.feed._rebuild_ticker()
                 engine.feed._fallback_count = 0
                 engine._consecutive_zero_prices = 0
-                engine._on_reinit()
+                engine.OnReInit()
                 logger.info("🔄 Manual reset requested via /reset")
                 self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
             except Exception as e:
                 logger.error(f"/reset error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
         self._send_json(404, {"error": "not_found", "path": path})
 
-    def do_DELETE(self):
+    def do_DELETE(self) -> None:
         path = urlparse(self.path).path
         m = _re_bridge.match(r"^/fvg/(\d+)$", path)
         if m:
@@ -3361,8 +4619,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         self._send_json(404, {"error": "not_found", "path": path})
 
+
+# ============================================================================
+# BRIDGE SERVER — HTTP listener + tunnel
+# ============================================================================
 class BridgeServer:
-    def __init__(self, host=BRIDGE_HOST, port=BRIDGE_PORT):
+    def __init__(self, host: str = BRIDGE_HOST, port: int = BRIDGE_PORT):
         self.host = host
         self.port = int(port)
         self._httpd: Optional[ThreadingHTTPServer] = None
@@ -3370,7 +4632,7 @@ class BridgeServer:
         self._tunnel: Optional[TunnelManager] = None
         self._ssl_context: Optional[ssl.SSLContext] = None
 
-    def _build_ssl_context(self):
+    def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
         if not BRIDGE_USE_TLS:
             return None
         if not BRIDGE_TLS_CERT or not BRIDGE_TLS_KEY:
@@ -3388,7 +4650,7 @@ class BridgeServer:
             logger.error(f"❌ Failed to load TLS context: {e}")
             return None
 
-    def start(self):
+    def start(self) -> None:
         if self._thread is not None:
             return
         try:
@@ -3407,7 +4669,7 @@ class BridgeServer:
         self._tunnel = TunnelManager(self.port, prefer=BRIDGE_TUNNEL, timeout=BRIDGE_PUBLIC_TIMEOUT)
         threading.Thread(target=self._tunnel.start, name="aei-tunnel", daemon=True).start()
 
-    def stop(self):
+    def stop(self) -> None:
         if self._tunnel is not None:
             try:
                 self._tunnel.stop()
@@ -3426,19 +4688,23 @@ class BridgeServer:
             self._thread = None
         logger.info("🌐 ÆEA Mini App Bridge stopped")
 
+
+# ============================================================================
+# BRIDGE ATTACHMENT — wrap engine's _on_tick to publish snapshots
+# ============================================================================
 def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
     if getattr(engine, "_bridge_attached", False):
         return
     original_on_tick = engine._on_tick
 
-    def wrapped_on_tick(price_data):
+    def wrapped_on_tick(price_data: PriceData) -> None:
         original_on_tick(price_data)
         try:
             st = engine.state
-            idx = st.Z - st.y - 1
+            idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
             info = engine._verify_arc_length_coherence()
-            h_idx = st.h - st.y - 1
+            h_idx = st.h - (st.y + 1)
             m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
             n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
             snapshot = {
@@ -3491,6 +4757,8 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "last_kronecker_m": int(st.last_kronecker_m),
                 "last_kronecker_n": int(st.last_kronecker_n),
                 "last_kronecker_h": int(st.last_kronecker_h),
+                "X_scan": int(st.X_scan),
+                "Y_scan": int(st.Y_scan),
             }
             BRIDGE_STATE.publish(snapshot)
         except Exception as e:
@@ -3499,6 +4767,7 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
     engine._on_tick = wrapped_on_tick
     engine._bridge_attached = True
     logger.info("🔗 Bridge attached to AEEA_Engine")
+
 
 def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     if getattr(bot, "_bridge_attached", False):
@@ -3522,7 +4791,7 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     logger.info("🔗 Bridge attached to AEI_Bot.run()")
 
 # ============================================================================
-# TELEGRAM BOT
+# TELEGRAM BOT — full command surface
 # ============================================================================
 class AEI_Bot:
     def __init__(self, token: str, bot_name: str = "UpscaleTradeBot"):
@@ -3544,21 +4813,17 @@ class AEI_Bot:
         while self._running:
             iteration += 1
             try:
-                logger.info(f"🔄 Feed iteration #{iteration}")
                 self.engine.update_price_from_feed()
+                st = self.engine.state
+                idx = st.Z - (st.y + 1)
+                regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
                 logger.info(
-                    f"📊 price={self.engine.state.price} "
-                    f"tick={self.engine.state.tick} "
-                    f"FG={self.engine.state.FG} "
-                    f"active_sym={self.engine.feed.active_symbol()} "
-                    f"m/n_local={self.engine.state.last_kronecker_m}/{self.engine.state.last_kronecker_n} "
+                    f"📊 itr#{iteration} price={st.price} tick={st.tick} FG={st.FG} "
+                    f"regime={regime} X_scan={st.X_scan} Y_scan={st.Y_scan} "
+                    f"OnTrack={st.on_track_runs} OnStand={st.on_stand_runs} "
+                    f"m/n={st.last_kronecker_m}/{st.last_kronecker_n} "
                     f"ind_pass={self.engine._indicator_populate_count} "
-                    f"sig_fire={self.engine._imbalance_fire_count} "
-                    f"trail={self.engine.state.trailing_stop_active} "
-                    f"on_track={self.engine.state.on_track_runs} "
-                    f"on_stand={self.engine.state.on_stand_runs} "
-                    f"open_long={self.engine.state.has_open_long} "
-                    f"open_short={self.engine.state.has_open_short}"
+                    f"sig_fire={self.engine._imbalance_fire_count}"
                 )
             except Exception:
                 logger.exception(f"❌ Feed iteration #{iteration} failed")
@@ -3568,18 +4833,42 @@ class AEI_Bot:
     def _build_main_keyboard(self) -> InlineKeyboardMarkup:
         webapp_url = self._resolve_webapp_url()
         rows = [
-            [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("📈 Signal", callback_data="signal")],
-            [InlineKeyboardButton("📊 Regime", callback_data="regime"), InlineKeyboardButton("📐 Indicators", callback_data="indicators")],
-            [InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"), InlineKeyboardButton("⏹️ Stop Feed", callback_data="stop_feed")],
-            [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
-            [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
-            [InlineKeyboardButton("🧬 Arc-Length", callback_data="arclen"), InlineKeyboardButton("🌿 DbZ", callback_data="dbz")],
-            [InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics")],
+            [
+                InlineKeyboardButton("📊 Status", callback_data="status"),
+                InlineKeyboardButton("📈 Signal", callback_data="signal"),
+            ],
+            [
+                InlineKeyboardButton("📊 Regime", callback_data="regime"),
+                InlineKeyboardButton("📐 Indicators", callback_data="indicators"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"),
+                InlineKeyboardButton("⏹️ Stop Feed", callback_data="stop_feed"),
+            ],
+            [
+                InlineKeyboardButton("📈 Info", callback_data="info"),
+                InlineKeyboardButton("🔄 Reset", callback_data="reset"),
+            ],
+            [
+                InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"),
+                InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf"),
+            ],
+            [
+                InlineKeyboardButton("🧬 Arc-Length", callback_data="arclen"),
+                InlineKeyboardButton("🌿 DbZ", callback_data="dbz"),
+            ],
+            [
+                InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics"),
+            ],
         ]
         if webapp_url:
-            rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
+            rows.append([
+                InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))
+            ])
         else:
-            rows.append([InlineKeyboardButton("⚡ Mini App (tunnel pending…)", callback_data="webapp_pending")])
+            rows.append([
+                InlineKeyboardButton("⚡ Mini App (tunnel pending…)", callback_data="webapp_pending")
+            ])
         return InlineKeyboardMarkup(rows)
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3589,7 +4878,7 @@ class AEI_Bot:
         engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
         feed_status = "Active" if self._running else "Inactive"
         arclen_info = self.engine._verify_arc_length_coherence()
-        coherent_mark = '✅' if arclen_info['coherent'] else '⚠️'
+        coherent_mark = "✅" if arclen_info["coherent"] else "⚠️"
 
         welcome = (
             "🔷 *ÆEA Quantum-Financial Topology Bot*\n"
@@ -3620,7 +4909,9 @@ class AEI_Bot:
             f"*Coherent:* {coherent_mark}\n\n"
             "💎 Natalia Tanyatia"
         )
-        await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
+        await update.message.reply_text(
+            welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard()
+        )
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.start(update, context)
@@ -3635,21 +4926,21 @@ class AEI_Bot:
                     "The engine will initialize on the first price tick after starting the feed.\n"
                     "Please use `/start_feed` to start the price feed.\n"
                     "If the feed is already running, try `/reset` to reinitialize.",
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
                 )
                 return
         state = self.engine.state
-        idx = state.Z - state.y - 1
+        idx = state.Z - (state.y + 1)
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
         bid, ask = self.engine.feed.get_current_price()
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         info = self.engine._verify_arc_length_coherence()
-        coherence_line = "✅ COHERENT" if info['coherent'] else f"⚠️ DEV: {info['deviation_float']:.6f}"
+        coherence_line = "✅ COHERENT" if info["coherent"] else f"⚠️ DEV: {info['deviation_float']:.6f}"
         feed_mark = "✅" if self._running else "❌"
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
         m_local = state.last_kronecker_m if state.last_kronecker_m else 0
         n_local = state.last_kronecker_n if state.last_kronecker_n else 0
-        h_idx = state.h - state.y - 1
+        h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
         trail_status = "🟢 Active" if state.trailing_stop_active else "⚪ Inactive"
@@ -3682,7 +4973,8 @@ class AEI_Bot:
             f"({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
             f"🎯 *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
             f"🔍 *OnTrack Runs:* {state.on_track_runs}  |  *OnStand Runs:* {state.on_stand_runs}\n"
-            f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}"
+            f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}\n"
+            f"🔢 *X_scan:* {state.X_scan}  |  *Y_scan:* {state.Y_scan}  |  *X_PERIOD:* {X_PERIOD}"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -3694,7 +4986,7 @@ class AEI_Bot:
         state = self.engine.state
         info = self.engine._verify_arc_length_coherence()
         q = state.q_field
-        qstr = f"({q.a}, {q.b}, {q.c}, {q.d})"
+        qstr = f"({q.a}, {q.b}, {q.c}, {q.d})" if q is not None else "—"
         response = (
             "🧬 *EXACT ARC-LENGTH STATE*\n"
             f"🧮 *s² (ℚ-exact)* = `{info['arc_sq']}`\n"
@@ -3707,7 +4999,7 @@ class AEI_Bot:
             f"   • 2 = Natalia fibration (Re[Ψ] ≤ 0)\n"
             f"🌀 *Re[Ψ]* = `{info['re_psi']}`\n"
             f"🧊 *Current Φ* = `{qstr}`\n"
-            f"🔷 *FVG anchors:* {len(state.fvg_anchor_map)} Λ₂₄ vectors"
+            f"🔷 *FVG anchors:* {len(state.fvg_anchor_map)}"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -3762,6 +5054,7 @@ class AEI_Bot:
             f"*OnTrack Runs:* {status.get('on_track_runs')}  |  *OnStand Runs:* {status.get('on_stand_runs')}\n"
             f"*Last Kronecker Bar:* {status.get('last_kronecker_bar')}\n"
             f"*Last Kronecker m/n/h:* {status.get('last_kronecker_m')}/{status.get('last_kronecker_n')}/{status.get('last_kronecker_h')}\n"
+            f"*X_PERIOD (const):* {X_PERIOD}  |  *Y_START (const):* {Y_START}"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -3772,7 +5065,10 @@ class AEI_Bot:
         if not self.engine.state.FG:
             self.engine._force_initialization()
             if not self.engine.state.FG:
-                await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+                await update.message.reply_text(
+                    "⏳ *Engine not initialized*\nPlease use `/start_feed`.",
+                    parse_mode="Markdown",
+                )
                 return
         state = self.engine.state
         y = state.y
@@ -3806,7 +5102,10 @@ class AEI_Bot:
         if not self.engine.state.FG:
             self.engine._force_initialization()
             if not self.engine.state.FG:
-                await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+                await update.message.reply_text(
+                    "⏳ *Engine not initialized*\nPlease use `/start_feed`.",
+                    parse_mode="Markdown",
+                )
                 return
         state = self.engine.state
         if state.signal == Decimal('0.0'):
@@ -3814,13 +5113,19 @@ class AEI_Bot:
             confidence = "N/A"
         elif state.price > state.signal:
             direction = "🟢 BUY"
-            confidence = f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
+            confidence = (
+                f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%"
+                if state.signal != Decimal('0.0') else "0%"
+            )
         else:
             direction = "🔴 SELL"
-            confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
+            confidence = (
+                f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%"
+                if state.signal != Decimal('0.0') else "0%"
+            )
         m_local = state.last_kronecker_m if state.last_kronecker_m else 0
         n_local = state.last_kronecker_n if state.last_kronecker_n else 0
-        h_idx = state.h - state.y - 1
+        h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
         condition_met = (m_local >= 12) or (n_local >= 12)
@@ -3853,53 +5158,61 @@ class AEI_Bot:
         if not self.engine.state.FG:
             self.engine._force_initialization()
             if not self.engine.state.FG:
-                await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+                await update.message.reply_text(
+                    "⏳ *Engine not initialized*\nPlease use `/start_feed`.",
+                    parse_mode="Markdown",
+                )
                 return
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
-        if idx < 0 or idx >= 13:
+        if idx < 0 or idx >= len(state.iA[0]):
             await update.message.reply_text("❌ Insufficient data for indicator projection.")
             return
-        i_values = [state.iA[i][idx] if idx < len(state.iA[i]) else Decimal('50.0') for i in range(13)]
-        names = ["ADX", "Stochastic", "RVI", "AC", "Force", "OBV", "AD", "MFI", "Momentum", "DeM", "WPR", "CCI", "RSI"]
+        names = ["ADX", "Stochastic", "RVI", "AC", "Force", "OBV", "AD", "MFI",
+                 "Momentum", "DeM", "WPR", "CCI", "RSI"]
         indicator_str = "📊 *13D HILBERT SPACE PROJECTION*\n"
-        for i, (name, val) in enumerate(zip(names, i_values)):
+        for i, name in enumerate(names):
+            val = state.iA[i][idx] if idx < len(state.iA[i]) else Decimal('50.0')
             val_int = int(float(val))
-            bar = "█" * min(max(val_int // 10, 0), 10) + "░" * (10 - min(max(val_int // 10, 0), 10))
+            bar_len = min(max(val_int // 10, 0), 10)
+            bar = "█" * bar_len + "░" * (10 - bar_len)
             indicator_str += f"`{name:8}` {val:6.1f} [{bar}]\n"
         indicator_str += "\n*Thresholds:*\n"
         indicator_str += f"  Overbought: 66.6 (f={F_THRESHOLD_D:.1f})\n"
         indicator_str += f"  Oversold:   33.3 (g={G_THRESHOLD_D:.1f})"
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
-            await update.callback_query.edit_message_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
+            await update.callback_query.edit_message_text(
+                indicator_str, parse_mode="Markdown", reply_markup=reply_markup
+            )
         else:
             await update.message.reply_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await update.message.reply_text(
+                "⏳ *Engine not initialized*\nPlease use `/start_feed`.",
+                parse_mode="Markdown",
+            )
             return
         state = self.engine.state
         idx = state.Z - state.y - 1
         bridge_fvgs = BRIDGE_STATE.list_fvgs()
         bridge_str = ""
         if bridge_fvgs:
-            bridge_str = "\n🌐 *Web App FVGs (Λ₂₄-Anchored):*\n"
+            bridge_str = "\n🌐 *Web App FVGs:*\n"
             for f in bridge_fvgs[-8:]:
                 mark = "▲" if f["type"] == "top" else "▼"
                 who = f" (user {f['user_id']})" if f.get("user_id") else ""
-                lh = f["leech_hash"][:12] if f.get("leech_hash") else "—"
-                bridge_str += f"  {mark} {f['price']} idx={f['idx']}{who}  Λ={lh}\n"
+                bridge_str += f"  {mark} {f['price']} idx={f['idx']}{who}\n"
         premium_val = state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0')
         discount_val = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
         hh_val = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
         ll_val = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
         response = (
-            "📐 *FAIR VALUE GAP TRACKING (Λ₂₄ ANCHORED)*\n"
+            "📐 *FAIR VALUE GAP TRACKING*\n"
             f"📊 *FVG Count:* {state.FVG + 1}\n"
-            f"🧬 *Λ₂₄ Anchors:* {len(state.fvg_anchor_map)}\n"
             f"📈 *Current Price:* {state.price:.5f}\n"
             f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n"
             "*Topological Anchors:*\n"
@@ -3914,7 +5227,7 @@ class AEI_Bot:
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         prev_on_track = self.engine.state.on_track_runs
         prev_on_stand = self.engine.state.on_stand_runs
-        self.engine._on_reinit()
+        self.engine.OnReInit()
         reset_msg = (
             "🔄 *TOPOLOGICAL BRANCH RESET*\n"
             "The Hilbert space projection has been re-anchored to the current\n"
@@ -3926,7 +5239,7 @@ class AEI_Bot:
             "• k/l signal flags cleared\n"
             "• Quaternion field Φ reset to identity\n"
             "• DbZ branch history cleared\n"
-            "• Λ₂₄ anchor map cleared\n"
+            "• FVG anchor map cleared\n"
             "• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
             f"• 🔍 OnTrack runs preserved: {prev_on_track}\n"
@@ -3951,13 +5264,13 @@ class AEI_Bot:
             historical = self.engine.feed.get_historical_klines(limit=200)
             if historical and len(historical) >= MIN_HISTORY_WINDOW:
                 self.engine.ohlcv_history = historical
-                logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()}")
-                try:
-                    self.engine.initialize_engine()
-                except Exception:
-                    logger.exception("initialize_engine crashed")
+                logger.info(
+                    f"✅ Loaded {len(historical)} historical bars from relay for "
+                    f"{self.engine.feed.active_symbol()}"
+                )
+                self.engine._populate_indicator_matrix()
             else:
-                logger.info("⏳ No historical data from relay. Engine will initialize organically on first tick.")
+                logger.info("⏳ No historical data from relay. Engine will initialize organically.")
         except Exception as e:
             logger.warning(f"⚠️ Historical data fetch failed: {e}")
 
@@ -3970,7 +5283,7 @@ class AEI_Bot:
             self._price_task = asyncio.create_task(self.price_feed_loop())
 
         hist_count = len(self.engine.ohlcv_history)
-        init_mode = "Pre-seeded with history" if hist_count >= MIN_HISTORY_WINDOW else "Organic first-tick initialization"
+        init_mode = "Pre-seeded with history" if hist_count >= MIN_HISTORY_WINDOW else "Organic first-tick"
 
         reply_text = (
             f"✅ *Price feed started*\n"
@@ -4000,7 +5313,8 @@ class AEI_Bot:
         info = self.engine.feed.probe()
         status = "✅ OK" if not info.get("empty") else "❌ EMPTY"
         lines = [
-            "🔬 *RELAY PROBE*", "",
+            "🔬 *RELAY PROBE*",
+            "",
             f"*Status:* {status}",
             f"*Relay URL:* `{RELAY_URL or 'UNSET'}`",
             f"*Relay Gated:* {'🔒 yes' if RELAY_KEY else '🔓 no'}",
@@ -4024,7 +5338,11 @@ class AEI_Bot:
         if len(self.engine.feed._chain) > 1:
             self.engine.feed._advance_symbol_chain()
         active = self.engine.feed.active_symbol()
-        text = f"♻️ *Relay client rebuilt*\n🔎 *Active symbol:* `{active}`\n_Feed will use this symbol on next iteration._"
+        text = (
+            f"♻️ *Relay client rebuilt*\n"
+            f"🔎 *Active symbol:* `{active}`\n"
+            f"_Feed will use this symbol on next iteration._"
+        )
         if update.callback_query:
             await update.callback_query.edit_message_text(text, parse_mode="Markdown")
         else:
@@ -4034,7 +5352,7 @@ class AEI_Bot:
         global SYMBOL
         args = context.args
         if not args:
-            supported = ', '.join(list(SYMBOL_MAP.keys())[:10])
+            supported = ", ".join(list(SYMBOL_MAP.keys())[:10])
             await update.message.reply_text(
                 f"📈 *Current Symbol:* `{SYMBOL}`\n"
                 "Use `/symbol <PAIR>` to change.\n"
@@ -4042,7 +5360,7 @@ class AEI_Bot:
                 f"*Supported Symbols:*\n"
                 f"{supported}\n"
                 f"(and {len(SYMBOL_MAP) - 10} more)",
-                parse_mode="Markdown"
+                parse_mode="Markdown",
             )
             return
         new_symbol = args[0].upper()
@@ -4067,7 +5385,7 @@ class AEI_Bot:
                 historical = self.engine.feed.get_historical_klines(limit=200)
                 if historical:
                     self.engine.ohlcv_history = historical
-                    self.engine.initialize_engine()
+                    self.engine._populate_indicator_matrix()
                     self.engine._force_initialization()
                 init_status = "✅ Initialized" if self.engine.state.FG else "⏳ Initializing..."
                 await update.message.reply_text(
@@ -4076,7 +5394,7 @@ class AEI_Bot:
                     f"💰 *Current Price:* {bid}\n"
                     f"🧠 *Engine State:* {init_status}\n"
                     f"🔍 *OnTrack Runs:* {prev_on_track}  |  *OnStand Runs:* {prev_on_stand}",
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
                 )
             else:
                 await update.message.reply_text(f"❌ Invalid symbol or no data: {yahoo_symbol}")
@@ -4103,26 +5421,27 @@ class AEI_Bot:
                 "⏳ *Mini App URL not yet available*\n"
                 "The bridge is starting a public HTTPS tunnel. "
                 "Please try again in ~30–45 seconds.\n"
-                "Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment to a "
-                "pre-provisioned HTTPS endpoint.",
-                parse_mode="Markdown"
+                "Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment.",
+                parse_mode="Markdown",
             )
             return
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))
+        ]])
         await update.message.reply_text(
-            f"🌐 *ÆEA Telegram Mini App*\n"
-            f"Tap the button below to launch the full Codex Symbolica visualization.\n\n"
-            f"*Features inside the Mini App:*\n"
-            f"  ▲ Draw premium FVG (Λ₂₄-anchored)\n"
-            f"  ▼ Draw discount FVG (Λ₂₄-anchored)\n"
-            f"  ✖ Delete FVG\n"
-            f"  ⟳ Live state polling every 2 s\n"
-            f"  🧬 Engine-authoritative coherence panel\n"
-            f"  🔀 KC / Prime / Dime now visible in HUD\n"
-            f"  🔍 OnTrack / OnStand counters in engine panel\n"
-            f"  📈 Trailing stop state mirrored from engine T()",
+            "🌐 *ÆEA Telegram Mini App*\n"
+            "Tap the button below to launch the full Codex Symbolica visualization.\n\n"
+            "*Features inside the Mini App:*\n"
+            "  ▲ Draw premium FVG\n"
+            "  ▼ Draw discount FVG\n"
+            "  ✖ Delete FVG\n"
+            "  ⟳ Live state polling every 2 s\n"
+            "  🧬 Engine-authoritative coherence panel\n"
+            "  🔀 KC / Prime / Dime visible in HUD\n"
+            "  🔍 OnTrack / OnStand counters in engine panel\n"
+            "  📈 Trailing stop state mirrored from engine T()",
             parse_mode="Markdown",
-            reply_markup=keyboard
+            reply_markup=keyboard,
         )
 
     async def webgui(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4138,7 +5457,7 @@ class AEI_Bot:
             f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
             f"*Diagnostics endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
             f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
 
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4175,7 +5494,7 @@ class AEI_Bot:
             await query.edit_message_text(
                 "⏳ *Mini App tunnel is starting…*\n"
                 f"Please retry `/webapp` in ~30–45 seconds.",
-                parse_mode="Markdown"
+                parse_mode="Markdown",
             )
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4196,7 +5515,9 @@ class AEI_Bot:
 
     def run(self):
         self.engine.OnInit()
-        self.application = Application.builder().token(self.token).post_init(self._post_init).build()
+        self.application = (
+            Application.builder().token(self.token).post_init(self._post_init).build()
+        )
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("help", self.help))
         self.application.add_handler(CommandHandler("status", self.status))
@@ -4220,25 +5541,27 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info(f"📊 Quantum-Financial Topology Engine initialized.")
-        logger.info(f"🧠 ℚ-exact Fraction arithmetic + REGIME-R disclosure.")
-        logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
-        logger.info(f"🧬 Λ₂₄ anchoring: true Leech congruence.")
-        logger.info(f"⚡ Live indicator extraction: 13D Hilbert-space projection populated per bar.")
-        logger.info(f"⚡ Telegram Mini App enabled.")
-        logger.info(f"📈 Trailing stop: real Ask−Bid spread + symbol-adaptive point size.")
-        logger.info(f"🎯 Kronecker gate: LOCAL m/n at h-bar.")
-        logger.info(f"🔀 O() regime mutation restored.")
-        logger.info(f"📊 OnBar per-j HH/LL anchoring.")
-        logger.info(f"📡 OnTrack/OnStand MQL4 loop bounds restored.")
-        logger.info(f"🔒 Relay shared-secret gate available.")
-        logger.info(f"💎 Ready. Use /start to begin.")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port).")
+        logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
+        logger.info("🌿 DbZ branching: Re[Ψ] quaternion component (parallel symbolic layer).")
+        logger.info("🧬 Leech lattice anchor: parallel symbolic layer.")
+        logger.info("⚡ 13D Hilbert-space projection populated per bar.")
+        logger.info("⚡ Telegram Mini App enabled.")
+        logger.info("📈 Trailing stop: real Ask−Bid spread + symbol-adaptive point size.")
+        logger.info("🎯 Kronecker gate: LOCAL m/n at h-bar.")
+        logger.info("🔀 O() regime mutation restored.")
+        logger.info("📊 OnBar per-j HH/LL anchoring.")
+        logger.info("📡 OnTrack/OnStand MQL4 loop bounds restored (x-1 to 4*max).")
+        logger.info("🔒 Relay shared-secret gate available.")
+        logger.info("💎 Ready. Use /start to begin.")
         self.application.run_polling()
+
 
 # ============================================================================
 # BRIDGE BOOTSTRAP
 # ============================================================================
 _bridge_attach_to_bot(AEI_Bot)
+
 
 # ============================================================================
 # MAIN ENTRY POINT
@@ -4252,8 +5575,10 @@ def main():
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
 
+
 if __name__ == "__main__":
     main()
+
 
 # ============================================================================
 # Q.E.D.
