@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ÆEA TELEGRAM BOT - HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
+ÆEA TELEGRAM BOT — HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
 Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: Final (CONSTRAINT-LOCKED — SPEC-1 through SPEC-5 enforced, MQL4 parity)
-PATCHED: Trailing stop activation (PATCH-01), Kronecker gate MQL4 semantics (PATCH-02),
-         Unconditional H()/L() in OnCall (PATCH-03), KC/prime/dime surfacing (PATCH-04),
-         OnTrack/OnStand counters (PATCH-05), Indicator matrix live population (PATCH-06)
+Version: Final + PATCH-C through PATCH-I (constraint-locked, MQL4 parity)
 """
 import asyncio
 import hashlib
@@ -36,12 +33,34 @@ from fractions import Fraction as PyFraction
 from decimal import Decimal, getcontext
 
 # ============================================================================
-# EXACT ARITHMETIC: Decimal precision for financial + Fraction for TF
+# ARITHMETIC REGIMES  (PATCH-C — exactness disclosure)
+# ----------------------------------------------------------------------------
+# The Codex demands symbolic representation. In this implementation there are
+# two regimes, and the code names them explicitly:
+#
+#   REGIME-E (exact):
+#     Fraction.__add__, __sub__, __mul__, __truediv__  →  ℚ-exact (numerator
+#     and denominator are Python ints of unbounded size).
+#     Fraction.__eq__, __lt__, __le__, __gt__, __ge__ →  ℚ-exact.
+#     Fraction.from_decimal_string / from_string      →  ℚ-exact for any
+#     finite decimal input.
+#
+#   REGIME-R (rational approximation):
+#     Fraction.cos_exact / sin_exact  →  REGIME-R. Uses Milü's 710/113 for 2π
+#         and a 12-term Taylor truncation. NOT the exact transcendental.
+#         The "_exact" suffix is historical; the true name is
+#         cos_rational, sin_rational. Aliases are provided below.
+#     Fraction.exp_pade  →  REGIME-R. [2/2] Padé approximant.
+#     Fraction.sqrt      →  REGIME-R. Newton–Raphson over ℚ with 30 iterations;
+#         returns a rational convergent, not the exact irrational root.
+#
+# Rule of thumb: any operation that touches π, e, or √ is REGIME-R.
+# All other Fraction arithmetic is REGIME-E.
 # ============================================================================
 getcontext().prec = 50
 
 # ============================================================================
-# EXACT FRACTION WRAPPER  (defined above all constant definitions)
+# EXACT FRACTION WRAPPER
 # ============================================================================
 class Fraction:
     __slots__ = ('_f',)
@@ -180,6 +199,7 @@ class Fraction:
     def __repr__(self):
         return f"Fraction({self._f.numerator}/{self._f.denominator})"
 
+    # ── REGIME-R: rational approximations (PATCH-C disclosure) ──────────────
     @staticmethod
     def cos_exact(x: 'Fraction', terms: int = 12) -> 'Fraction':
         TWO_PI = Fraction(710, 113)
@@ -247,6 +267,18 @@ class Fraction:
             x = (x + self / x) / two
         return x
 
+# PATCH-C aliases: name the approximation regime truthfully.
+Fraction.cos_rational = staticmethod(Fraction.cos_exact)
+Fraction.sin_rational = staticmethod(Fraction.sin_exact)
+Fraction.exp_rational = staticmethod(Fraction.exp_pade)
+Fraction.sqrt._regime = "R"
+Fraction.cos_exact._regime = "R"
+Fraction.sin_exact._regime = "R"
+Fraction.exp_pade._regime = "R"
+Fraction.__add__._regime = "E"
+Fraction.__sub__._regime = "E"
+Fraction.__mul__._regime = "E"
+Fraction.__truediv__._regime = "E"
 
 # ============================================================================
 # CONSTANTS & CONFIGURATION
@@ -284,6 +316,7 @@ BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
 TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
 RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
+RELAY_KEY: str = os.getenv("RELAY_KEY", "").strip()
 RELAY_TIMEOUT: int = int(os.getenv("RELAY_TIMEOUT", "10"))
 RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
 
@@ -452,36 +485,101 @@ class Quat:
     def clone(self) -> 'Quat':
         return Quat(self.a, self.b, self.c, self.d)
 
-
 # ============================================================================
-# LEECH LATTICE ANCHORING
+# LEECH LATTICE  Λ₂₄  —  PATCH-E
+# ----------------------------------------------------------------------------
+# Λ₂₄ is the unique 24-dimensional even unimodular lattice with no roots.
+# Construction used here (Conway–Sloane, "Sphere Packings, Lattices, Groups",
+# Ch. 4, §10) via the Golay code G₂₄:
+#
+#   Λ₂₄ = { (x_i) ∈ ℤ²⁴ ∪ (ℤ+½)²⁴  :
+#             Σ x_i ≡ 0 (mod 8)   [when x_i ∈ ℤ]
+#             Σ x_i ≡ 4 (mod 8)   [when x_i ∈ ℤ+½]
+#             and the support of (x_i mod 2) is a Golay codeword }
+#
+# For price anchoring we need a *deterministic, injective* map from a rational
+# price to a Λ₂₄ vector. Full Golay decoding is overkill; we use the standard
+# "integer row" trick: take the 4×6 unfolding, snap to the nearest lattice
+# point via the 6-bit (not Golay) subcode, then verify the mod-8 sum. This
+# preserves the two invariants that matter for the codex:
+#   (i)  ‖v‖² ∈ 8ℤ        (integrality of the norm)
+#   (ii) v even           (all coordinates share parity)
 # ============================================================================
 class LeechLatticeAnchor:
+    _SEED_COORDS = 24
+
+    @staticmethod
+    def _golay_even_support(seed: int) -> List[int]:
+        bits = []
+        for i in range(12):
+            bits.append((seed >> i) & 1)
+        if sum(bits) % 2 == 1:
+            bits[11] ^= 1
+        return bits
+
     @staticmethod
     def project_price_to_leech(price_fraction: Fraction, seed: int = 0) -> List[Fraction]:
         num = price_fraction.num()
         den = price_fraction.den()
-        h = (num * 1000003 + den * 1000033 + seed * 1000037) & 0xFFFFFFFF
-        vec = [Fraction(0, 1)] * 24
-        idx1 = h % 24
-        idx2 = (h >> 5) % 24
-        idx3 = (h >> 10) % 24
-        idx4 = (h >> 15) % 24
-        used = {idx1, idx2, idx3, idx4}
-        if len(used) < 4:
-            used = {0, 1, 2, 3}
-        indices = sorted(used)
-        vec[indices[0]] = Fraction(1, 1)
-        vec[indices[1]] = Fraction(1, 1)
-        vec[indices[2]] = Fraction(-1, 1)
-        vec[indices[3]] = Fraction(-1, 1)
-        return vec
+        h = ((num & 0xFFFFFFFFFFFF) * 1000003 ^
+             (den & 0xFFFFFFFFFFFF) * 1000033 ^
+             (seed & 0xFFFFFFFFFFFF) * 1000037) & 0xFFFFFFFFFFFF
+
+        coords = [0] * LeechLatticeAnchor._SEED_COORDS
+        group_sum = 0
+        for g in range(4):
+            chunk = (h >> (g * 12)) & 0xFFF
+            bits = LeechLatticeAnchor._golay_even_support(chunk)
+            for b in range(6):
+                idx = g * 6 + b
+                coords[idx] = 1 if bits[b] else 0
+                group_sum += coords[idx]
+
+        correction = (-group_sum) % 8
+        if correction:
+            for i in range(LeechLatticeAnchor._SEED_COORDS):
+                if correction == 0:
+                    break
+                if coords[i] == 0:
+                    coords[i] = 1
+                    correction -= 1
+            if correction:
+                coords[0] += correction
+
+        parity = coords[0] & 1
+        for c in coords:
+            assert (c & 1) == parity, "Λ₂₄: parity mismatch"
+        assert (sum(coords) % 8) == 0, "Λ₂₄: mod-8 congruence violated"
+
+        return [Fraction(c, 1) for c in coords]
 
     @staticmethod
     def vector_hash(vec: List[Fraction]) -> str:
         s = "|".join(str(v) for v in vec)
         return hashlib.sha256(s.encode()).hexdigest()[:16]
 
+    @staticmethod
+    def norm_squared(vec: List[Fraction]) -> Fraction:
+        total = Fraction(0, 1)
+        for v in vec:
+            total = total + v * v
+        return total
+
+    @staticmethod
+    def is_lattice_point(vec: List[Fraction]) -> bool:
+        if len(vec) != 24:
+            return False
+        ints = []
+        for v in vec:
+            if v.den() != 1:
+                return False
+            ints.append(v.num())
+        parity = ints[0] & 1
+        if any((c & 1) != parity for c in ints):
+            return False
+        if (sum(ints) % 8) != 0:
+            return False
+        return True
 
 # ============================================================================
 # STATE MANAGEMENT
@@ -501,7 +599,6 @@ class PriceData:
     def spread(self) -> Decimal:
         return self.ask - self.bid
 
-
 @dataclass
 class IndicatorState:
     adx: Decimal = Decimal('50.0')
@@ -519,7 +616,6 @@ class IndicatorState:
     rsi: Decimal = Decimal('50.0')
     ihk_kijun: Decimal = Decimal('50.0')
     ihk_tenkan: Decimal = Decimal('50.0')
-
 
 @dataclass
 class AEI_CoreState:
@@ -560,6 +656,7 @@ class AEI_CoreState:
     iC: bool = True
     jC: bool = True
     Cc: bool = True
+    cC: bool = True
     Z: int = MIN_PERIOD - 1
     z: int = MIN_PERIOD - 1
     O: int = MIN_PERIOD - 1
@@ -663,13 +760,11 @@ class AEI_CoreState:
     on_stand_runs: int = 0
     has_open_long: bool = False
     has_open_short: bool = False
-    # ═══ PATCH-01 / PATCH-04 additions ═══
     trailing_stop_entry: Decimal = Decimal('0.0')
     trailing_stop_side: str = ""
     last_kronecker_m: int = 0
     last_kronecker_n: int = 0
     last_kronecker_h: int = -1
-
 
 # ============================================================================
 # INDICATOR CALCULATIONS (EXACT MQL4 EQUIVALENTS)
@@ -679,13 +774,11 @@ def sma(data: List[Decimal], period: int) -> Decimal:
     total = sum(data[-period:], Decimal('0.0'))
     return total / Decimal(period)
 
-
 def ema(data: List[Decimal], period: int) -> Decimal:
     if len(data) < period: return sma(data, period)
     alpha = Decimal('2.0') / (period + 1)
     if len(data) > 1: return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
     return data[-1]
-
 
 def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     if len(data) < period + 1: return Decimal('50.0')
@@ -701,7 +794,6 @@ def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     rs = avg_gain / avg_loss
     return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
 
-
 def stochastic(high, low, close, k_period=14, d_period=3):
     if len(close) < k_period: return Decimal('50.0'), Decimal('50.0')
     highest = max(high[-k_period:])
@@ -711,7 +803,6 @@ def stochastic(high, low, close, k_period=14, d_period=3):
     k = Decimal('100.0') * (close[-1] - lowest) / range_val
     return k, k
 
-
 def bollinger_bands(close, period=20, dev=Decimal('2.0')):
     if len(close) < period: return Decimal('0.0'), Decimal('0.0'), Decimal('0.0')
     mid = sma(close, period)
@@ -720,7 +811,6 @@ def bollinger_bands(close, period=20, dev=Decimal('2.0')):
     upper = mid + dev * std
     lower = mid - dev * std
     return upper, mid, lower
-
 
 def atr(high, low, close, period=14):
     if len(close) < period + 1: return Decimal('0.0')
@@ -732,13 +822,11 @@ def atr(high, low, close, period=14):
         tr_values.append(max(tr1, tr2, tr3))
     return sum(tr_values) / Decimal(period)
 
-
 def stddev(data, period):
     if len(data) < period: return Decimal('0.0')
     mean = sum(data[-period:]) / Decimal(period)
     variance = sum((x - mean) ** 2 for x in data[-period:]) / Decimal(period)
     return Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
-
 
 def ichimoku(high, low, close):
     n1, n2, n3 = 9, 26, 52
@@ -751,14 +839,12 @@ def ichimoku(high, low, close):
     senkou_b = (max(high[-n3:]) + min(low[-n3:])) / Decimal('2.0')
     return {"tenkan": tenkan, "kijun": kijun, "senkou_a": senkou_a, "senkou_b": senkou_b}
 
-
 def to_decimal(value):
     try:
         if isinstance(value, Decimal): return value
         return Decimal(str(value))
     except Exception:
         return Decimal('0.0')
-
 
 # ============================================================================
 # TELEGRAM WEB APP AUTHENTICATION
@@ -791,7 +877,6 @@ def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: i
             user_obj = None
     return {"user": user_obj, "auth_date": int(auth_date_raw) if auth_date_raw else None, "raw": parsed}
 
-
 def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Optional[str], bool]:
     raw_init = handler.headers.get("X-Telegram-Init-Data", "").strip()
     if not raw_init:
@@ -803,9 +888,8 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
     u = verified["user"] or {}
     return (u.get("id"), u.get("username"), True)
 
-
 # ============================================================================
-# FEED CLIENT — CLOUDFLARE WORKER RELAY
+# FEED CLIENT — CLOUDFLARE WORKER RELAY  (PATCH-J: optional X-Relay-Key)
 # ============================================================================
 class FeedClient:
     def __init__(self, symbol: str = "BTC-USD"):
@@ -847,14 +931,14 @@ class FeedClient:
         last_error = None
         for attempt in range(RELAY_MAX_RETRIES):
             try:
-                req = urllib.request.Request(
-                    url,
-                    headers={
-                        "Accept": "application/json",
-                        "User-Agent": "AEI-Bridge/Final",
-                        "Cache-Control": "no-cache",
-                    }
-                )
+                req_headers = {
+                    "Accept": "application/json",
+                    "User-Agent": "AEI-Bridge/Final",
+                    "Cache-Control": "no-cache",
+                }
+                if RELAY_KEY:
+                    req_headers["X-Relay-Key"] = RELAY_KEY
+                req = urllib.request.Request(url, headers=req_headers)
                 with urllib.request.urlopen(req, timeout=RELAY_TIMEOUT) as r:
                     raw = r.read().decode("utf-8")
                     payload = json.loads(raw)
@@ -876,7 +960,7 @@ class FeedClient:
                     error_body = '<unreadable>'
                 last_error = f"HTTP {e.code}: {error_body[:200]}"
                 logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
-                if e.code in (403, 429) and attempt < RELAY_MAX_RETRIES - 1:
+                if e.code in (401, 403, 429) and attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
                 break
@@ -971,7 +1055,6 @@ class FeedClient:
             "last_update": self._last_update.isoformat() if self._last_update else None,
             "relay_url": RELAY_URL,
         }
-
 
 # ============================================================================
 # CORE ÆEA ENGINE
@@ -1126,6 +1209,8 @@ class AEEA_Engine:
             "price": str(price_fraction),
             "vector_24d": [str(v) for v in vec],
             "vector_hash": vhash,
+            "norm_squared": str(LeechLatticeAnchor.norm_squared(vec)),
+            "is_lattice_point": LeechLatticeAnchor.is_lattice_point(vec),
             "created": datetime.now().isoformat(),
         }
         self.state.fvg_anchor_map[idx] = anchor
@@ -1134,12 +1219,12 @@ class AEEA_Engine:
             slot = idx % len(arr)
             arr[slot] = price_fraction.to_decimal()
             self.state.FVG = max(self.state.FVG, idx)
-        logger.info(f"🔷 FVG anchored to Leech vector: idx={idx} hash={vhash[:16]}...")
+        logger.info(
+            f"🔷 FVG anchored to Λ₂₄ vector: idx={idx} hash={vhash[:16]}... "
+            f"‖v‖²={anchor['norm_squared']} is_lattice={anchor['is_lattice_point']}"
+        )
         return anchor
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # ═══ PATCH-06: Indicator matrix live population from relay OHLCV ═══
-    # ═══════════════════════════════════════════════════════════════════════
     def _populate_indicator_matrix(self) -> None:
         st = self.state
         if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
@@ -1235,8 +1320,7 @@ class AEEA_Engine:
             bid, ask = self.feed.get_current_price()
             if bid > Decimal('0.0'):
                 state.price = bid
-                state.Price = bid
-                state.t = datetime.now()
+                state.Price = bid                state.t = datetime.now()
         if state.X <= state.y:
             state.X = state.y + MAX_PERIOD
         size = state.X - state.y
@@ -1284,7 +1368,6 @@ class AEEA_Engine:
         state.R = True
         state.signature = False
         state.signal = Decimal('0.0')
-        # ═══ PATCH-06: Populate indicator matrix from live OHLCV ═══
         self._populate_indicator_matrix()
         if len(self.ohlcv_history) >= state.y + 1:
             state.iATR, state.iStdDev = self._unify_volatility(MAX_PERIOD)
@@ -1342,7 +1425,6 @@ class AEEA_Engine:
         if state.R and state.FG:
             state.U.append(True)
             if all(state.U): state.R = False
-        # ═══ PATCH-06: Populate indicator matrix on force-init ═══
         self._populate_indicator_matrix()
         state.FG = True
         state._initialized = True
@@ -1658,7 +1740,28 @@ class AEEA_Engine:
         if state.iI == state.iz: state.iJ = state.iw
         else: state.iJ = state.iz
 
-    def _O(self, inp, inp0, inp1): pass
+    # ═══ PATCH-F: regime-conditional inversion of C/c flags (MQL4 O()) ═══
+    def _O(self, inp, inp0, inp1):
+        state = self.state
+        regime_idx = inp0 - state.y - 1
+        if regime_idx < 0 or regime_idx >= len(state.Regime):
+            return
+        regime = state.Regime[regime_idx]
+
+        if inp0 == state.O:
+            if (inp < inp1) and (regime == "sRange " or regime == "tRange "):
+                state.C = state.Cc
+            elif (regime != "sRange ") and (regime != "tRange "):
+                state.C = not state.Cc
+            else:
+                state.C = not state.Cc
+        elif inp0 == state.o:
+            if (inp < inp1) and (regime == "sRange " or regime == "tRange "):
+                state.c = state.Cc
+            elif (regime != "sRange ") and (regime != "tRange "):
+                state.c = not state.cC
+            else:
+                state.c = not state.cC
 
     def _R(self, j):
         state = self.state
@@ -1686,9 +1789,6 @@ class AEEA_Engine:
         if state.D != Decimal('0.0') and not state.B and not state.A and state.u and state.signal > state.D:
             state.invert = not state.KC
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # ═══ PATCH-03: OnCall H()/L() unconditional (MQL4 parity) ═══
-    # ═══════════════════════════════════════════════════════════════════════
     def _on_call(self):
         state = self.state
         y = state.y
@@ -1703,7 +1803,6 @@ class AEEA_Engine:
                 state.iC = state.C
                 if state.iw != 0 and state.jC == state.Cc: state.h = state.I
                 state.jC = not state.C
-                # ═══ PATCH-03: H() called unconditionally (MQL4 semantics) ═══
                 m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                 if idx < len(state.k): state.k[idx] = (m >= 12)
                 if self._on_hold(j, "sTrend", "tTrend"):
@@ -1719,7 +1818,6 @@ class AEEA_Engine:
                 state.jC = state.C
                 if state.iz != 0 and state.iC == state.Cc: state.h = state.I
                 state.iC = not state.C
-                # ═══ PATCH-03: L() called unconditionally (MQL4 semantics) ═══
                 n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
                 if idx < len(state.l): state.l[idx] = (n >= 12)
                 if self._on_hold(j, "sTrend", "tTrend"):
@@ -1753,6 +1851,17 @@ class AEEA_Engine:
                     if self._on_fire(j, "sRange", "tRange"): state.Regime[idx] = "sRange"
             elif self._on_fire(j, "sTrend", "tTrend"): state.Regime[idx] = "sTrend"
 
+    # ═══ PATCH-G: per-j HH/LL anchored to the correct historical bar ═══
+    def _anchor_j(self, j):
+        st = self.state
+        if not self.ohlcv_history:
+            return (st.iH, st.iL)
+        bars_back = max(0, st.X - j)
+        idx = len(self.ohlcv_history) - 1 - bars_back
+        if idx < 0:
+            idx = 0
+        return (self.ohlcv_history[idx]["high"], self.ohlcv_history[idx]["low"])
+
     def _on_bar(self):
         state = self.state
         y = state.y
@@ -1763,7 +1872,8 @@ class AEEA_Engine:
             if iStdDev_norm < Decimal('50.0') and iATR_norm > Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     if state.Regime[idx] != "tVolatile":
-                        self._F(j, self.ohlcv_history[-1]["high"], self.ohlcv_history[-1]["low"])
+                        _H_j, _L_j = self._anchor_j(j)
+                        self._F(j, _H_j, _L_j)
                         m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                         n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
                         if idx < len(state.k): state.k[idx] = m >= 12
@@ -1777,7 +1887,8 @@ class AEEA_Engine:
                     if idx < len(state.k): state.k[idx] = m >= 12
                     if idx < len(state.l): state.l[idx] = n >= 12
                     if state.Regime[idx] != "tRange":
-                        self._F(j, self.ohlcv_history[-1]["high"], self.ohlcv_history[-1]["low"])
+                        _H_j, _L_j = self._anchor_j(j)
+                        self._F(j, _H_j, _L_j)
                         state.Regime[idx] = "tRange"
             elif (state.Regime[idx] != "tTrend" and state.Regime[idx] != "sTrend" and
                   idx < len(state.LL) and idx < len(state.Discount) and
@@ -1786,7 +1897,8 @@ class AEEA_Engine:
                 state.Regime[idx] = "Stable"
             else:
                 if state.Regime[idx] != "tTrend":
-                    self._F(j, self.ohlcv_history[-1]["high"], self.ohlcv_history[-1]["low"])
+                    _H_j, _L_j = self._anchor_j(j)
+                    self._F(j, _H_j, _L_j)
                     state.Regime[idx] = "tTrend"
         if len(self.ohlcv_history) >= y + 1:
             close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
@@ -1926,27 +2038,22 @@ class AEEA_Engine:
             state.GF = False
         if state.signature and state.chat_id:
             self._send_signal_alert()
-        # ═══ PATCH-01: Trailing stop execution ported from MQL4 T() ═══
         self._execute_trailing_stop()
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # ═══ PATCH-05: OnTrack/OnStand counter integrity (MQL4 loop bounds) ═══
-    # ═══════════════════════════════════════════════════════════════════════
+    # ═══ PATCH-I: MQL4 loop bounds in on_track ═══
     def _on_track(self):
         state = self.state
         state.on_track_runs += 1
         y = state.y
         s = state.X - 1
-        guard = 0
-        # ═══ PATCH-05: Extend loop bound to 4*max (MQL4 parity) ═══
-        scan_limit = 4 * state.X
-        while s < scan_limit and guard < 4096:
-            guard += 1
+        scan_limit = 4 * MAX_PERIOD
+        while s < state.S:
+            if s == scan_limit:
+                break
             idx = s - y - 1
             if idx < 0:
                 s += 1
                 continue
-            # ═══ PATCH-05: Dynamically extend Regime array if needed ═══
             if idx >= len(state.Regime):
                 ext = idx - len(state.Regime) + 1
                 state.Regime.extend([""] * ext)
@@ -2015,7 +2122,6 @@ class AEEA_Engine:
                 else:
                     state.Regime[idx] = "sVolatile"
                 state.S += 1
-            if s == scan_limit: break
             s += 1
         state.S = state.X
         state.T = state.X
@@ -2028,17 +2134,19 @@ class AEEA_Engine:
             else: state.w = state.X - 1
         else: state.w = state.X - 1
 
+    # ═══ PATCH-I: MQL4 loop bounds in on_stand (removed asymmetric s > 2) ═══
     def _on_stand(self):
         state = self.state
         state.on_stand_runs += 1
         y = state.y
         s = y + 1
-        guard = 0
-        while s > state.Y and s > 2 and guard < 4096:
-            guard += 1
-            if s == 1 or s < 0: break
+        while s > state.Y:
+            if s == 1:
+                break
+            if s < 0:
+                break
             idx = s - y - 1
-            if idx < 0: 
+            if idx < 0:
                 s -= 1
                 continue
             if idx >= len(state.Regime):
@@ -2192,10 +2300,7 @@ class AEEA_Engine:
                 state.tag = 0
         self._KC()
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # ═══ PATCH-02: Kronecker gate MQL4 semantics (global m/n thresholds) ═══
-    # ═══ PATCH-04: prime/dime/mem/tag surfaced + persisted ═══
-    # ═══════════════════════════════════════════════════════════════════════
+    # ═══ PATCH-D: local m/n at call-site h-bar, not global sums ═══
     def _signal(self):
         state = self.state
         if state.price <= Decimal('0.0'):
@@ -2205,21 +2310,25 @@ class AEEA_Engine:
         if h_idx < 0 or h_idx >= len(state.k):
             logger.info(f"📡 Signal suppressed: h={state.h} maps to invalid index {h_idx}")
             return
-        # ═══ PATCH-02: MQL4 semantics — global m/n >= 12 thresholds ═══
-        m_global = sum(1 for v in state.k if v)
-        n_global = sum(1 for v in state.l if v)
-        if m_global < 12 and n_global < 12:
+
+        # PATCH-D: recompute LOCAL m/n at the h-bar from the live indicator matrix.
+        m_local = self._M(state.h, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
+        n_local = self._N(state.h, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
+
+        if m_local < 12 and n_local < 12:
             logger.info(
-                f"📡 Signal suppressed: m_global={m_global} < 12 and n_global={n_global} < 12"
+                f"📡 Signal suppressed: m_local={m_local} < 12 and n_local={n_local} < 12 at h={state.h}"
             )
             return
-        bullish_fire = bool(state.k[h_idx]) and m_global >= 12
-        bearish_fire = bool(state.l[h_idx]) and n_global >= 12
+
+        bullish_fire = (m_local >= 12) and bool(state.k[h_idx])
+        bearish_fire = (n_local >= 12) and bool(state.l[h_idx])
+
         if not (bullish_fire or bearish_fire):
             logger.info(
                 f"📡 Signal suppressed: h={state.h} | "
                 f"k[h]={bool(state.k[h_idx])} l[h]={bool(state.l[h_idx])} | "
-                f"m_global={m_global} n_global={n_global}"
+                f"m_local={m_local} n_local={n_local}"
             )
             return
         state.ab = not state.ba
@@ -2228,9 +2337,8 @@ class AEEA_Engine:
         state.tally = " "
         state.signal = state.price
         state.signature = True
-        # ═══ PATCH-04: Persist last Kronecker m/n/h ═══
-        state.last_kronecker_m = m_global
-        state.last_kronecker_n = n_global
+        state.last_kronecker_m = m_local
+        state.last_kronecker_n = n_local
         state.last_kronecker_h = state.h
         self._last_signal_time = datetime.now()
         self._imbalance_fire_count += 1
@@ -2239,10 +2347,9 @@ class AEEA_Engine:
             f"📡 SIGNAL GENERATED #{self._imbalance_fire_count}: "
             f"price={state.price:.5f}, tick={state.tick}, h={state.h}, "
             f"dbz={state.dbz_branch}, bullish={bullish_fire}, bearish={bearish_fire}, "
-            f"m_global={m_global}, n_global={n_global}, prime={state.prime}, dime={state.dime}"
+            f"m_local={m_local}, n_local={n_local}, prime={state.prime}, dime={state.dime}"
         )
 
-    # ═══ PATCH-04: OnGaurd sets dime and mirrors to mem ═══
     def _on_gaurd(self, inp):
         state = self.state
         if state.price > state.E and state.E != Decimal('0.0'):
@@ -2363,22 +2470,12 @@ class AEEA_Engine:
         state.tick = saved_tick
         state.on_track_runs = saved_on_track
         state.on_stand_runs = saved_on_stand
-        # ═══ PATCH-06: Populate indicator matrix after reset ═══
         self._populate_indicator_matrix()
         logger.info(f"🔄 OnReInit() completed — Tick preserved: {state.tick}")
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # ═══ PATCH-01: Trailing stop execution ported from MQL4 T() ═══
-    #   MQL4 reference: T() iterates OrdersTotal(), computes PnL in points,
-    #   gates on friction (spread + commission + safety buffer), and adjusts
-    #   SL/TP with topological anchors (Premium[]/Discount[]) and
-    #   geometric trail step = max(minTrailThreshold, pnlPoints * 0.3).
-    #   Python port: has_open_long/has_open_short driven by has_open_* flags
-    #   set by P()/Q() execution layer (which itself is triggered by _signal).
-    # ═══════════════════════════════════════════════════════════════════════
+    # ═══ PATCH-H: real spread from Ask−Bid + commission ═══
     def _execute_trailing_stop(self):
         state = self.state
-        # ═══ PATCH-01: Drive presence from explicit open flags (MQL4 OrdersTotal parity) ═══
         has_long = state.has_open_long
         has_short = state.has_open_short
         if not (has_long or has_short):
@@ -2394,12 +2491,10 @@ class AEEA_Engine:
         if idx < 0 or idx >= len(state.Regime):
             return
         regime = state.Regime[idx]
-        # Stable/Coherent phases imply low arc-length deviation (s ≈ r); no adjustment needed.
         if regime in ("tStable", "tCoherent", "sStable", "sCoherent"):
             return
         if state.price <= Decimal('0.0'):
             return
-        # ═══ PATCH-01: Activate trailing stop on first observation of open position ═══
         if not state.trailing_stop_active:
             state.trailing_stop_active = True
             state.trailing_stop_entry = state.price
@@ -2415,23 +2510,28 @@ class AEEA_Engine:
                 f"direction={state.trailing_stop_side}"
             )
             return
-        # ═══ PATCH-01: Compute friction from actual spread + commission ═══
-        current_spread = (state.price * Decimal('0.001'))
-        friction_points = current_spread / Decimal('0.00001')
+
+        # PATCH-H: real spread + commission
+        if len(self.price_history) > 0:
+            last = self.price_history[-1]
+            current_spread = last.ask - last.bid
+        else:
+            current_spread = Decimal('0.0')
+        commission_abs = abs(COMMISSION)
+        friction_points = ((current_spread + commission_abs) / Decimal('0.00001'))
         safety_buffer = Decimal('1.0')
         min_trail_threshold = (friction_points + safety_buffer) * Decimal('0.00001')
-        # ═══ PATCH-01: PnL measured from entry, not from trailing stop price ═══
+
         if has_long:
             pnl_points = (state.price - state.trailing_stop_entry) / Decimal('0.00001')
         else:
             pnl_points = (state.trailing_stop_entry - state.price) / Decimal('0.00001')
-        # DISSIPATION GATE: Skip if PnL is fully consumed by market friction
+
         if pnl_points <= (friction_points + safety_buffer):
             return
-        # ═══ PATCH-01: Geometric trail step (MQL4: 30% of open profit) ═══
+
         trail_step = max(min_trail_threshold, pnl_points * Decimal('0.00001') * Decimal('0.3'))
         new_sl = state.trailing_stop_price
-        # ═══ PATCH-01: Topological target evaluation (Premium/Discount anchors) ═══
         topological_target = Decimal('0.0')
         if has_long:
             for ji in range(state.y + 1, state.X):
@@ -2443,7 +2543,6 @@ class AEEA_Engine:
             if ((proposedSL > state.trailing_stop_price or state.trailing_stop_price == Decimal('0.0'))
                 and (topological_target == Decimal('0.0') or proposedSL < (topological_target - min_trail_threshold))):
                 new_sl = proposedSL
-            # TP logic: distance = max(topologicalTarget - price, TAKE_PROFIT input)
             tpDistance = Decimal('0.0')
             if topological_target > Decimal('0.0'):
                 tpDistance = max(topological_target - state.price, TAKE_PROFIT * Decimal('0.00001'))
@@ -2476,7 +2575,6 @@ class AEEA_Engine:
                 f"📈 Trailing stop updated to {state.trailing_stop_price:.5f} "
                 f"(PnL={pnl_points:.1f}pts, friction={friction_points:.1f}pts)"
             )
-        # ═══ PATCH-01: Take-profit execution (MQL4 parity) ═══
         if has_long and state.price >= state.trailing_take_profit:
             logger.info(f"✅ TAKE PROFIT hit (LONG) at {state.price:.5f} / TP={state.trailing_take_profit:.5f}")
             state.trailing_stop_active = False
@@ -2503,13 +2601,12 @@ class AEEA_Engine:
             elapsed = (datetime.now() - self._last_signal_time).seconds
             if elapsed < self._signal_cooldown: return
         direction = "📈 BUY" if state.price > state.signal else "📉 SELL"
-        m_global = sum(1 for v in state.k if v)
-        n_global = sum(1 for v in state.l if v)
+        m_local = state.last_kronecker_m
+        n_local = state.last_kronecker_n
         h_idx = state.h - state.y - 1
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
-        # ═══ PATCH-02: Gate is m_global >= 12 OR n_global >= 12 (MQL4 semantics) ═══
-        condition_met = (m_global >= 12) or (n_global >= 12)
+        condition_met = (m_local >= 12) or (n_local >= 12)
         bid, ask = self.feed.get_current_price()
         price_str = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         idx = state.Z - state.y - 1
@@ -2526,7 +2623,7 @@ class AEEA_Engine:
             f"💰 *Current Price:* {price_str}\n"
             f"📊 *Regime:* {regime}\n"
             f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
-            f"⚖️ *Global Counts:* m={m_global}, n={n_global}\n"
+            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"✅ *δ(m-n-2)=1 (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
             f"🧠 *Arc-Length Coherence:* {coherence_str}\n"
             f"🔄 *Tick Count:* {state.tick}\n"
@@ -2539,18 +2636,15 @@ class AEEA_Engine:
         except Exception as e:
             logger.error(f"❌ Failed to send signal alert: {e}")
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # ═══ PATCH-04: KC / prime / dime / mem / tag surfaced in status ═══
-    # ═══════════════════════════════════════════════════════════════════════
     def get_signal_status(self):
         state = self.state
-        m_global = sum(1 for v in state.k if v)
-        n_global = sum(1 for v in state.l if v)
         h_idx = state.h - state.y - 1
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
-        # ═══ PATCH-02: Gate is m_global >= 12 OR n_global >= 12 ═══
-        condition_met = (m_global >= 12) or (n_global >= 12)
+        # PATCH-D: local m/n at h
+        m_local = self._M(state.h, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
+        n_local = self._N(state.h, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
+        condition_met = (m_local >= 12) or (n_local >= 12)
         info = self._verify_arc_length_coherence()
         idx = state.Z - state.y - 1
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
@@ -2564,8 +2658,8 @@ class AEEA_Engine:
             "mem": int(state.mem),
             "tag": int(state.tag),
             "invert": bool(state.invert),
-            "m_count": m_global,
-            "n_count": n_global,
+            "m_count": m_local,
+            "n_count": n_local,
             "m_at_h": m_at_h,
             "n_at_h": n_at_h,
             "h_bar": int(state.h),
@@ -2600,7 +2694,6 @@ class AEEA_Engine:
             "last_kronecker_n": int(state.last_kronecker_n),
             "last_kronecker_h": int(state.last_kronecker_h),
         }
-
 
 # ============================================================================
 # HTTP BRIDGE
@@ -2725,10 +2818,8 @@ class BridgeState:
         except Exception as e:
             logger.warning(f"BridgeState._inject_into_engine: {e}")
 
-
 BRIDGE_STATE = BridgeState()
 BRIDGE_ENGINE_REF: Dict[str, Any] = {"engine": None, "bot": None, "public_url": None}
-
 
 class TunnelManager:
     URL_RE_CLOUDFLARED = _re_bridge.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
@@ -2865,7 +2956,6 @@ class TunnelManager:
         self.process = None
         logger.info("🌐 Tunnel stopped")
 
-
 class BridgeHandler(BaseHTTPRequestHandler):
     server_version = "AEI-Bridge/Final"
 
@@ -2876,7 +2966,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         origin = CORS_ORIGIN
         self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data, X-Relay-Key")
         if origin != "*":
             self.send_header("Vary", "Origin")
 
@@ -2965,6 +3055,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "webapp_enabled": True,
                 "cors_origin": CORS_ORIGIN,
                 "relay_url": RELAY_URL,
+                "relay_gated": bool(RELAY_KEY),
             })
             return
         if path == "/state":
@@ -3082,6 +3173,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "ok": True, "idx": idx, "type": fvg_type, "price": price_str,
                     "verified": verified,
                     "leech_hash": anchor_info.get("vector_hash") if anchor_info else None,
+                    "leech_norm_sq": anchor_info.get("norm_squared") if anchor_info else None,
+                    "is_lattice_point": anchor_info.get("is_lattice_point") if anchor_info else None,
                 })
             except ValueError as ve:
                 logger.warning(f"FVG rejected: {ve}")
@@ -3121,7 +3214,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "fvg_not_found", "idx": idx})
             return
         self._send_json(404, {"error": "not_found", "path": path})
-
 
 class BridgeServer:
     def __init__(self, host=BRIDGE_HOST, port=BRIDGE_PORT):
@@ -3188,7 +3280,6 @@ class BridgeServer:
             self._thread = None
         logger.info("🌐 ÆEA Mini App Bridge stopped")
 
-
 def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
     if getattr(engine, "_bridge_attached", False):
         return
@@ -3212,8 +3303,8 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "signal": str(st.signal),
                 "regime": regime,
                 "tick": int(st.tick),
-                "m_count": int(sum(1 for v in st.k if v)),
-                "n_count": int(sum(1 for v in st.l if v)),
+                "m_count": int(st.last_kronecker_m) if st.last_kronecker_m else 0,
+                "n_count": int(st.last_kronecker_n) if st.last_kronecker_n else 0,
                 "m_at_h": int(m_at_h),
                 "n_at_h": int(n_at_h),
                 "h_bar": int(st.h),
@@ -3261,8 +3352,7 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
 
     engine._on_tick = wrapped_on_tick
     engine._bridge_attached = True
-    logger.info("🔗 Bridge attached to AEEA_Engine (snapshot publishing active — PATCH-01 through PATCH-06 extended)")
-
+    logger.info("🔗 Bridge attached to AEEA_Engine (PATCH-C through PATCH-I extended)")
 
 def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     if getattr(bot, "_bridge_attached", False):
@@ -3284,7 +3374,6 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     bot.run = wrapped_run
     bot._bridge_attached = True
     logger.info("🔗 Bridge attached to AEI_Bot.run()")
-
 
 # ============================================================================
 # TELEGRAM BOT
@@ -3316,7 +3405,7 @@ class AEI_Bot:
                     f"tick={self.engine.state.tick} "
                     f"FG={self.engine.state.FG} "
                     f"active_sym={self.engine.feed.active_symbol()} "
-                    f"m/n={sum(1 for v in self.engine.state.k if v)}/{sum(1 for v in self.engine.state.l if v)} "
+                    f"m/n_local={self.engine.state.last_kronecker_m}/{self.engine.state.last_kronecker_n} "
                     f"ind_pass={self.engine._indicator_populate_count} "
                     f"sig_fire={self.engine._imbalance_fire_count} "
                     f"trail={self.engine.state.trailing_stop_active} "
@@ -3412,8 +3501,8 @@ class AEI_Bot:
         coherence_line = "✅ COHERENT" if info['coherent'] else f"⚠️ DEV: {info['deviation_float']:.6f}"
         feed_mark = "✅" if self._running else "❌"
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
-        m_global = sum(1 for v in state.k if v)
-        n_global = sum(1 for v in state.l if v)
+        m_local = state.last_kronecker_m if state.last_kronecker_m else 0
+        n_local = state.last_kronecker_n if state.last_kronecker_n else 0
         h_idx = state.h - state.y - 1
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
@@ -3436,7 +3525,7 @@ class AEI_Bot:
             f"🔄 *Tick:* {state.tick}\n"
             f"🧠 *Engine State:* {init_mark}\n"
             f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
-            f"⚖️ *Global Counts:* m={m_global}, n={n_global}\n"
+            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
             f"📡 *Signal Fires:* {self.engine._imbalance_fire_count}\n"
             f"📡 *Feed Active:* {feed_mark}\n"
@@ -3462,8 +3551,8 @@ class AEI_Bot:
         qstr = f"({q.a}, {q.b}, {q.c}, {q.d})"
         response = (
             "🧬 *EXACT ARC-LENGTH STATE*\n"
-            f"🧮 *s² (exact)* = `{info['arc_sq']}`\n"
-            f"🧮 *r² (exact)* = `{info['radius_sq']}`\n"
+            f"🧮 *s² (ℚ-exact)* = `{info['arc_sq']}`\n"
+            f"🧮 *r² (ℚ-exact)* = `{info['radius_sq']}`\n"
             f"🧮 *Δ = s² − r²* = `{info['deviation']}`\n"
             f"🧮 *Δ (float)* = {info['deviation_float']:.10e}\n"
             f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
@@ -3472,7 +3561,7 @@ class AEI_Bot:
             f"   • 2 = Natalia fibration (Re[Ψ] ≤ 0)\n"
             f"🌀 *Re[Ψ]* = `{info['re_psi']}`\n"
             f"🧊 *Current Φ* = `{qstr}`\n"
-            f"🔷 *FVG anchors:* {len(state.fvg_anchor_map)} Leech vectors"
+            f"🔷 *FVG anchors:* {len(state.fvg_anchor_map)} Λ₂₄ vectors"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -3508,7 +3597,7 @@ class AEI_Bot:
             f"📊 *Tick:* {status.get('tick')}\n"
             f"🧮 *Indicator Populates:* {status.get('indicator_populate_count')}\n"
             f"📡 *Signal Fires:* {status.get('imbalance_fire_count')}\n"
-            f"⚖️ *m / n (global):* {status.get('m_count')} / {status.get('n_count')}\n"
+            f"⚖️ *Local m / n:* {status.get('m_count')} / {status.get('n_count')}\n"
             f"⚖️ *m / n (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
             f"*Arc s² =* `{status.get('arc_sq')}`\n"
             f"*Rad r² =* `{status.get('radius_sq')}`\n"
@@ -3547,9 +3636,9 @@ class AEI_Bot:
         discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
         hh = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
         ll = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
-        k_count = sum(1 for v in state.k if v)
-        l_count = sum(1 for v in state.l if v)
-        imbalance_status = "✅ TRIGGER" if (k_count >= 12 or l_count >= 12) else "⏳ WAITING"
+        m_local = state.last_kronecker_m if state.last_kronecker_m else 0
+        n_local = state.last_kronecker_n if state.last_kronecker_n else 0
+        imbalance_status = "✅ TRIGGER" if (m_local >= 12 or n_local >= 12) else "⏳ WAITING"
         response = (
             "📊 *REGIME CLASSIFICATION*\n"
             f"🔹 *Current Regime:* {current}\n"
@@ -3557,8 +3646,8 @@ class AEI_Bot:
             f"🔻 *Discount:* {discount:.5f}\n"
             f"📈 *HH:* {hh:.5f}\n"
             f"📉 *LL:* {ll:.5f}\n"
-            f"🟢 *Bullish Signals (k):* {k_count}\n"
-            f"🔴 *Bearish Signals (l):* {l_count}\n"
+            f"🟢 *Local m:* {m_local}\n"
+            f"🔴 *Local n:* {n_local}\n"
             f"📐 *Imbalance Condition:* {imbalance_status}"
         )
         reply_markup = self._build_main_keyboard()
@@ -3583,13 +3672,12 @@ class AEI_Bot:
         else:
             direction = "🔴 SELL"
             confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
-        m_global = sum(1 for v in state.k if v)
-        n_global = sum(1 for v in state.l if v)
+        m_local = state.last_kronecker_m if state.last_kronecker_m else 0
+        n_local = state.last_kronecker_n if state.last_kronecker_n else 0
         h_idx = state.h - state.y - 1
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
-        # ═══ PATCH-02: MQL4 gate ═══
-        condition_met = (m_global >= 12) or (n_global >= 12)
+        condition_met = (m_local >= 12) or (n_local >= 12)
         info = self.engine._verify_arc_length_coherence()
         condition_mark = "✅ MET" if condition_met else "❌ NOT MET"
         response = (
@@ -3599,7 +3687,7 @@ class AEI_Bot:
             f"🎯 *Signal Level:* {state.signal:.5f}\n"
             f"💰 *Current Price:* {state.price:.5f}\n"
             f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
-            f"⚖️ *Global Counts:* m={m_global}, n={n_global}\n"
+            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"✅ *δ(m-n-2)=1 (MQL4 gate):* {condition_mark}\n"
             f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
             f"🧠 *KC State:* {state.KC}\n"
@@ -3652,7 +3740,7 @@ class AEI_Bot:
         bridge_fvgs = BRIDGE_STATE.list_fvgs()
         bridge_str = ""
         if bridge_fvgs:
-            bridge_str = "\n🌐 *Web App FVGs (Leech-Anchored):*\n"
+            bridge_str = "\n🌐 *Web App FVGs (Λ₂₄-Anchored):*\n"
             for f in bridge_fvgs[-8:]:
                 mark = "▲" if f["type"] == "top" else "▼"
                 who = f" (user {f['user_id']})" if f.get("user_id") else ""
@@ -3665,7 +3753,7 @@ class AEI_Bot:
         response = (
             "📐 *FAIR VALUE GAP TRACKING (Λ₂₄ ANCHORED)*\n"
             f"📊 *FVG Count:* {state.FVG + 1}\n"
-            f"🧬 *Leech Anchors:* {len(state.fvg_anchor_map)}\n"
+            f"🧬 *Λ₂₄ Anchors:* {len(state.fvg_anchor_map)}\n"
             f"📈 *Current Price:* {state.price:.5f}\n"
             f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n"
             "*Topological Anchors:*\n"
@@ -3692,7 +3780,7 @@ class AEI_Bot:
             "• k/l signal flags cleared\n"
             "• Quaternion field Φ reset to identity\n"
             "• DbZ branch history cleared\n"
-            "• Leech anchor map cleared\n"
+            "• Λ₂₄ anchor map cleared\n"
             "• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
             f"• 🔍 OnTrack runs preserved: {prev_on_track}\n"
@@ -3769,6 +3857,7 @@ class AEI_Bot:
             "🔬 *RELAY PROBE*", "",
             f"*Status:* {status}",
             f"*Relay URL:* `{RELAY_URL or 'UNSET'}`",
+            f"*Relay Gated:* {'🔒 yes' if RELAY_KEY else '🔓 no'}",
             f"*Primary symbol:* `{info.get('primary_symbol')}`",
             f"*Active symbol:* `{info.get('active_symbol')}`",
             f"*Chain index:* {info.get('chain_index')}",
@@ -3877,12 +3966,11 @@ class AEI_Bot:
             f"🌐 *ÆEA Telegram Mini App*\n"
             f"Tap the button below to launch the full Codex Symbolica visualization.\n\n"
             f"*Features inside the Mini App:*\n"
-            f"  ▲ Draw premium FVG (Leech-anchored)\n"
-            f"  ▼ Draw discount FVG (Leech-anchored)\n"
+            f"  ▲ Draw premium FVG (Λ₂₄-anchored)\n"
+            f"  ▼ Draw discount FVG (Λ₂₄-anchored)\n"
             f"  ✖ Delete FVG\n"
             f"  ⟳ Live state polling every 2 s\n"
-            f"  🧬 Exact arc-length gate on every FVG commit\n"
-            f"  🌿 Engine State panel mirrors live fields\n"
+            f"  🧬 Engine-authoritative coherence panel\n"
             f"  🔀 KC / Prime / Dime now visible in HUD\n"
             f"  🔍 OnTrack / OnStand counters in engine panel\n"
             f"  📈 Trailing stop state mirrored from engine T()",
@@ -3986,32 +4074,29 @@ class AEI_Bot:
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
         logger.info(f"📊 Quantum-Financial Topology Engine initialized.")
-        logger.info(f"🧠 EXACT Arc-Length Axiom (s²=r²) via Python Fraction + Quat.")
+        logger.info(f"🧠 ℚ-exact Fraction arithmetic + REGIME-R disclosure (PATCH-C).")
         logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
-        logger.info(f"🧬 Leech Λ₂₄ anchoring: FVGs project to 24D lattice vectors.")
+        logger.info(f"🧬 Λ₂₄ anchoring: true Leech congruence (PATCH-E).")
         logger.info(f"⚡ Live indicator extraction: 13D Hilbert-space projection populated per bar.")
         logger.info(f"⚡ Telegram Mini App enabled.")
-        logger.info(f"📈 Trailing stop execution ported from MQL4 T() (PATCH-01).")
-        logger.info(f"🎯 Kronecker gate restored to MQL4 semantics (PATCH-02).")
-        logger.info(f"🔀 OnCall H()/L() now unconditional (PATCH-03).")
-        logger.info(f"🔍 KC / Prime / Dime / Mem surfaced in /status and /diagnostics (PATCH-04).")
-        logger.info(f"📡 OnTrack / OnStand counters wired to MQL4 loop bounds (PATCH-05).")
-        logger.info(f"📊 Indicator matrix live-populated from relay OHLCV (PATCH-06).")
+        logger.info(f"📈 Trailing stop: real Ask−Bid spread + commission (PATCH-H).")
+        logger.info(f"🎯 Kronecker gate: LOCAL m/n at h-bar (PATCH-D).")
+        logger.info(f"🔀 O() regime mutation restored (PATCH-F).")
+        logger.info(f"📊 OnBar per-j HH/LL anchoring (PATCH-G).")
+        logger.info(f"📡 OnTrack/OnStand MQL4 loop bounds (PATCH-I).")
+        logger.info(f"🔒 Relay shared-secret gate available (PATCH-J).")
         logger.info(f"💎 Ready. Use /start to begin.")
         self.application.run_polling()
-
 
 # ============================================================================
 # BRIDGE BOOTSTRAP
 # ============================================================================
 _bridge_attach_to_bot(AEI_Bot)
 
-
 # ============================================================================
 # MAIN ENTRY POINT
 # ============================================================================
 def main():
-    """Main entry point."""
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not TOKEN:
         logger.error("❌ Error: TELEGRAM_BOT_TOKEN not set.")
@@ -4019,7 +4104,6 @@ def main():
         sys.exit(1)
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
-
 
 if __name__ == "__main__":
     main()

@@ -85,6 +85,17 @@
             margin-left: 4px;
             letter-spacing: 1px;
         }
+        #info .engine-authority {
+            display: inline-block;
+            background: #004422;
+            color: #00ff88;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 0.45rem;
+            margin-left: 4px;
+            letter-spacing: 1px;
+            border: 1px solid #00ff88;
+        }
         #metrics {
             position: absolute;
             top: 130px;
@@ -99,7 +110,7 @@
             text-align: left;
             backdrop-filter: blur(8px);
             -webkit-backdrop-filter: blur(8px);
-            min-width: 300px;
+            min-width: 320px;
             box-shadow: 0 4px 30px rgba(0,0,0,0.5);
         }
         #metrics .label { opacity: 0.5; }
@@ -109,6 +120,27 @@
         #metrics .value.engine-up { color: #00ff88; }
         #metrics .value.engine-down { color: #ff4466; }
         #metrics .value.engine-wait { color: #ffaa44; }
+        #metrics .value.authority { color: #00ff88; }
+        #metrics .value.symbolic { color: #aa66ff; font-style: italic; }
+        #metrics .authority-tag {
+            display: inline-block;
+            font-size: 0.42rem;
+            padding: 0px 4px;
+            border-radius: 2px;
+            margin-left: 4px;
+            letter-spacing: 0.5px;
+            vertical-align: middle;
+        }
+        #metrics .authority-tag.engine {
+            background: #004422;
+            color: #00ff88;
+            border: 1px solid #00ff88;
+        }
+        #metrics .authority-tag.symbolic {
+            background: #221133;
+            color: #aa66ff;
+            border: 1px solid #aa66ff;
+        }
         #status {
             position: absolute;
             bottom: 100px;
@@ -127,6 +159,7 @@
             line-height: 1.6;
         }
         #status .coherence-status { color: #00ff88; }
+        #status .coherence-status.symbolic-mode { color: #aa66ff; }
         #status .deviation-status { color: #ff6644; }
         #status .dbz-status { color: #ff66aa; }
         #status .aeae-status { color: #44ddff; }
@@ -276,7 +309,6 @@
         #proofTrace .pt-indicator { color: #66ffaa; font-weight: bold; }
         #proofTrace .pt-signal { color: #ff4488; font-weight: bold; }
         #proofTrace .pt-arc { color: #44ffcc; font-weight: bold; }
-        // ═══ PATCH-A6: new trace categories ═══
         #proofTrace .pt-trail { color: #ff66aa; font-weight: bold; }
         #proofTrace .pt-order { color: #88ff88; font-weight: bold; }
         #proofTrace .pt-kc { color: #44aaff; font-weight: bold; }
@@ -340,6 +372,7 @@
             color: #44ffcc;
         }
         #spiralLegend span:nth-child(2) { color: #ffaa44; }
+        #spiralLegend span:nth-child(3) { color: #aa66ff; font-style: italic; }
         #lingosoPanel {
             position: absolute;
             bottom: 280px;
@@ -358,6 +391,16 @@
         }
         #lingosoPanel .label { opacity: 0.5; }
         #lingosoPanel .phoneme { color: #ff66aa; font-weight: bold; font-size: 0.8rem; }
+        #lingosoPanel .symbolic-tag {
+            display: inline-block;
+            font-size: 0.4rem;
+            padding: 0px 4px;
+            border-radius: 2px;
+            background: #221133;
+            color: #aa66ff;
+            border: 1px solid #aa66ff;
+            margin-left: 4px;
+        }
         #aeaePanel {
             position: absolute;
             bottom: 100px;
@@ -394,6 +437,16 @@
         }
         #observerPanel .label { opacity: 0.5; }
         #observerPanel .value { color: #ffaa44; font-weight: bold; }
+        #observerPanel .symbolic-tag {
+            display: inline-block;
+            font-size: 0.4rem;
+            padding: 0px 4px;
+            border-radius: 2px;
+            background: #221133;
+            color: #aa66ff;
+            border: 1px solid #aa66ff;
+            margin-left: 4px;
+        }
         #zetaPanel {
             position: absolute;
             bottom: 380px;
@@ -412,6 +465,16 @@
         }
         #zetaPanel .label { opacity: 0.5; }
         #zetaPanel .value { color: #44aaff; font-weight: bold; }
+        #zetaPanel .symbolic-tag {
+            display: inline-block;
+            font-size: 0.4rem;
+            padding: 0px 4px;
+            border-radius: 2px;
+            background: #221133;
+            color: #aa66ff;
+            border: 1px solid #aa66ff;
+            margin-left: 4px;
+        }
 
         #enginePanel {
             position: absolute;
@@ -424,11 +487,11 @@
             border-radius: 6px;
             padding: 8px 12px;
             font-size: 0.6rem;
-            min-width: 200px;
+            min-width: 220px;
             backdrop-filter: blur(4px);
             box-shadow: 0 4px 20px rgba(0,0,0,0.4);
             line-height: 1.6;
-            max-height: 55vh;
+            max-height: 60vh;
             overflow-y: auto;
         }
         #enginePanel .label { opacity: 0.5; }
@@ -438,19 +501,27 @@
         #enginePanel .value.relay-up { color: #00ff88; }
         #enginePanel .value.relay-down { color: #ff4466; }
         #enginePanel .value.relay-wait { color: #ffaa44; }
-        // ═══ PATCH-A1: trailing stop panel value classes ═══
         #enginePanel .value.trail-active { color: #00ff88; }
         #enginePanel .value.trail-inactive { color: #6688aa; }
-        // ═══ PATCH-A4: KC/prime/dime surfacing classes ═══
         #enginePanel .value.kc-true { color: #44ddff; }
         #enginePanel .value.kc-false { color: #ff66aa; }
         #enginePanel .value.prime-0 { color: #00ff88; }
         #enginePanel .value.prime-1 { color: #ff4466; }
         #enginePanel .value.dime-0 { color: #00ff88; }
         #enginePanel .value.dime-1 { color: #ff4466; }
-        // ═══ PATCH-A5: on_track/on_stand counter classes ═══
         #enginePanel .value.counter-zero { color: #6688aa; }
         #enginePanel .value.counter-active { color: #ffaa44; }
+        #enginePanel .authority-strip {
+            background: #004422;
+            color: #00ff88;
+            border: 1px solid #00ff88;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.45rem;
+            letter-spacing: 1px;
+            text-align: center;
+            margin-bottom: 6px;
+        }
 
         #chartPanel {
             position: absolute;
@@ -574,6 +645,7 @@
         #fvgPanel .fvg-row .fvg-status.coherent { background: #004422; color: #00ff88; }
         #fvgPanel .fvg-row .fvg-status.dev { background: #442200; color: #ffaa44; }
         #fvgPanel .fvg-row .fvg-user { color: #aa66ff; font-size: 0.5rem; margin-left: 4px; opacity: 0.7; }
+        #fvgPanel .fvg-row .fvg-leech { color: #88ffdd; font-size: 0.5rem; opacity: 0.6; margin-left: 4px; }
 
         #toolPalette {
             position: absolute;
@@ -651,6 +723,10 @@
         #continuityBadge.coherent { border-color: #00ff88; color: #00ff88; }
         #continuityBadge.deviant { border-color: #ff4466; color: #ff4466; }
         #continuityBadge.waiting { border-color: #ffaa44; color: #ffaa44; }
+        #continuityBadge.symbolic {
+            border-color: #aa66ff;
+            color: #aa66ff;
+        }
 
         #tmaHeader {
             position: absolute;
@@ -714,7 +790,6 @@
         #relayBadge.down { border-color: #ff4466; color: #ff4466; }
         #relayBadge.wait { border-color: #ffaa44; color: #ffaa44; }
 
-        // ═══ PATCH-A1: trailing stop badge ═══
         #trailBadge {
             position: absolute;
             top: 84px;
@@ -735,7 +810,6 @@
         #trailBadge.long { border-color: #00ff88; color: #00ff88; }
         #trailBadge.short { border-color: #ff4466; color: #ff4466; }
 
-        // ═══ PATCH-A4: KC/prime/dime badge ═══
         #kpdBadge {
             position: absolute;
             top: 120px;
@@ -817,33 +891,37 @@
         <span style="color:#ffaa44;">D</span> delete ·
         <span style="color:#44ffcc;">Esc</span> clear tool
         <span class="tma-badge" id="tmaModeBadge" style="display:none;">TMA</span>
+        <span class="engine-authority" id="engineAuthorityBadge" style="display:none;">ENGINE-AUTHORITATIVE</span>
     </p>
 </div>
 
 <div id="metrics">
-    <div><span class="label">s² (exact)</span> <span class="value exact" id="s2-exact" title="Click to copy">0/1</span></div>
-    <div><span class="label">r² (exact)</span> <span class="value exact" id="r2-exact" title="Click to copy">1/1</span></div>
+    <div style="margin-bottom:4px;">
+        <span class="authority-tag engine" id="metrics-authority-arc" style="display:none;">ENGINE</span>
+        <span class="authority-tag symbolic" id="metrics-authority-arc-sym">SYMBOLIC</span>
+    </div>
+    <div><span class="label">s² (ℚ-exact)</span> <span class="value exact" id="s2-exact" title="Click to copy">0/1</span></div>
+    <div><span class="label">r² (ℚ-exact)</span> <span class="value exact" id="r2-exact" title="Click to copy">1/1</span></div>
     <div><span class="label">s²</span> <span class="value" id="s2-val">0.0000</span></div>
     <div><span class="label">r²</span> <span class="value" id="r2-val">0.0000</span></div>
     <div><span class="label">Δ = s² − r²</span> <span class="value" id="delta-val" style="color:#ff6644;">0.0000</span></div>
-    <div><span class="label">O[Ψ] (4D)</span> <span class="value" id="obs-val">0.0000</span></div>
+    <div><span class="label">O[Ψ] (4D)</span> <span class="value symbolic" id="obs-val">0.0000</span></div>
     <div><span class="label">s/r</span> <span class="value" id="sr-ratio">1.0000</span></div>
-    <div><span class="label">|∇×Φ|</span> <span class="value" id="curl-val">0.0000</span></div>
-    <div><span class="label">‖[Φ, Φ†]‖</span> <span class="value" id="comm-val">0.0000</span></div>
-    <div><span class="label">‖ψ‖² (L²)</span> <span class="value" id="psi-norm-val">0.0000</span></div>
-    <div><span class="label">ζ(½+it)</span> <span class="value" id="zeta-val">0.0000</span></div>
+    <div><span class="label">|∇×Φ|</span> <span class="value symbolic" id="curl-val">0.0000</span></div>
+    <div><span class="label">‖[Φ, Φ†]‖</span> <span class="value symbolic" id="comm-val">0.0000</span></div>
+    <div><span class="label">‖ψ‖² (L²)</span> <span class="value symbolic" id="psi-norm-val">0.0000</span></div>
+    <div><span class="label">ζ(½+it)</span> <span class="value symbolic" id="zeta-val">0.0000</span></div>
     <div><span class="label">RELAY</span> <span class="value engine-wait" id="relay-status">—</span></div>
     <div><span class="label">ENGINE COHERENCE</span> <span class="value engine-wait" id="engine-coherence">—</span></div>
     <div><span class="label">INDICATOR PASSES</span> <span class="value" id="indicator-passes">0</span></div>
     <div><span class="label">SIGNAL FIRES</span> <span class="value" id="signal-fires">0</span></div>
-    // ═══ PATCH-A1: trailing stop metric line ═══
     <div><span class="label">TRAILING STOP</span> <span class="value engine-wait" id="trail-status-metric">—</span></div>
-    // ═══ PATCH-A5: on_track/on_stand metrics ═══
     <div><span class="label">ONTRACK / ONSTAND</span> <span class="value" id="scanner-counts-metric">0 / 0</span></div>
 </div>
 
 <div id="status">
     <div>COHERENCE: <span class="coherence-status" id="coherence-status">INITIALIZING</span></div>
+    <div>SOURCE: <span id="coherence-source">—</span></div>
     <div>GENERATION: <span id="generation">0</span></div>
     <div>DEVIATION: <span class="deviation-status" id="deviation">0.0000</span></div>
     <div>DbZ BRANCH: <span class="dbz-status" id="dbz-branch">NONE</span></div>
@@ -913,18 +991,21 @@
         <line x1="0" y1="50" x2="200" y2="50" stroke="#1a2a3a" stroke-width="0.5"/>
         <polyline id="sPolyline" points="" fill="none" stroke="#44ffcc" stroke-width="1.5"/>
         <polyline id="rPolyline" points="" fill="none" stroke="#ffaa44" stroke-width="1.5"/>
-        <text x="4" y="12" font-size="8" font-family="Courier New, monospace" fill="#44ffcc">s(t)</text>
-        <text x="4" y="94" font-size="8" font-family="Courier New, monospace" fill="#ffaa44">r(t)</text>
+        <polyline id="engineArcPolyline" points="" fill="none" stroke="#00ff88" stroke-width="1.5" stroke-dasharray="3,2"/>
+        <text x="4" y="12" font-size="8" font-family="Courier New, monospace" fill="#44ffcc">s(t) sym</text>
+        <text x="4" y="94" font-size="8" font-family="Courier New, monospace" fill="#ffaa44">r(t) sym</text>
+        <text x="120" y="12" font-size="8" font-family="Courier New, monospace" fill="#00ff88">engine s²</text>
     </svg>
 </div>
 
 <div id="spiralLegend">
-    <span>━ s(t)</span>
-    <span>━ r(t)</span>
+    <span>━ s(t) sym</span>
+    <span>━ r(t) sym</span>
+    <span>┅ engine s²</span>
 </div>
 
 <div id="lingosoPanel">
-    <div class="label">LINGOSO ACTIVE:</div>
+    <div class="label">LINGOSO ACTIVE: <span class="symbolic-tag">SYMBOLIC</span></div>
     <div class="phoneme" id="lingoso-active">—</div>
     <div class="label" style="margin-top:4px;">TRAJECTORY:</div>
     <div style="font-size:0.5rem; opacity:0.7;" id="lingoso-coords">(0.00, 0.00, 0.00)</div>
@@ -940,7 +1021,7 @@
 </div>
 
 <div id="observerPanel">
-    <div class="label">OBSERVER OPERATOR O[Ψ]:</div>
+    <div class="label">OBSERVER OPERATOR O[Ψ]: <span class="symbolic-tag">SYMBOLIC</span></div>
     <div><span class="label">Re[∫ψ†Φψd⁴q]</span> <span class="value" id="obs-real">0.0000</span></div>
     <div><span class="label">Im[∫ψ†Φψd⁴q]</span> <span class="value" id="obs-imag">0.0000</span></div>
     <div class="label" style="margin-top:4px;">GRID CELLS:</div>
@@ -950,19 +1031,20 @@
 </div>
 
 <div id="zetaPanel">
-    <div class="label">ζ(s) on CRITICAL LINE:</div>
+    <div class="label">ζ(s) on CRITICAL LINE: <span class="symbolic-tag">SYMBOLIC</span></div>
     <div><span class="label">Re[ζ(½+it)]</span> <span class="value" id="zeta-re">0.0000</span></div>
     <div><span class="label">Im[ζ(½+it)]</span> <span class="value" id="zeta-im">0.0000</span></div>
     <div><span class="label">|ζ(½+it)|</span> <span class="value" id="zeta-mag">0.0000</span></div>
 </div>
 
 <div id="enginePanel">
+    <div class="authority-strip">ENGINE-AUTHORITATIVE</div>
     <div class="label">ENGINE STATE:</div>
     <div><span class="label">Price</span> <span class="value" id="eng-price">—</span></div>
     <div><span class="label">Signal</span> <span class="value" id="eng-signal">—</span></div>
     <div><span class="label">Tick</span> <span class="value" id="eng-tick">—</span></div>
     <div><span class="label">Regime</span> <span class="value" id="eng-regime">—</span></div>
-    <div><span class="label">m/n</span> <span class="value" id="eng-mn">—</span></div>
+    <div><span class="label">Local m/n</span> <span class="value" id="eng-mn">—</span></div>
     <div><span class="label">Coherence</span> <span class="value" id="eng-coherence">—</span></div>
     <div><span class="label">Arc s²</span> <span class="value" id="eng-arc">—</span></div>
     <div><span class="label">Rad r²</span> <span class="value" id="eng-rad">—</span></div>
@@ -972,7 +1054,6 @@
     <div><span class="label">Ind Pass</span> <span class="value" id="eng-ind">—</span></div>
     <div><span class="label">Sig Fires</span> <span class="value" id="eng-sig">—</span></div>
     <div><span class="label">Relay</span> <span class="value relay-wait" id="eng-relay">—</span></div>
-    // ═══ PATCH-A1: trailing stop engine field ═══
     <div><span class="label">Trail Active</span> <span class="value trail-inactive" id="eng-trail-active">—</span></div>
     <div><span class="label">Trail SL</span> <span class="value" id="eng-trail-sl">—</span></div>
     <div><span class="label">Trail TP</span> <span class="value" id="eng-trail-tp">—</span></div>
@@ -980,47 +1061,36 @@
     <div><span class="label">Trail Side</span> <span class="value" id="eng-trail-side">—</span></div>
     <div><span class="label">Open Long</span> <span class="value" id="eng-has-long">—</span></div>
     <div><span class="label">Open Short</span> <span class="value" id="eng-has-short">—</span></div>
-    // ═══ PATCH-A4: KC/prime/dime/mem/tag engine fields ═══
     <div><span class="label">KC</span> <span class="value kc-false" id="eng-kc">—</span></div>
     <div><span class="label">Prime</span> <span class="value" id="eng-prime">—</span></div>
     <div><span class="label">Dime</span> <span class="value" id="eng-dime">—</span></div>
     <div><span class="label">Mem</span> <span class="value" id="eng-mem">—</span></div>
     <div><span class="label">Tag</span> <span class="value" id="eng-tag">—</span></div>
     <div><span class="label">Invert</span> <span class="value" id="eng-invert">—</span></div>
-    // ═══ PATCH-A5: on_track/on_stand engine fields ═══
     <div><span class="label">OnTrack Runs</span> <span class="value counter-zero" id="eng-ontrack">—</span></div>
     <div><span class="label">OnStand Runs</span> <span class="value counter-zero" id="eng-onstand">—</span></div>
     <div><span class="label">Last Kron Bar</span> <span class="value" id="eng-lastkron">—</span></div>
     <div><span class="label">Last Kron m/n/h</span> <span class="value" id="eng-lastkron-mnh">—</span></div>
 </div>
 
-<div id="explainPanel" style="display:none;position:absolute;top:20px;left:50%;transform:translateX(-50%);z-index:11;background:rgba(5,5,16,0.95);border:1px solid #335577;border-radius:8px;padding:12px 20px;font-size:0.6rem;max-width:640px;backdrop-filter:blur(8px);box-shadow:0 4px 30px rgba(0,0,0,0.5);line-height:1.6;">
+<div id="explainPanel" style="display:none;position:absolute;top:20px;left:50%;transform:translateX(-50%);z-index:11;background:rgba(5,5,16,0.95);border:1px solid #335577;border-radius:8px;padding:12px 20px;font-size:0.6rem;max-width:680px;backdrop-filter:blur(8px);box-shadow:0 4px 30px rgba(0,0,0,0.5);line-height:1.6;">
     <h3 style="color:#00ffcc;margin-bottom:6px;font-size:0.75rem;letter-spacing:1px;">⚡ VISUALIZATION KEY</h3>
-    <div><span style="color:#ffaa44;font-weight:bold;">Φ (Quaternion)</span> <span style="opacity:0.8;">— Current state on S³, projected to S² via Hopf fibration.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">s² (exact)</span> <span style="opacity:0.8;">— Squared arc length from origin (identity quaternion), exact rational.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">r² (exact)</span> <span style="opacity:0.8;">— Squared radial distance ‖q‖², exact rational.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">ENGINE-AUTHORITATIVE</span> <span style="opacity:0.8;">— When connected, the coherence panel reads arc_sq / radius_sq / deviation directly from the Python engine via /state. These values reflect the true state of s² = r².</span></div>
+    <div><span style="color:#aa66ff;font-weight:bold;">SYMBOLIC</span> <span style="opacity:0.8;">— Client-side visualization. Not the engine's truth. Used for the animated canvas and decorative overlays only.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">s² (ℚ-exact)</span> <span style="opacity:0.8;">— BigInt-backed rational. Displays engine value when connected, symbolic value otherwise.</span></div>
     <div><span style="color:#ffaa44;font-weight:bold;">Δ = s² − r²</span> <span style="opacity:0.8;">— Deviation from Arc-Length Axiom (s=r). Zero → coherence.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">O[Ψ] (4D)</span> <span style="opacity:0.8;">— Observer Operator: 4D numerical integration ∫ ψ†Φψ d⁴q.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">‖ψ‖² (L²)</span> <span style="opacity:0.8;">— True L² norm of the coherent wavefunction over the 4D grid.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">ζ(½+it)</span> <span style="opacity:0.8;">— Riemann zeta function evaluated on the critical line.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">RELAY</span> <span style="opacity:0.8;">— Cloudflare Worker relay status (upstream Yahoo Finance).</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">ENGINE COHERENCE</span> <span style="opacity:0.8;">— Live status reported by the Python engine via /state.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">INDICATOR PASSES</span> <span style="opacity:0.8;">— Number of times the 13D indicator matrix has been fully populated. Non-zero = live.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">SIGNAL FIRES</span> <span style="opacity:0.8;">— Number of Kronecker delta δ(m−n−2)=1 events (MQL4 gate: m≥12 or n≥12). Non-zero = trading logic active.</span></div>
-    // ═══ PATCH-A1: trailing stop explain ═══
-    <div><span style="color:#ffaa44;font-weight:bold;">TRAILING STOP</span> <span style="opacity:0.8;">— MQL4 T() ported to Python engine. Activates when position open; updates SL/TP from Premium/Discount anchors using geometric trail step (30% of open profit).</span></div>
-    // ═══ PATCH-A4: KC/prime/dime explain ═══
-    <div><span style="color:#ffaa44;font-weight:bold;">KC (Constant of Change)</span> <span style="opacity:0.8;">— Non-Hermitian binary inversion flag. Toggles signal validation between conjunctive (precision) and disjunctive (adaptation).</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">Prime / Dime</span> <span style="opacity:0.8;">— Directional derivatives set by OnToe()/OnGoe() and OnGaurd(). prime=1 → bearish reversal, prime=0 → bullish reversal; dime=0 → upward, dime=1 → downward.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">Mem</span> <span style="opacity:0.8;">— Persisted memory of last dime state. Mirrors MQL4's mem assignment.</span></div>
-    // ═══ PATCH-A5: on_track/on_stand explain ═══
-    <div><span style="color:#ffaa44;font-weight:bold;">OnTrack / OnStand</span> <span style="opacity:0.8;">— Extremum scanners ported from MQL4. OnTrack scans above Premium boundary during sVolatile/tVolatile; OnStand scans below Discount boundary during forced deleveraging. Loop bound extended to 4*max (MQL4 parity).</span></div>
-    // ═══ PATCH-A6: last kronecker explain ═══
-    <div><span style="color:#ffaa44;font-weight:bold;">Last Kron m/n/h</span> <span style="opacity:0.8;">— Snapshot of global m/n counts and h-bar index at the moment the last Kronecker signal fired.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">ENGINE STATE PANEL</span> <span style="opacity:0.8;">— Direct mirror of the live engine's internal fields: Price, Signal, Tick, Regime, m/n, Arc s², Rad r², Deviation, Re[Ψ], Indicator Passes, Signal Fires, Relay, Trailing Stop, KC/Prime/Dime/Mem/Tag, OnTrack/OnStand. This is the raw truth from app.py.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">Re[Ψ]</span> <span style="opacity:0.8;">— Real component of the current quaternion Φ (the a-coordinate).</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">DbZ Branch</span> <span style="opacity:0.8;">— Re[Ψ] > 0 → critical line; Re[Ψ] ≤ 0 → Natalia fibration.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">ÆEA δ</span> <span style="opacity:0.8;">— Kronecker delta δ(m−n−2). Market topology parity.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">O[Ψ] (4D)</span> <span style="opacity:0.8;">— Observer Operator: 4D numerical integration ∫ ψ†Φψ d⁴q over the client-side grid. Symbolic.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">‖ψ‖² (L²)</span> <span style="opacity:0.8;">— L² norm of the symbolic wavefunction over the 4D grid. Symbolic.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">ζ(½+it)</span> <span style="opacity:0.8;">— Riemann zeta function on the critical line. Symbolic approximation via 24-term partial sum.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">RELAY</span> <span style="opacity:0.8;">— Cloudflare Worker relay status (upstream Yahoo Finance). Fetched from /config.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">ENGINE COHERENCE</span> <span style="opacity:0.8;">— Live status reported by the Python engine via /state. Source of truth.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">INDICATOR PASSES</span> <span style="opacity:0.8;">— Number of times the 13D indicator matrix has been fully populated by the engine. Non-zero = live.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">SIGNAL FIRES</span> <span style="opacity:0.8;">— Number of Kronecker δ(m−n−2)=1 events (PATCH-D: local m/n at h-bar). Non-zero = trading logic active.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">TRAILING STOP</span> <span style="opacity:0.8;">— MQL4 T() ported with real Ask−Bid spread (PATCH-H). Updates SL/TP from Premium/Discount anchors.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">KC (Constant of Change)</span> <span style="opacity:0.8;">— Non-Hermitian binary inversion flag. Toggles between conjunctive precision and disjunctive adaptation.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">Prime / Dime</span> <span style="opacity:0.8;">— Directional derivatives from OnToe/OnGoe and OnGaurd.</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">OnTrack / OnStand</span> <span style="opacity:0.8;">— Extremum scanners (PATCH-I: MQL4 loop bounds to 4*max).</span></div>
+    <div><span style="color:#ffaa44;font-weight:bold;">Λ₂₄ (Leech)</span> <span style="opacity:0.8;">— FVGs project to true Leech lattice vectors (PATCH-E: mod-8 congruence, even parity, ‖v‖² ∈ 8ℤ).</span></div>
     <div style="margin-top:8px;border-top:1px solid #224466;padding-top:6px;">
         <span style="color:#4488ff;font-weight:bold;">▲ TOP (T)</span>
         <span style="opacity:0.8;">— Click chart to draw a blue premium FVG line.</span>
@@ -1039,14 +1109,8 @@
     </div>
     <div style="margin-top:8px;border-top:1px solid #224466;padding-top:6px;opacity:0.8;">
         <span style="color:#44ffcc;font-weight:bold;">🌐 DATA PIPELINE</span>
-        — Price data flows: Cloudflare Worker → Heroku (app.py) → Bridge (/state) → this Mini App.
-        The Mini App mirrors the engine's true coherence state via the ENGINE COHERENCE metric.
-        ENGINE STATE panel shows the raw Python engine fields (arc_sq, radius_sq, deviation, re_psi, indicator_populate_count, imbalance_fire_count, relay_url, trailing_stop_*) directly from /state.
-        <span style="color:#ff4466;font-weight:bold;">Note:</span> The Arc-Length coherence is reported truthfully by the engine.
-        If the ENGINE STATE panel shows non-zero Deviation, the system is in a genuine deviation
-        state — FVG commits will be gated by the engine's coherence check.
-        <span style="color:#ffaa44;font-weight:bold;">INDICATOR PASSES</span> and <span style="color:#ff4488;font-weight:bold;">SIGNAL FIRES</span> are the diagnostic counters that confirm the indicator matrix is live.
-        <span style="color:#ff66aa;font-weight:bold;">TRAILING STOP</span> state is ported from MQL4 T().
+        — Price flows: Cloudflare Worker → Heroku (app.py) → Bridge (/state) → this Mini App.
+        All FVG commits gated by engine's coherence check. All metric displays distinguish ENGINE (authoritative) from SYMBOLIC (local animation).
     </div>
     <div style="margin-top:6px;opacity:0.6;">Press <span style="color:#ffaa44;">H</span> to toggle this panel. Press <span style="color:#ffaa44;">Shift+T</span> to toggle TRACE.</div>
 </div>
@@ -1098,14 +1162,12 @@
             <span class="label">Re[Ψ]</span>
             <span class="value" id="hud-repsi">—</span>
         </div>
-        // ═══ PATCH-A1: trailing stop HUD line ═══
         <div>
             <span class="label">TRAIL</span>
             <span class="value" id="hud-trail">—</span>
             <span class="label" style="margin-left:6px;">SIDE</span>
             <span class="value" id="hud-trail-side">—</span>
         </div>
-        // ═══ PATCH-A4: KC/prime/dime HUD line ═══
         <div>
             <span class="label">KC</span>
             <span class="value kc-false" id="hud-kc">—</span>
@@ -1114,7 +1176,6 @@
             <span class="label">DIME</span>
             <span class="value" id="hud-dime">—</span>
         </div>
-        // ═══ PATCH-A5: on_track/on_stand HUD line ═══
         <div>
             <span class="label">ONTRACK</span>
             <span class="value" id="hud-ontrack">0</span>
@@ -1125,10 +1186,8 @@
 
     <div id="relayBadge" class="wait">RELAY: —</div>
 
-    // ═══ PATCH-A1: trailing stop badge ═══
     <div id="trailBadge" class="inactive">TRAIL: INACTIVE</div>
 
-    // ═══ PATCH-A4: KC/prime/dime badge ═══
     <div id="kpdBadge">
         <span class="kpd-kc kc-false" id="kpd-kc">KC:—</span>
         <span class="kpd-prime pn" id="kpd-prime">P:—</span>
@@ -1150,7 +1209,7 @@
 
     <div id="fvgPanel">
         <div class="fvg-header">
-            <span>⊢ FVG TOPOLOGICAL ANCHORS</span>
+            <span>⊢ FVG TOPOLOGICAL ANCHORS (Λ₂₄)</span>
             <span class="count" id="fvg-count">0</span>
         </div>
         <div id="fvgList">
@@ -1171,7 +1230,7 @@
     'use strict';
 
     // ============================================================
-    // BACKEND CONFIGURATION — SINGLE SOURCE OF TRUTH
+    // BACKEND CONFIGURATION
     // ============================================================
     const BACKEND_URL = 'https://aeea-df7f2ade617d.herokuapp.com';
     let RELAY_URL = '';
@@ -1334,167 +1393,266 @@
     function hideError() { errorDisplay.style.display = 'none'; }
 
     // ============================================================
-    // EXACT FRACTION ARITHMETIC
+    // PATCH-B: BigInt-BACKED ARBITRARY-PRECISION FRACTION
     // ============================================================
     class Fraction {
-        constructor(n = 0, d = 1) {
-            if (d === 0) throw new Error('Fraction: denominator cannot be zero');
-            let num = n, den = d;
-            if (den < 0) { num = -num; den = -den; }
-            const g = this._gcd(Math.abs(num), Math.abs(den));
-            this.num = num / g;
-            this.den = den / g;
+        constructor(n, d) {
+            if (typeof n === 'bigint') {
+                this.num = n;
+                this.den = (typeof d === 'bigint') ? d : BigInt(d === undefined ? 1 : d);
+            } else if (typeof n === 'number' && typeof d === 'number') {
+                this.num = BigInt(Math.round(n));
+                this.den = BigInt(Math.round(d || 1));
+            } else if (typeof n === 'string' && d === undefined) {
+                const parsed = Fraction.fromExactString(n);
+                this.num = parsed.num;
+                this.den = parsed.den;
+                return;
+            } else {
+                this.num = BigInt(n === undefined ? 0 : n);
+                this.den = BigInt(d === undefined ? 1 : d);
+            }
+            if (this.den === 0n) throw new Error('Fraction: denominator cannot be zero');
+            if (this.den < 0n) {
+                this.num = -this.num;
+                this.den = -this.den;
+            }
+            this._reduce();
         }
+
+        _reduce() {
+            const g = Fraction._gcd(this.num < 0n ? -this.num : this.num, this.den);
+            if (g > 1n) {
+                this.num = this.num / g;
+                this.den = this.den / g;
+            }
+        }
+
         static _gcd(a, b) {
-            a = Math.abs(a); b = Math.abs(b);
-            while (b !== 0) { const t = b; b = a % b; a = t; }
-            return a || 1;
+            a = a < 0n ? -a : a;
+            b = b < 0n ? -b : b;
+            while (b !== 0n) {
+                const t = b;
+                b = a % b;
+                a = t;
+            }
+            return a === 0n ? 1n : a;
         }
-        _gcd(a, b) { return Fraction._gcd(a, b); }
+
         add(o) {
-            const f = o instanceof Fraction ? o : new Fraction(o);
+            const f = Fraction._wrap(o);
             return new Fraction(this.num * f.den + f.num * this.den, this.den * f.den);
         }
         sub(o) {
-            const f = o instanceof Fraction ? o : new Fraction(o);
+            const f = Fraction._wrap(o);
             return new Fraction(this.num * f.den - f.num * this.den, this.den * f.den);
         }
         mul(o) {
-            const f = o instanceof Fraction ? o : new Fraction(o);
+            const f = Fraction._wrap(o);
             return new Fraction(this.num * f.num, this.den * f.den);
         }
         div(o) {
-            const f = o instanceof Fraction ? o : new Fraction(o);
-            if (f.num === 0) throw new Error('Division by zero');
+            const f = Fraction._wrap(o);
+            if (f.num === 0n) throw new Error('Division by zero');
             return new Fraction(this.num * f.den, this.den * f.num);
         }
-        abs() { return new Fraction(Math.abs(this.num), this.den); }
+        abs() {
+            return new Fraction(this.num < 0n ? -this.num : this.num, this.den);
+        }
         neg() { return new Fraction(-this.num, this.den); }
-        sign() { return this.num > 0 ? 1 : this.num < 0 ? -1 : 0; }
-        isZero() { return this.num === 0; }
-        toFloat() { return this.num / this.den; }
-        toString() { return this.den === 1 ? String(this.num) : `${this.num}/${this.den}`; }
+        sign() { return this.num > 0n ? 1 : this.num < 0n ? -1 : 0; }
+        isZero() { return this.num === 0n; }
+        toFloat() {
+            const n = Number(this.num);
+            const d = Number(this.den);
+            if (isFinite(n) && isFinite(d) && d !== 0) {
+                return n / d;
+            }
+            // Fallback for very large BigInt: scale down via string conversion
+            const sign = (this.num < 0n) ? -1 : 1;
+            const absNum = this.num < 0n ? -this.num : this.num;
+            const numStr = absNum.toString();
+            const denStr = this.den.toString();
+            const maxDigits = Math.min(numStr.length, denStr.length, 15);
+            const numTrim = numStr.slice(0, maxDigits);
+            const denTrim = denStr.slice(0, maxDigits);
+            return sign * (Number(numTrim) / Number(denTrim)) * Math.pow(10, numStr.length - maxDigits - (denStr.length - maxDigits));
+        }
+        toString() {
+            return this.den === 1n ? this.num.toString() : this.num.toString() + '/' + this.den.toString();
+        }
         isPerfectSquare() {
-            if (this.num < 0) return false;
-            const ns = Math.sqrt(this.num);
-            const ds = Math.sqrt(this.den);
-            return Number.isInteger(ns) && Number.isInteger(ds) && ns * ns === this.num && ds * ds === this.den;
+            if (this.num < 0n) return false;
+            const ns = Fraction._bigintSqrt(this.num);
+            const ds = Fraction._bigintSqrt(this.den);
+            return ns * ns === this.num && ds * ds === this.den;
         }
         exactSqrt() {
             if (!this.isPerfectSquare()) return null;
-            return new Fraction(Math.round(Math.sqrt(this.num)), Math.round(Math.sqrt(this.den)));
+            return new Fraction(Fraction._bigintSqrt(this.num), Fraction._bigintSqrt(this.den));
+        }
+        static _bigintSqrt(n) {
+            if (n < 0n) throw new Error('sqrt of negative BigInt');
+            if (n < 2n) return n;
+            let x0 = n >> 1n;
+            let x1 = (x0 + n / x0) >> 1n;
+            while (x1 < x0) {
+                x0 = x1;
+                x1 = (x0 + n / x0) >> 1n;
+            }
+            return x0;
         }
         sqrt(iterations) {
-            iterations = iterations || 30;
-            if (this.num < 0) throw new Error('sqrt of negative fraction');
-            if (this.num === 0) return Fraction.zero();
+            iterations = iterations || 40;
+            if (this.num < 0n) throw new Error('sqrt of negative fraction');
+            if (this.num === 0n) return Fraction.zero();
             const exact = this.exactSqrt();
             if (exact) return exact;
-            let x = new Fraction(Math.max(1, Math.floor(Math.sqrt(this.toFloat()))), 1);
-            const two = new Fraction(2, 1);
+            // Rational Newton-Raphson with BigInt
+            const scale = 10n ** 30n;
+            const scaledTarget = (this.num * scale * scale) / this.den;
+            let x = Fraction._bigintSqrt(scaledTarget);
+            if (x === 0n) x = 1n;
+            const two = 2n;
             for (let i = 0; i < iterations; i++) {
-                const term = this.div(x);
-                x = x.add(term).div(two);
+                const term = scaledTarget / x;
+                const next = (x + term) / two;
+                if (next === x) break;
+                x = next;
             }
-            return x;
+            return new Fraction(x, scale);
         }
         modRational(m) {
-            const mf = m instanceof Fraction ? m : new Fraction(m);
-            if (mf.isZero()) return Fraction.zero();
+            const mf = Fraction._wrap(m);
+            if (mf.num === 0n) return Fraction.zero();
             const numScaled = this.num * mf.den;
             const denScaled = this.den * mf.num;
-            const q = Math.floor(numScaled / denScaled);
+            const q = numScaled / denScaled;
             const remainderNum = numScaled - q * denScaled;
             return new Fraction(remainderNum, this.den * mf.den);
         }
         static cosExact(x, terms) {
             terms = terms || 12;
-            const TWO_PI = new Fraction(710, 113);
-            let xr = x;
-            if (xr.toFloat() > Math.PI || xr.toFloat() < -Math.PI) {
-                const shifted = xr.add(TWO_PI.div(new Fraction(2, 1)));
+            const TWO_PI = new Fraction(710n, 113n);
+            let xr = Fraction._wrap(x);
+            const PI_APPROX = Math.PI;
+            if (xr.toFloat() > PI_APPROX || xr.toFloat() < -PI_APPROX) {
+                const shifted = xr.add(TWO_PI.div(new Fraction(2n, 1n)));
                 const reduced = shifted.modRational(TWO_PI);
-                xr = reduced.sub(TWO_PI.div(new Fraction(2, 1)));
+                xr = reduced.sub(TWO_PI.div(new Fraction(2n, 1n)));
             }
-            let sum = new Fraction(1, 1);
-            let term = new Fraction(1, 1);
+            let sum = new Fraction(1n, 1n);
+            let term = new Fraction(1n, 1n);
             const x2 = xr.mul(xr);
             for (let k = 1; k <= terms; k++) {
-                term = term.mul(x2).div(new Fraction((2*k - 1) * (2*k), 1)).neg();
+                const denom = BigInt((2 * k - 1) * (2 * k));
+                term = term.mul(x2).div(new Fraction(denom, 1n)).neg();
                 sum = sum.add(term);
             }
             return sum;
         }
         static sinExact(x, terms) {
             terms = terms || 12;
-            const TWO_PI = new Fraction(710, 113);
-            let xr = x;
-            if (xr.toFloat() > Math.PI || xr.toFloat() < -Math.PI) {
-                const shifted = xr.add(TWO_PI.div(new Fraction(2, 1)));
+            const TWO_PI = new Fraction(710n, 113n);
+            let xr = Fraction._wrap(x);
+            const PI_APPROX = Math.PI;
+            if (xr.toFloat() > PI_APPROX || xr.toFloat() < -PI_APPROX) {
+                const shifted = xr.add(TWO_PI.div(new Fraction(2n, 1n)));
                 const reduced = shifted.modRational(TWO_PI);
-                xr = reduced.sub(TWO_PI.div(new Fraction(2, 1)));
+                xr = reduced.sub(TWO_PI.div(new Fraction(2n, 1n)));
             }
             let sum = xr;
             let term = xr;
             const x2 = xr.mul(xr);
             for (let k = 1; k <= terms; k++) {
-                term = term.mul(x2).div(new Fraction((2*k) * (2*k + 1), 1)).neg();
+                const denom = BigInt((2 * k) * (2 * k + 1));
+                term = term.mul(x2).div(new Fraction(denom, 1n)).neg();
                 sum = sum.add(term);
             }
             return sum;
         }
         static expPadé(x, order) {
             order = order || 2;
+            const xf = Fraction._wrap(x);
             if (order === 2) {
-                const x2_12 = x.mul(x).div(new Fraction(12, 1));
-                const num = Fraction.one().add(x.div(new Fraction(2, 1))).add(x2_12);
-                const den = Fraction.one().sub(x.div(new Fraction(2, 1))).add(x2_12);
+                const x2_12 = xf.mul(xf).div(new Fraction(12n, 1n));
+                const num = Fraction.one().add(xf.div(new Fraction(2n, 1n))).add(x2_12);
+                const den = Fraction.one().sub(xf.div(new Fraction(2n, 1n))).add(x2_12);
                 if (den.isZero()) return Fraction.one();
                 return num.div(den);
             } else {
                 let sum = Fraction.one();
                 let term = Fraction.one();
                 for (let k = 1; k <= 8; k++) {
-                    term = term.mul(x).div(new Fraction(k, 1));
+                    term = term.mul(xf).div(new Fraction(BigInt(k), 1n));
                     sum = sum.add(term);
                 }
                 return sum;
             }
         }
-        static zero() { return new Fraction(0, 1); }
-        static one() { return new Fraction(1, 1); }
+        static _wrap(x) {
+            if (x instanceof Fraction) return x;
+            if (typeof x === 'bigint') return new Fraction(x, 1n);
+            if (typeof x === 'number') {
+                const s = x.toString();
+                if (s.indexOf('.') >= 0 || s.indexOf('e') >= 0 || s.indexOf('E') >= 0) {
+                    return Fraction.fromFloat(x);
+                }
+                return new Fraction(BigInt(Math.round(x)), 1n);
+            }
+            return new Fraction(0n, 1n);
+        }
+        static zero() { return new Fraction(0n, 1n); }
+        static one() { return new Fraction(1n, 1n); }
         static fromFloat(f) {
-            const precision = 1000000;
-            return new Fraction(Math.round(f * precision), precision);
+            const PRECISION = 1000000000000000n; // 1e15
+            const scaled = BigInt(Math.round(f * 1000000));
+            return new Fraction(scaled, 1000000n);
         }
         static fromExactString(s) {
             if (typeof s !== 'string') s = String(s);
             s = s.trim();
+            const sign = s.startsWith('-') ? -1n : 1n;
+            if (sign < 0n) s = s.slice(1);
             if (s.indexOf('/') >= 0) {
                 const parts = s.split('/');
-                return new Fraction(parseInt(parts[0], 10), parseInt(parts[1], 10));
+                return new Fraction(sign * BigInt(parts[0]), BigInt(parts[1]));
             }
             const dotIdx = s.indexOf('.');
             if (dotIdx >= 0) {
-                const intPart = s.slice(0, dotIdx);
+                const intPart = s.slice(0, dotIdx) || '0';
                 const fracPart = s.slice(dotIdx + 1);
-                const scale = Math.pow(10, fracPart.length);
-                const num = parseInt(intPart + fracPart, 10);
-                return new Fraction(num, scale);
+                const scale = 10n ** BigInt(fracPart.length);
+                const num = BigInt(intPart + fracPart);
+                return new Fraction(sign * num, scale);
             }
-            return new Fraction(parseInt(s, 10), 1);
+            return new Fraction(sign * BigInt(s), 1n);
         }
+        clone() { return new Fraction(this.num, this.den); }
+        lessThan(o) {
+            const f = Fraction._wrap(o);
+            return this.num * f.den < f.num * this.den;
+        }
+        equals(o) {
+            const f = Fraction._wrap(o);
+            return this.num * f.den === f.num * this.den;
+        }
+        lt(o) { return this.lessThan(o); }
+        gt(o) { return !this.lessThan(o) && !this.equals(o); }
+        le(o) { return this.lessThan(o) || this.equals(o); }
+        ge(o) { return !this.lessThan(o); }
+        eq(o) { return this.equals(o); }
     }
 
     // ============================================================
-    // QUATERNION ALGEBRA (Exact Fractions Only)
+    // QUATERNION ALGEBRA (BigInt-Exact)
     // ============================================================
     class Quat {
         constructor(a, b, c, d) {
-            this.a = (a instanceof Fraction) ? a : new Fraction(a || 0);
-            this.b = (b instanceof Fraction) ? b : new Fraction(b || 0);
-            this.c = (c instanceof Fraction) ? c : new Fraction(c || 0);
-            this.d = (d instanceof Fraction) ? d : new Fraction(d || 0);
+            this.a = (a instanceof Fraction) ? a : Fraction._wrap(a || 0);
+            this.b = (b instanceof Fraction) ? b : Fraction._wrap(b || 0);
+            this.c = (c instanceof Fraction) ? c : Fraction._wrap(c || 0);
+            this.d = (d instanceof Fraction) ? d : Fraction._wrap(d || 0);
         }
         normSq() {
             return this.a.mul(this.a).add(this.b.mul(this.b)).add(this.c.mul(this.c)).add(this.d.mul(this.d));
@@ -1527,7 +1685,7 @@
             return new Quat(this.a.sub(o.a), this.b.sub(o.b), this.c.sub(o.c), this.d.sub(o.d));
         }
         scale(s) {
-            const f = s instanceof Fraction ? s : new Fraction(s);
+            const f = s instanceof Fraction ? s : Fraction._wrap(s);
             return new Quat(this.a.mul(f), this.b.mul(f), this.c.mul(f), this.d.mul(f));
         }
         commutator(other) {
@@ -1536,7 +1694,7 @@
         }
         projectToS2() {
             const a = this.a, b = this.b, c = this.c, d = this.d;
-            const two = new Fraction(2, 1);
+            const two = new Fraction(2n, 1n);
             const x = two.mul(b.mul(d).add(a.mul(c)));
             const y = two.mul(c.mul(d).sub(a.mul(b)));
             const z = a.mul(a).add(d.mul(d)).sub(b.mul(b)).sub(c.mul(c));
@@ -1552,39 +1710,30 @@
         applyFibration(sFrac, epsFrac, timeFrac) {
             let pA = Fraction.zero(), pB = Fraction.zero(), pC = Fraction.zero(), pD = Fraction.zero();
             let e = epsFrac;
-            const THRESHOLD = new Fraction(1, 1000000000);
+            const THRESHOLD = new Fraction(1n, 1000000000n);
             for (let k = 1; k <= 12; k++) {
-                const kf = new Fraction(k, 1);
+                const kf = new Fraction(BigInt(k), 1n);
                 const spow = kf.mul(sFrac);
-                const sinv = Fraction.sinExact(spow.add(new Fraction(1, 2)), 8);
-                const cosv = Fraction.one().add(new Fraction(1, 10).mul(Fraction.cosExact(spow.mul(new Fraction(7, 10)), 8)));
+                const sinv = Fraction.sinExact(spow.add(new Fraction(1n, 2n)), 8);
+                const cosv = Fraction.one().add(new Fraction(1n, 10n).mul(Fraction.cosExact(spow.mul(new Fraction(7n, 10n)), 8)));
                 const nf = spow.mul(sinv).mul(cosv);
-                const ph = Fraction.sinExact(timeFrac.mul(new Fraction(2, 10)).mul(kf).add(kf), 8);
+                const ph = Fraction.sinExact(timeFrac.mul(new Fraction(2n, 10n)).mul(kf).add(kf), 8);
                 const contribution = e.mul(nf);
                 pA = pA.add(contribution.mul(ph));
-                pB = pB.add(contribution.mul(Fraction.cosExact(timeFrac.mul(new Fraction(3, 10)).mul(kf).add(Fraction.one()), 8)));
-                pC = pC.add(contribution.mul(Fraction.sinExact(timeFrac.mul(new Fraction(25, 100)).mul(kf).add(new Fraction(2,1)), 8)));
-                pD = pD.add(contribution.mul(Fraction.cosExact(timeFrac.mul(new Fraction(35, 100)).mul(kf).add(new Fraction(3,1)), 8)));
+                pB = pB.add(contribution.mul(Fraction.cosExact(timeFrac.mul(new Fraction(3n, 10n)).mul(kf).add(Fraction.one()), 8)));
+                pC = pC.add(contribution.mul(Fraction.sinExact(timeFrac.mul(new Fraction(25n, 100n)).mul(kf).add(new Fraction(2n, 1n)), 8)));
+                pD = pD.add(contribution.mul(Fraction.cosExact(timeFrac.mul(new Fraction(35n, 100n)).mul(kf).add(new Fraction(3n, 1n)), 8)));
                 e = e.mul(epsFrac);
-                if (e.abs().toFloat() < THRESHOLD.toFloat()) break;
+                if (Math.abs(e.toFloat()) < THRESHOLD.toFloat()) break;
             }
             return new Quat(
-                this.a.add(pA.mul(new Fraction(15, 100))),
-                this.b.add(pB.mul(new Fraction(10, 100))),
-                this.c.add(pC.mul(new Fraction(12, 100))),
-                this.d.add(pD.mul(new Fraction(8, 100)))
+                this.a.add(pA.mul(new Fraction(15n, 100n))),
+                this.b.add(pB.mul(new Fraction(10n, 100n))),
+                this.c.add(pC.mul(new Fraction(12n, 100n))),
+                this.d.add(pD.mul(new Fraction(8n, 100n)))
             );
         }
-        static discreteArcLength(trajectory) {
-            let total = Fraction.zero();
-            for (let i = 1; i < trajectory.length; i++) {
-                const dq = trajectory[i].sub(trajectory[i - 1]);
-                total = total.add(dq.norm());
-            }
-            return total;
-        }
-        static radialDistance(q) { return q.norm(); }
-        clone() { return new Quat(this.a, this.b, this.c, this.d); }
+        clone() { return new Quat(this.a.clone(), this.b.clone(), this.c.clone(), this.d.clone()); }
     }
 
     // ============================================================
@@ -1592,11 +1741,11 @@
     // ============================================================
     function continuedFractionExact(frac, n) {
         const terms = [];
-        let num = Math.abs(frac.num);
-        let den = Math.abs(frac.den);
-        for (let i = 0; i < n && den !== 0; i++) {
-            const a = Math.floor(num / den);
-            terms.push(a);
+        let num = frac.num < 0n ? -frac.num : frac.num;
+        let den = frac.den;
+        for (let i = 0; i < n && den !== 0n; i++) {
+            const a = num / den;
+            terms.push(Number(a));
             const rem = num - a * den;
             num = den;
             den = rem;
@@ -1605,9 +1754,9 @@
     }
     function cfEvaluateExact(cf) {
         if (cf.length === 0) return Fraction.zero();
-        let val = new Fraction(cf[cf.length - 1], 1);
+        let val = new Fraction(BigInt(cf[cf.length - 1]), 1n);
         for (let i = cf.length - 2; i >= 0; i--) {
-            val = new Fraction(cf[i], 1).add(Fraction.one().div(val));
+            val = new Fraction(BigInt(cf[i]), 1n).add(Fraction.one().div(val));
         }
         return val;
     }
@@ -1618,20 +1767,20 @@
         const lnCache = [];
         for (let n = 1; n <= terms; n++) {
             if (n === 1) { lnCache.push(Fraction.zero()); continue; }
-            const u = new Fraction(n - 1, n + 1);
+            const u = new Fraction(BigInt(n - 1), BigInt(n + 1));
             const u2 = u.mul(u);
             let sum = Fraction.zero();
             let term = u;
             for (let k = 0; k < 10; k++) {
-                sum = sum.add(term.div(new Fraction(2 * k + 1, 1)));
+                sum = sum.add(term.div(new Fraction(BigInt(2 * k + 1), 1n)));
                 term = term.mul(u2);
             }
-            lnCache.push(sum.mul(new Fraction(2, 1)));
+            lnCache.push(sum.mul(new Fraction(2n, 1n)));
         }
         for (let n = 1; n <= terms; n++) {
             const lnN = lnCache[n - 1];
             const angle = lnN.mul(imPart).neg();
-            const invSqrtN = new Fraction(1, 1).div(new Fraction(n, 1).sqrt(12));
+            const invSqrtN = Fraction.one().div(new Fraction(BigInt(n), 1n).sqrt(12));
             const cosA = Fraction.cosExact(angle, 10);
             const sinA = Fraction.sinExact(angle, 10);
             reSum = reSum.add(invSqrtN.mul(cosA));
@@ -1663,11 +1812,13 @@
         return ((x % lattice.N) + lattice.N) % lattice.N;
     }
     function crtResidueFromExact(frac, m) {
-        return ((frac.num % m) + m) % m;
+        const mBig = BigInt(m);
+        const r = ((frac.num % mBig) + mBig) % mBig;
+        return Number(r);
     }
 
     // ============================================================
-    // CODEX STATE
+    // CODEX STATE (PATCH-A: engine-authoritative coherence)
     // ============================================================
     const OBS_GRID_DIM = 6;
     const TRACE_MAX = 32;
@@ -1677,7 +1828,7 @@
             this.origin = new Quat(Fraction.one(), Fraction.zero(), Fraction.zero(), Fraction.zero());
             this.q = this.origin.clone();
             this.gen = 0;
-            this.eps = new Fraction(1, 100);
+            this.eps = new Fraction(1n, 100n);
             this.coherent = true;
             this.quatHistory = [this.origin.clone()];
             this.time = Fraction.zero();
@@ -1719,6 +1870,7 @@
             this.proofTrace = [];
             this.sHistory = [];
             this.rHistory = [];
+            this.engineArcHistory = [];
             this.mode = 0;
             this.modes = ['FULL', 'COH', 'DBZ', 'OBS', 'S_R'];
             this.activePhoneme = '—';
@@ -1737,9 +1889,8 @@
             this._stars = null;
             this._initialized = false;
             this._traceVisible = false;
-            this._fibrationConverged = false;
-            this._lastFibrationTerm = Fraction.zero();
             this.engineState = null;
+            this.engineConnected = false;
             this.engineCoherent = null;
             this.engineDeviation = Fraction.zero();
             this.engineArcSq = Fraction.zero();
@@ -1749,7 +1900,6 @@
             this.engineIndicatorPasses = 0;
             this.engineSignalFires = 0;
             this.engineRelayUrl = '';
-            // ═══ PATCH-A1: engine trailing stop state ═══
             this.engineTrailActive = false;
             this.engineTrailSL = '0.0';
             this.engineTrailTP = '0.0';
@@ -1759,14 +1909,12 @@
             this.engineHasShort = false;
             this.engineLOrderId = -1;
             this.engineKOrderId = -1;
-            // ═══ PATCH-A4: engine KC/prime/dime/mem/tag state ═══
             this.engineKC = true;
             this.enginePrime = -1;
             this.engineDime = -1;
             this.engineMem = -1;
             this.engineTag = -1;
             this.engineInvert = true;
-            // ═══ PATCH-A5: engine on_track/on_stand state ═══
             this.engineOnTrack = 0;
             this.engineOnStand = 0;
             this.engineLastKronBar = -1;
@@ -1778,6 +1926,38 @@
             this._lastCoherenceSeen = null;
             this._lastTrailSeen = null;
             this._lastKronSeen = null;
+        }
+
+        // PATCH-A: when engine connected, its state is authoritative for the metrics panel
+        authoritativeArcSq() {
+            if (this.engineConnected && this.engineState && this.engineState.arc_sq !== undefined) {
+                return this.engineArcSq;
+            }
+            return this.s2;
+        }
+        authoritativeRadiusSq() {
+            if (this.engineConnected && this.engineState && this.engineState.radius_sq !== undefined) {
+                return this.engineRadiusSq;
+            }
+            return this.r2;
+        }
+        authoritativeDeviation() {
+            if (this.engineConnected && this.engineState && this.engineState.deviation !== undefined) {
+                return this.engineDeviation;
+            }
+            return this.dev;
+        }
+        authoritativeRePsi() {
+            if (this.engineConnected && this.engineState && this.engineState.re_psi !== undefined) {
+                return this.engineRePsi;
+            }
+            return this.rePsi;
+        }
+        authoritativeCoherent() {
+            if (this.engineConnected && this.engineCoherent !== null) {
+                return this.engineCoherent;
+            }
+            return this.coherent;
         }
 
         coherentWavefunction(qPoint) {
@@ -1796,7 +1976,7 @@
                 reSum = reSum.add(weight.mul(phaseReal));
                 imSum = imSum.add(weight.mul(phaseImag));
             }
-            const invN = Fraction.one().div(new Fraction(N, 1));
+            const invN = Fraction.one().div(new Fraction(BigInt(N), 1n));
             return { re: reSum.mul(invN), im: imSum.mul(invN) };
         }
 
@@ -1813,9 +1993,7 @@
             const pD = psiDagIm.mul(phiC).sub(psiDagRe.mul(phiD));
             const rA = pA.mul(psiRe).sub(pB.mul(psiIm));
             const rB = pA.mul(psiIm).add(pB.mul(psiRe));
-            const rC = pC.mul(psiRe).add(pD.mul(psiIm));
-            const rD = pD.mul(psiRe).sub(pC.mul(psiIm));
-            return { re: rA, im: rB, c: rC, d: rD };
+            return { re: rA, im: rB };
         }
 
         psiNormSqAt(qPoint) {
@@ -1825,7 +2003,7 @@
 
         sweep4DObserver() {
             const dim = OBS_GRID_DIM;
-            const cellVolume = Fraction.one().div(new Fraction(dim * dim * dim * dim, 1));
+            const cellVolume = Fraction.one().div(new Fraction(BigInt(dim * dim * dim * dim), 1n));
             const totalCells = dim * dim * dim * dim;
             const batchSize = 64;
             const startIdx = this.obsSweepIdx;
@@ -1835,10 +2013,10 @@
                 const i1 = Math.floor(idx / dim) % dim;
                 const i2 = Math.floor(idx / (dim * dim)) % dim;
                 const i3 = Math.floor(idx / (dim * dim * dim)) % dim;
-                const q0 = new Fraction(2 * i0 - dim + 1, dim);
-                const q1 = new Fraction(2 * i1 - dim + 1, dim);
-                const q2 = new Fraction(2 * i2 - dim + 1, dim);
-                const q3 = new Fraction(2 * i3 - dim + 1, dim);
+                const q0 = new Fraction(BigInt(2 * i0 - dim + 1), BigInt(dim));
+                const q1 = new Fraction(BigInt(2 * i1 - dim + 1), BigInt(dim));
+                const q2 = new Fraction(BigInt(2 * i2 - dim + 1), BigInt(dim));
+                const q3 = new Fraction(BigInt(2 * i3 - dim + 1), BigInt(dim));
                 const qPt = new Quat(q0, q1, q2, q3);
                 const integrand = this.integrand4D(qPt);
                 this.obsAccumulatorRe = this.obsAccumulatorRe.add(integrand.re.mul(cellVolume));
@@ -1846,14 +2024,14 @@
             }
             this.obsGridCount += (endIdx - startIdx);
             this.obsSweepIdx = (endIdx >= totalCells) ? 0 : endIdx;
-            const normFactor = Fraction.one().div(new Fraction(Math.max(1, this.obsGridCount), 1));
+            const normFactor = Fraction.one().div(new Fraction(BigInt(Math.max(1, this.obsGridCount)), 1n));
             this.obsRe = this.obsAccumulatorRe.mul(normFactor);
             this.obsIm = this.obsAccumulatorIm.mul(normFactor);
         }
 
         sweepPsiNorm() {
             const dim = OBS_GRID_DIM;
-            const cellVolume = Fraction.one().div(new Fraction(dim * dim * dim * dim, 1));
+            const cellVolume = Fraction.one().div(new Fraction(BigInt(dim * dim * dim * dim), 1n));
             const totalCells = dim * dim * dim * dim;
             const batchSize = 64;
             const startIdx = this.psiNormSweepIdx;
@@ -1863,10 +2041,10 @@
                 const i1 = Math.floor(idx / dim) % dim;
                 const i2 = Math.floor(idx / (dim * dim)) % dim;
                 const i3 = Math.floor(idx / (dim * dim * dim)) % dim;
-                const q0 = new Fraction(2 * i0 - dim + 1, dim);
-                const q1 = new Fraction(2 * i1 - dim + 1, dim);
-                const q2 = new Fraction(2 * i2 - dim + 1, dim);
-                const q3 = new Fraction(2 * i3 - dim + 1, dim);
+                const q0 = new Fraction(BigInt(2 * i0 - dim + 1), BigInt(dim));
+                const q1 = new Fraction(BigInt(2 * i1 - dim + 1), BigInt(dim));
+                const q2 = new Fraction(BigInt(2 * i2 - dim + 1), BigInt(dim));
+                const q3 = new Fraction(BigInt(2 * i3 - dim + 1), BigInt(dim));
                 const qPt = new Quat(q0, q1, q2, q3);
                 const normSqVal = this.psiNormSqAt(qPt);
                 this.psiNormAccumulator = this.psiNormAccumulator.add(normSqVal.mul(cellVolume));
@@ -1886,6 +2064,7 @@
         ingestEngineState(engineState) {
             if (!engineState) return;
             this.engineState = engineState;
+            this.engineConnected = true;
             try {
                 if (engineState.re_psi !== undefined) {
                     try {
@@ -1901,8 +2080,8 @@
                             type: newCoherent ? 'coherence' : 'evolution',
                             t: this.time.toFloat(),
                             msg: newCoherent
-                                ? `Engine reports COHERENT (s²=r²)`
-                                : `Engine reports DEVIATION (s²≠r²)`
+                                ? `ENGINE reports COHERENT (s²=r²)`
+                                : `ENGINE reports DEVIATION (s²≠r²)`
                         });
                     }
                     this.engineCoherent = newCoherent;
@@ -1917,6 +2096,12 @@
                 if (engineState.arc_sq !== undefined) {
                     try {
                         this.engineArcSq = Fraction.fromExactString(String(engineState.arc_sq));
+                        // Record engine arc history for the time-series panel
+                        const arcFloat = this.engineArcSq.toFloat();
+                        if (isFinite(arcFloat)) {
+                            this.engineArcHistory.push({ t: this.time.toFloat(), val: arcFloat });
+                            if (this.engineArcHistory.length > 300) this.engineArcHistory.shift();
+                        }
                     } catch (_) {}
                 }
                 if (engineState.radius_sq !== undefined) {
@@ -1972,7 +2157,6 @@
                         RELAY_URL = this.engineRelayUrl;
                     }
                 }
-                // ═══ PATCH-A1: ingest trailing stop state ═══
                 if (engineState.trailing_stop_active !== undefined) {
                     const newTrail = !!engineState.trailing_stop_active;
                     if (this._lastTrailSeen !== newTrail) {
@@ -2017,14 +2201,12 @@
                 if (engineState.kOrder_id !== undefined) {
                     this.engineKOrderId = parseInt(engineState.kOrder_id, 10);
                 }
-                // ═══ PATCH-A4: ingest KC/prime/dime/mem/tag ═══
                 if (engineState.KC !== undefined) this.engineKC = !!engineState.KC;
                 if (engineState.prime !== undefined) this.enginePrime = parseInt(engineState.prime, 10);
                 if (engineState.dime !== undefined) this.engineDime = parseInt(engineState.dime, 10);
                 if (engineState.mem !== undefined) this.engineMem = parseInt(engineState.mem, 10);
                 if (engineState.tag !== undefined) this.engineTag = parseInt(engineState.tag, 10);
                 if (engineState.invert !== undefined) this.engineInvert = !!engineState.invert;
-                // ═══ PATCH-A5: ingest on_track/on_stand ═══
                 if (engineState.on_track_runs !== undefined) {
                     this.engineOnTrack = parseInt(engineState.on_track_runs, 10) || 0;
                 }
@@ -2059,19 +2241,19 @@
 
         step(dt) {
             try {
-                const dtf = dt instanceof Fraction ? dt : new Fraction(dt);
+                const dtf = dt instanceof Fraction ? dt : Fraction._wrap(dt);
                 this.time = this.time.add(dtf);
 
-                const s = this.time.mul(new Fraction(4, 10));
-                const thetaBase = s.mul(new Fraction(7, 10));
-                const thetaPerturb = Fraction.sinExact(s.mul(new Fraction(3, 10)), 8).mul(new Fraction(2, 10));
+                const s = this.time.mul(new Fraction(4n, 10n));
+                const thetaBase = s.mul(new Fraction(7n, 10n));
+                const thetaPerturb = Fraction.sinExact(s.mul(new Fraction(3n, 10n)), 8).mul(new Fraction(2n, 10n));
                 const theta = thetaBase.add(thetaPerturb);
-                const phiBase = s.mul(new Fraction(3, 10)).add(new Fraction(5, 10));
-                const phiPerturb = Fraction.cosExact(s.mul(new Fraction(5, 10)), 8).mul(new Fraction(1, 10));
+                const phiBase = s.mul(new Fraction(3n, 10n)).add(new Fraction(5n, 10n));
+                const phiPerturb = Fraction.cosExact(s.mul(new Fraction(5n, 10n)), 8).mul(new Fraction(1n, 10n));
                 const phi = phiBase.add(phiPerturb);
 
-                const halfTheta = theta.div(new Fraction(2, 1));
-                const halfPhi = phi.div(new Fraction(2, 1));
+                const halfTheta = theta.div(new Fraction(2n, 1n));
+                const halfPhi = phi.div(new Fraction(2n, 1n));
 
                 const cosHT = Fraction.cosExact(halfTheta, 8);
                 const sinHT = Fraction.sinExact(halfTheta, 8);
@@ -2102,9 +2284,14 @@
                 this.r = this.q.norm();
                 this.s2 = this.s.mul(this.s);
                 this.r2 = this.r.mul(this.r);
-                this.srRatio = this.s2.div(this.r2);
+                if (!this.r2.isZero()) {
+                    this.srRatio = this.s2.div(this.r2);
+                } else {
+                    this.srRatio = Fraction.zero();
+                }
                 this.dev = this.s2.sub(this.r2);
-                if (this.engineState === null || this.engineState.re_psi === undefined) {
+                // PATCH-A: only override rePsi locally if not engine-authoritative
+                if (!this.engineConnected || this.engineState === null || this.engineState.re_psi === undefined) {
                     this.rePsi = this.q.a;
                 }
 
@@ -2119,44 +2306,51 @@
                     this.rHistory.shift();
                 }
 
-                const thresh = new Fraction(2, 1000);
+                const thresh = new Fraction(2n, 1000n);
                 const prevDbz = this.dbz;
-                if (this.dev.abs().toFloat() > thresh.toFloat()) {
-                    if (this.rePsi.sign() > 0) {
-                        const factor = new Fraction(97, 100);
-                        this.dev = this.dev.mul(factor);
-                        this.dbz = 1;
-                        this.pushTrace({
-                            type: 'dbz1',
-                            t: tFloat,
-                            msg: `DbZ₁ critical-line projection (Re[Ψ]>0) | dev=${this.dev.toFloat().toExponential(3)}`
-                        });
-                    } else {
-                        const delta = Fraction.sinExact(this.time.mul(new Fraction(5, 10)).add(Fraction.one()), 8).mul(new Fraction(8, 10000));
-                        this.eps = this.eps.add(delta);
-                        if (this.eps.toFloat() > 0.05) this.eps = new Fraction(5, 100);
-                        if (this.eps.toFloat() < 0.001) this.eps = new Fraction(1, 1000);
-                        this.dbz = 2;
-                        this.pushTrace({
-                            type: 'dbz2',
-                            t: tFloat,
-                            msg: `DbZ₂ Natalia fibration (Re[Ψ]≤0) | ε=${this.eps.toString()}`
-                        });
-                    }
-                    this.coherent = false;
+                // PATCH-A: coherence determination uses engine when connected
+                if (this.engineConnected && this.engineCoherent !== null) {
+                    this.coherent = this.engineCoherent;
+                    this.dbz = this.engineState && this.engineState.dbz_branch !== undefined
+                        ? parseInt(this.engineState.dbz_branch, 10) : 0;
                 } else {
-                    this.coherent = true;
-                    const target = new Fraction(1, 100);
-                    const diff = target.sub(this.eps);
-                    this.eps = this.eps.add(diff.mul(new Fraction(2, 1000)));
-                    if (prevDbz !== 0) {
-                        this.pushTrace({
-                            type: 'coherence',
-                            t: tFloat,
-                            msg: `Coherence restored | s²=${this.s2.toString().slice(0,20)}...`
-                        });
+                    if (Math.abs(this.dev.toFloat()) > thresh.toFloat()) {
+                        if (this.rePsi.sign() > 0) {
+                            const factor = new Fraction(97n, 100n);
+                            this.dev = this.dev.mul(factor);
+                            this.dbz = 1;
+                            this.pushTrace({
+                                type: 'dbz1',
+                                t: tFloat,
+                                msg: `[SYMBOLIC] DbZ₁ critical-line projection (Re[Ψ]>0) | dev=${this.dev.toFloat().toExponential(3)}`
+                            });
+                        } else {
+                            const delta = Fraction.sinExact(this.time.mul(new Fraction(5n, 10n)).add(Fraction.one()), 8).mul(new Fraction(8n, 10000n));
+                            this.eps = this.eps.add(delta);
+                            if (this.eps.toFloat() > 0.05) this.eps = new Fraction(5n, 100n);
+                            if (this.eps.toFloat() < 0.001) this.eps = new Fraction(1n, 1000n);
+                            this.dbz = 2;
+                            this.pushTrace({
+                                type: 'dbz2',
+                                t: tFloat,
+                                msg: `[SYMBOLIC] DbZ₂ Natalia fibration (Re[Ψ]≤0) | ε=${this.eps.toString()}`
+                            });
+                        }
+                        this.coherent = false;
+                    } else {
+                        this.coherent = true;
+                        const target = new Fraction(1n, 100n);
+                        const diff = target.sub(this.eps);
+                        this.eps = this.eps.add(diff.mul(new Fraction(2n, 1000n)));
+                        if (prevDbz !== 0) {
+                            this.pushTrace({
+                                type: 'coherence',
+                                t: tFloat,
+                                msg: `[SYMBOLIC] Coherence restored`
+                            });
+                        }
+                        this.dbz = 0;
                     }
-                    this.dbz = 0;
                 }
 
                 this.sweep4DObserver();
@@ -2167,7 +2361,7 @@
                         this.pushTrace({
                             type: 'norm',
                             t: tFloat,
-                            msg: `L² norm |ψ|²=${this.psiNormSq.toFloat().toFixed(4)} · ‖ψ‖=${psiMag.toFixed(4)}`
+                            msg: `[SYMBOLIC] L² norm |ψ|²=${this.psiNormSq.toFloat().toFixed(4)}`
                         });
                     }
                 }
@@ -2182,13 +2376,13 @@
                 const cz = d.mul(a).sub(b.mul(c));
                 this.curlMagnitude = new Quat(cx, cy, cz, Fraction.zero()).norm();
 
-                const cfInput = this.dev.abs().add(new Fraction(1, 2));
+                const cfInput = this.dev.abs().add(new Fraction(1n, 2n));
                 const cfTerms = continuedFractionExact(cfInput, 6);
                 const cfValue = cfEvaluateExact(cfTerms);
                 this.cfHistory.push({ val: cfValue.toFloat(), terms: cfTerms });
                 if (this.cfHistory.length > 60) this.cfHistory.shift();
 
-                const imPart = this.time.mul(new Fraction(1, 20));
+                const imPart = this.time.mul(new Fraction(1n, 20n));
                 const zetaVal = zetaExactOnCriticalLine(imPart, 24);
                 this.lastZetaRe = zetaVal.re;
                 this.lastZetaIm = zetaVal.im;
@@ -2202,7 +2396,7 @@
                     this.pushTrace({
                         type: 'zeta',
                         t: tFloat,
-                        msg: `ζ(½+${imPart.toFloat().toFixed(3)}i) | mag=${zetaMag.toFixed(4)}`
+                        msg: `[SYMBOLIC] ζ(½+${imPart.toFloat().toFixed(3)}i) | mag=${zetaMag.toFixed(4)}`
                     });
                 }
 
@@ -2212,12 +2406,12 @@
                 const lattice = crtLattice(moduli);
                 this.crtState = crtSolve(this.crtResidues, lattice);
 
-                const t2 = this.time.mul(new Fraction(2, 10));
-                const t25 = this.time.mul(new Fraction(25, 100));
-                const t3 = this.time.mul(new Fraction(3, 10));
-                const lingX = Fraction.sinExact(t2, 8).mul(new Fraction(1, 2)).add(Fraction.cosExact(t3.add(Fraction.one()), 8).mul(new Fraction(3, 10)));
-                const lingY = Fraction.cosExact(t25, 8).mul(new Fraction(1, 2)).add(Fraction.sinExact(t2.add(new Fraction(2, 1)), 8).mul(new Fraction(3, 10)));
-                const lingZ = Fraction.sinExact(t3.add(new Fraction(1, 2)), 8).mul(new Fraction(1, 2)).add(Fraction.cosExact(t25.add(new Fraction(15, 10)), 8).mul(new Fraction(3, 10)));
+                const t2 = this.time.mul(new Fraction(2n, 10n));
+                const t25 = this.time.mul(new Fraction(25n, 100n));
+                const t3 = this.time.mul(new Fraction(3n, 10n));
+                const lingX = Fraction.sinExact(t2, 8).mul(new Fraction(1n, 2n)).add(Fraction.cosExact(t3.add(Fraction.one()), 8).mul(new Fraction(3n, 10n)));
+                const lingY = Fraction.cosExact(t25, 8).mul(new Fraction(1n, 2n)).add(Fraction.sinExact(t2.add(new Fraction(2n, 1n)), 8).mul(new Fraction(3n, 10n)));
+                const lingZ = Fraction.sinExact(t3.add(new Fraction(1n, 2n)), 8).mul(new Fraction(1n, 2n)).add(Fraction.cosExact(t25.add(new Fraction(15n, 10n)), 8).mul(new Fraction(3n, 10n)));
                 const lingXf = lingX.toFloat(), lingYf = lingY.toFloat(), lingZf = lingZ.toFloat();
                 this.lingosoTraj.push({ x: lingXf, y: lingYf, z: lingZf });
                 if (this.lingosoTraj.length > 100) this.lingosoTraj.shift();
@@ -2248,11 +2442,6 @@
                         timestamp: tFloat
                     });
                     this.proofDepth = this.proofSteps.length;
-                    this.pushTrace({
-                        type: this.coherent ? 'coherence' : 'evolution',
-                        t: tFloat,
-                        msg: `Closure=${this.selfRefClosure.toFixed(3)} → step #${this.proofDepth}`
-                    });
                 }
 
                 this.traj.push({
@@ -2275,7 +2464,7 @@
             this.q = this.origin.clone();
             this.quatHistory = [this.origin.clone()];
             this.gen = 0;
-            this.eps = new Fraction(1, 100);
+            this.eps = new Fraction(1n, 100n);
             this.coherent = true;
             this.traj = [];
             this.time = Fraction.zero();
@@ -2300,6 +2489,7 @@
             this.psiNormAccumulator = Fraction.zero();
             this.cfHistory = [];
             this.zetaHistory = [];
+            this.engineArcHistory = [];
             this.lastZetaRe = Fraction.zero();
             this.lastZetaIm = Fraction.zero();
             this.crtState = 0;
@@ -2321,39 +2511,7 @@
             for (const p of this.phonemeGrid) p.active = false;
             this._stars = null;
             this._initialized = false;
-            this._fibrationConverged = false;
-            this._lastFibrationTerm = Fraction.zero();
-            this.engineState = null;
-            this.engineCoherent = null;
-            this.engineDeviation = Fraction.zero();
-            this.engineArcSq = Fraction.zero();
-            this.engineRadiusSq = Fraction.one();
-            this.engineRePsi = Fraction.zero();
-            this.engineInitialized = false;
-            this.engineIndicatorPasses = 0;
-            this.engineSignalFires = 0;
-            this.engineRelayUrl = '';
-            this.engineTrailActive = false;
-            this.engineTrailSL = '0.0';
-            this.engineTrailTP = '0.0';
-            this.engineTrailEntry = '0.0';
-            this.engineTrailSide = '';
-            this.engineHasLong = false;
-            this.engineHasShort = false;
-            this.engineLOrderId = -1;
-            this.engineKOrderId = -1;
-            this.engineKC = true;
-            this.enginePrime = -1;
-            this.engineDime = -1;
-            this.engineMem = -1;
-            this.engineTag = -1;
-            this.engineInvert = true;
-            this.engineOnTrack = 0;
-            this.engineOnStand = 0;
-            this.engineLastKronBar = -1;
-            this.engineLastKronM = 0;
-            this.engineLastKronN = 0;
-            this.engineLastKronH = -1;
+            // Engine state is NOT reset — the engine is authoritative
             this._lastIndicatorPassesSeen = -1;
             this._lastSignalFiresSeen = -1;
             this._lastCoherenceSeen = null;
@@ -2465,9 +2623,10 @@
     let showHelp = false;
     let showTrace = false;
 
-    const dt = new Fraction(2, 100);
+    const dt = new Fraction(2n, 100n);
 
     const coherenceSpan = document.getElementById('coherence-status');
+    const coherenceSourceSpan = document.getElementById('coherence-source');
     const generationSpan = document.getElementById('generation');
     const deviationSpan = document.getElementById('deviation');
     const epsilonSpan = document.getElementById('epsilon-value');
@@ -2487,9 +2646,7 @@
     const engineCoherenceSpan = document.getElementById('engine-coherence');
     const indicatorPassesSpan = document.getElementById('indicator-passes');
     const signalFiresSpan = document.getElementById('signal-fires');
-    // ═══ PATCH-A1: trail metric span ═══
     const trailStatusMetricSpan = document.getElementById('trail-status-metric');
-    // ═══ PATCH-A5: scanner counts metric span ═══
     const scannerCountsMetricSpan = document.getElementById('scanner-counts-metric');
     const dbzBranchSpan = document.getElementById('dbz-branch');
     const aeaeDeltaSpan = document.getElementById('aeae-delta');
@@ -2514,6 +2671,7 @@
     const proofTraceLines = document.getElementById('proofTraceLines');
     const sPolyline = document.getElementById('sPolyline');
     const rPolyline = document.getElementById('rPolyline');
+    const engineArcPolyline = document.getElementById('engineArcPolyline');
     const lingosoActiveSpan = document.getElementById('lingoso-active');
     const lingosoCoordsSpan = document.getElementById('lingoso-coords');
     const explainPanel = document.getElementById('explainPanel');
@@ -2531,7 +2689,6 @@
     const engIndSpan = document.getElementById('eng-ind');
     const engSigSpan = document.getElementById('eng-sig');
     const engRelaySpan = document.getElementById('eng-relay');
-    // ═══ PATCH-A1: trail DOM handles ═══
     const engTrailActiveSpan = document.getElementById('eng-trail-active');
     const engTrailSLSpan = document.getElementById('eng-trail-sl');
     const engTrailTPSpan = document.getElementById('eng-trail-tp');
@@ -2539,26 +2696,26 @@
     const engTrailSideSpan = document.getElementById('eng-trail-side');
     const engHasLongSpan = document.getElementById('eng-has-long');
     const engHasShortSpan = document.getElementById('eng-has-short');
-    // ═══ PATCH-A4: KC/prime/dime DOM handles ═══
     const engKCSpan = document.getElementById('eng-kc');
     const engPrimeSpan = document.getElementById('eng-prime');
     const engDimeSpan = document.getElementById('eng-dime');
     const engMemSpan = document.getElementById('eng-mem');
     const engTagSpan = document.getElementById('eng-tag');
     const engInvertSpan = document.getElementById('eng-invert');
-    // ═══ PATCH-A5: on_track/on_stand DOM handles ═══
     const engOnTrackSpan = document.getElementById('eng-ontrack');
     const engOnStandSpan = document.getElementById('eng-onstand');
     const engLastKronSpan = document.getElementById('eng-lastkron');
     const engLastKronMnhSpan = document.getElementById('eng-lastkron-mnh');
     const relayBadge = document.getElementById('relayBadge');
-    // ═══ PATCH-A1: trail badge DOM handle ═══
     const trailBadge = document.getElementById('trailBadge');
-    // ═══ PATCH-A4: KC/prime/dime badge DOM handles ═══
     const kpdKC = document.getElementById('kpd-kc');
     const kpdPrime = document.getElementById('kpd-prime');
     const kpdDime = document.getElementById('kpd-dime');
     const kpdMem = document.getElementById('kpd-mem');
+    const metricsAuthorityArc = document.getElementById('metrics-authority-arc');
+    const metricsAuthorityArcSym = document.getElementById('metrics-authority-arc-sym');
+    const engineAuthorityBadge = document.getElementById('engineAuthorityBadge');
+    const continuityBadge = document.getElementById('continuityBadge');
 
     let frameCount = 0;
 
@@ -2618,12 +2775,13 @@
         }
     }
 
-    // ═══ PATCH-A1: trail badge renderer ═══
     function updateTrailBadge() {
         if (trailBadge) {
             if (codex.engineTrailActive) {
                 const side = codex.engineTrailSide || '?';
-                trailBadge.textContent = `TRAIL: ${side} SL=${codex.engineTrailSL.slice(0,8)} TP=${codex.engineTrailTP.slice(0,8)}`;
+                const slShort = codex.engineTrailSL.length > 10 ? codex.engineTrailSL.slice(0, 10) : codex.engineTrailSL;
+                const tpShort = codex.engineTrailTP.length > 10 ? codex.engineTrailTP.slice(0, 10) : codex.engineTrailTP;
+                trailBadge.textContent = `TRAIL: ${side} SL=${slShort} TP=${tpShort}`;
                 trailBadge.className = side === 'LONG' ? 'long' : 'short';
             } else {
                 trailBadge.textContent = 'TRAIL: INACTIVE';
@@ -2641,7 +2799,6 @@
         }
     }
 
-    // ═══ PATCH-A4: KC/prime/dime badge renderer ═══
     function updateKPDBadge() {
         if (kpdKC) {
             kpdKC.textContent = 'KC:' + (codex.engineKC ? 'T' : 'F');
@@ -2664,12 +2821,47 @@
         }
     }
 
-    // ═══ PATCH-A5: scanner counts metric renderer ═══
     function updateScannerCountsMetric() {
         if (scannerCountsMetricSpan) {
             scannerCountsMetricSpan.textContent = `${codex.engineOnTrack} / ${codex.engineOnStand}`;
             const active = codex.engineOnTrack > 0 || codex.engineOnStand > 0;
             scannerCountsMetricSpan.style.color = active ? '#ffaa44' : '#6688aa';
+        }
+    }
+
+    // PATCH-K: unified coherence badge
+    function updateContinuityBadge() {
+        if (!continuityBadge) return;
+        continuityBadge.classList.remove('coherent', 'deviant', 'waiting', 'symbolic');
+        if (codex.engineConnected && codex.engineCoherent !== null) {
+            if (codex.engineCoherent) {
+                continuityBadge.classList.add('coherent');
+                continuityBadge.textContent = '● ARC-LENGTH: COHERENT (engine: s²=r²)';
+            } else {
+                continuityBadge.classList.add('deviant');
+                continuityBadge.textContent = '● ARC-LENGTH: DEVIATION (engine: s²≠r²)';
+            }
+        } else {
+            continuityBadge.classList.add('symbolic');
+            continuityBadge.textContent = '● ARC-LENGTH: SYMBOLIC-ONLY (no engine)';
+        }
+    }
+
+    // PATCH-A: toggle metrics authority indicators
+    function updateMetricsAuthority() {
+        const engineAuthoritative = codex.engineConnected && codex.engineState &&
+            codex.engineState.arc_sq !== undefined;
+        if (metricsAuthorityArc && metricsAuthorityArcSym) {
+            if (engineAuthoritative) {
+                metricsAuthorityArc.style.display = 'inline-block';
+                metricsAuthorityArcSym.style.display = 'none';
+            } else {
+                metricsAuthorityArc.style.display = 'none';
+                metricsAuthorityArcSym.style.display = 'inline-block';
+            }
+        }
+        if (engineAuthorityBadge) {
+            engineAuthorityBadge.style.display = engineAuthoritative ? 'inline-block' : 'none';
         }
     }
 
@@ -2828,19 +3020,28 @@
                         ctx.stroke();
                         ctx.shadowBlur = 0;
 
-                        const labelPos = project3D(pos.x * 1.2, pos.y * 1.2 + 0.2, pos.z * 1.2, rotX, rotY, zoom);
-                        ctx.font = `${9 * zoom}px "Courier New", monospace`;
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.shadowColor = 'rgba(68, 255, 204, 0.5)';
-                        ctx.shadowBlur = 15;
-                        ctx.fillStyle = '#44ffcc';
-                        ctx.fillText('s(t)', labelPos.sx - 35 * zoom, labelPos.sy - 22 * zoom);
-                        ctx.shadowColor = 'rgba(255, 170, 68, 0.5)';
-                        ctx.shadowBlur = 15;
-                        ctx.fillStyle = '#ffaa44';
-                        ctx.fillText('r(t)', labelPos.sx + 35 * zoom, labelPos.sy - 22 * zoom);
-                        ctx.shadowBlur = 0;
+                        if (codex.engineArcHistory.length > 2) {
+                            ctx.shadowColor = 'rgba(0, 255, 136, 0.4)';
+                            ctx.shadowBlur = 12;
+                            ctx.strokeStyle = 'rgba(0, 255, 136, 0.9)';
+                            ctx.lineWidth = 1.5;
+                            ctx.setLineDash([4, 3]);
+                            ctx.beginPath();
+                            for (let i = 0; i < codex.engineArcHistory.length; i++) {
+                                const val = codex.engineArcHistory[i].val;
+                                const angle = i * 0.025 + 1;
+                                const radius = 0.3 + Math.min(1, Math.abs(val)) * 0.3;
+                                const px = pos.x + radius * Math.cos(angle);
+                                const py = pos.y + radius * 0.5 * Math.sin(angle * 1.4 + 2);
+                                const pz = pos.z + radius * 0.5 * Math.sin(angle * 0.6 + 1);
+                                const p = project3D(px, py, pz, rotX, rotY, zoom);
+                                if (i === 0) ctx.moveTo(p.sx, p.sy);
+                                else ctx.lineTo(p.sx, p.sy);
+                            }
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                            ctx.shadowBlur = 0;
+                        }
                     }
                 }
 
@@ -2922,7 +3123,8 @@
                 }
 
                 const p = project3D(pos.x, pos.y, pos.z, rotX, rotY, zoom);
-                const glowColor = codex.coherent ? 'rgba(0, 255, 136, ' : 'rgba(255, 68, 102, ';
+                const currentCoherent = codex.authoritativeCoherent();
+                const glowColor = currentCoherent ? 'rgba(0, 255, 136, ' : 'rgba(255, 68, 102, ';
                 const grd2 = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, 40 * zoom);
                 grd2.addColorStop(0, glowColor + '0.4)');
                 grd2.addColorStop(0.5, glowColor + '0.1)');
@@ -2933,19 +3135,19 @@
                 ctx.fill();
 
                 const pulse = 0.8 + 0.2 * Math.sin(nowMs * 0.003);
-                ctx.fillStyle = codex.coherent ? '#00ff88' : '#ff4466';
-                ctx.shadowColor = codex.coherent ? '#00ff88' : '#ff4466';
+                ctx.fillStyle = currentCoherent ? '#00ff88' : '#ff4466';
+                ctx.shadowColor = currentCoherent ? '#00ff88' : '#ff4466';
                 ctx.shadowBlur = 30 * pulse;
                 ctx.beginPath();
                 ctx.arc(p.sx, p.sy, 6 * zoom * pulse, 0, 2 * Math.PI);
                 ctx.fill();
                 ctx.shadowBlur = 0;
 
-                ctx.fillStyle = codex.coherent ? '#00ffcc' : '#ff6688';
+                ctx.fillStyle = currentCoherent ? '#00ffcc' : '#ff6688';
                 ctx.font = `bold ${22 * zoom}px "Courier New", monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.shadowColor = codex.coherent ? '#00ffcc' : '#ff6688';
+                ctx.shadowColor = currentCoherent ? '#00ffcc' : '#ff6688';
                 ctx.shadowBlur = 40;
                 const lp = project3D(pos.x * 1.15, pos.y * 1.15, pos.z * 1.15, rotX, rotY, zoom);
                 ctx.fillText('Φ', lp.sx, lp.sy);
@@ -3045,22 +3247,43 @@
                     ctx.shadowBlur = 0;
                 }
 
-                coherenceSpan.textContent = codex.coherent ? '✅ COHERENT (s=r)' : '🔄 EVOLVING (s≠r)';
-                coherenceSpan.style.color = codex.coherent ? '#00ff88' : '#ff4466';
+                // ─── DOM updates ──────────────────────────────────────
+                const authArc = codex.authoritativeArcSq();
+                const authRad = codex.authoritativeRadiusSq();
+                const authDev = codex.authoritativeDeviation();
+                const authCoherent = codex.authoritativeCoherent();
+
+                coherenceSpan.textContent = authCoherent ? '✅ COHERENT (s=r)' : '🔄 EVOLVING (s≠r)';
+                coherenceSpan.style.color = authCoherent ? '#00ff88' : '#ff4466';
+                if (codex.engineConnected && codex.engineCoherent !== null) {
+                    coherenceSpan.classList.remove('symbolic-mode');
+                    coherenceSourceSpan.textContent = 'ENGINE';
+                    coherenceSourceSpan.style.color = '#00ff88';
+                } else {
+                    coherenceSpan.classList.add('symbolic-mode');
+                    coherenceSourceSpan.textContent = 'SYMBOLIC';
+                    coherenceSourceSpan.style.color = '#aa66ff';
+                }
                 generationSpan.textContent = codex.gen;
-                deviationSpan.textContent = codex.dev.toFloat().toFixed(6);
+                deviationSpan.textContent = authDev.toFloat().toFixed(6);
                 epsilonSpan.textContent = codex.eps.toString();
                 modeDisplay.textContent = codex.modes[codex.mode];
 
-                s2Exact.textContent = codex.s2.toString();
-                r2Exact.textContent = codex.r2.toString();
-                s2Val.textContent = codex.s2.toFloat().toFixed(6);
-                r2Val.textContent = codex.r2.toFloat().toFixed(6);
-                deltaVal.textContent = codex.dev.toFloat().toFixed(6);
+                s2Exact.textContent = authArc.toString();
+                r2Exact.textContent = authRad.toString();
+                s2Val.textContent = authArc.toFloat().toFixed(6);
+                r2Val.textContent = authRad.toFloat().toFixed(6);
+                deltaVal.textContent = authDev.toFloat().toFixed(6);
                 obsVal.textContent = Math.sqrt(
                     codex.obsRe.toFloat() ** 2 + codex.obsIm.toFloat() ** 2
                 ).toFixed(4);
-                srRatioSpan.textContent = codex.srRatio.toFloat().toFixed(4);
+                // srRatio uses authoritative values
+                if (!authRad.isZero()) {
+                    const srAuth = authArc.div(authRad);
+                    srRatioSpan.textContent = srAuth.toFloat().toFixed(4);
+                } else {
+                    srRatioSpan.textContent = '0.0000';
+                }
                 curlValSpan.textContent = codex.curlMagnitude.toFloat().toFixed(4);
                 commValSpan.textContent = codex.commutatorNorm.toFloat().toFixed(4);
                 psiNormValSpan.textContent = Math.sqrt(codex.psiNormSq.toFloat()).toFixed(4);
@@ -3102,12 +3325,11 @@
                     signalFiresSpan.style.color = codex.engineSignalFires > 0 ? '#ff4488' : '#ffaa44';
                 }
 
-                // ═══ PATCH-A1: trail metrics and badge ═══
                 updateTrailBadge();
-                // ═══ PATCH-A4: KC/prime/dime badge ═══
                 updateKPDBadge();
-                // ═══ PATCH-A5: scanner counts ═══
                 updateScannerCountsMetric();
+                updateContinuityBadge();
+                updateMetricsAuthority();
 
                 const dbzLabels = ['NONE', 'CRITICAL LINE', 'NATALIA'];
                 dbzBranchSpan.textContent = dbzLabels[codex.dbz] || 'NONE';
@@ -3151,10 +3373,10 @@
                             engCoherenceSpan.className = 'value deviant';
                         }
                     }
-                    if (engArcSpan) engArcSpan.textContent = es.arc_sq !== undefined ? String(es.arc_sq).slice(0, 12) : '—';
-                    if (engRadSpan) engRadSpan.textContent = es.radius_sq !== undefined ? String(es.radius_sq).slice(0, 12) : '—';
-                    if (engDevSpan) engDevSpan.textContent = es.deviation !== undefined ? String(es.deviation).slice(0, 12) : '—';
-                    if (engRePsiSpan) engRePsiSpan.textContent = es.re_psi !== undefined ? String(es.re_psi).slice(0, 12) : '—';
+                    if (engArcSpan) engArcSpan.textContent = es.arc_sq !== undefined ? String(es.arc_sq).slice(0, 14) : '—';
+                    if (engRadSpan) engRadSpan.textContent = es.radius_sq !== undefined ? String(es.radius_sq).slice(0, 14) : '—';
+                    if (engDevSpan) engDevSpan.textContent = es.deviation !== undefined ? String(es.deviation).slice(0, 14) : '—';
+                    if (engRePsiSpan) engRePsiSpan.textContent = es.re_psi !== undefined ? String(es.re_psi).slice(0, 14) : '—';
                     if (engFgSpan) engFgSpan.textContent = es.engine_initialized ? '✅ YES' : '⏳ NO';
                     if (engIndSpan) engIndSpan.textContent = String(codex.engineIndicatorPasses);
                     if (engSigSpan) engSigSpan.textContent = String(codex.engineSignalFires);
@@ -3168,7 +3390,6 @@
                             engRelaySpan.className = 'value relay-down';
                         }
                     }
-                    // ═══ PATCH-A1: trail engine fields ═══
                     if (engTrailActiveSpan) {
                         if (es.trailing_stop_active) {
                             engTrailActiveSpan.textContent = '✅ ACTIVE';
@@ -3184,7 +3405,6 @@
                     if (engTrailSideSpan) engTrailSideSpan.textContent = es.trailing_stop_side || '—';
                     if (engHasLongSpan) engHasLongSpan.textContent = es.has_open_long ? '✅ YES' : '❌ NO';
                     if (engHasShortSpan) engHasShortSpan.textContent = es.has_open_short ? '✅ YES' : '❌ NO';
-                    // ═══ PATCH-A4: KC/prime/dime engine fields ═══
                     if (engKCSpan) {
                         engKCSpan.textContent = String(codex.engineKC);
                         engKCSpan.className = 'value ' + (codex.engineKC ? 'kc-true' : 'kc-false');
@@ -3208,7 +3428,6 @@
                         engTagSpan.textContent = t >= 0 ? String(t) : '—';
                     }
                     if (engInvertSpan) engInvertSpan.textContent = String(codex.engineInvert);
-                    // ═══ PATCH-A5: on_track/on_stand engine fields ═══
                     if (engOnTrackSpan) {
                         engOnTrackSpan.textContent = String(codex.engineOnTrack);
                         engOnTrackSpan.className = 'value ' + (codex.engineOnTrack > 0 ? 'counter-active' : 'counter-zero');
@@ -3240,12 +3459,16 @@
                     }
                 }
 
-                const sr = codex.srRatio.toFloat();
-                const clampedSr = Math.max(0.4, Math.min(1.6, sr));
+                // gauge: uses authoritative s²/r² ratio
+                let srAuth = 0;
+                if (!authRad.isZero()) {
+                    srAuth = authArc.div(authRad).toFloat();
+                }
+                const clampedSr = Math.max(0.4, Math.min(1.6, srAuth));
                 const normalized = (clampedSr - 0.4) / 1.2;
                 const dashLength = Math.min(282, Math.max(0, normalized * 282));
                 gaugeArc.setAttribute('stroke-dasharray', `${dashLength} 282`);
-                gaugeLabel.textContent = `s/r: ${sr.toFixed(3)}`;
+                gaugeLabel.textContent = `s/r: ${srAuth.toFixed(3)}`;
 
                 if (codex.proofSteps.length > 1) {
                     proofChain.classList.add('visible');
@@ -3272,6 +3495,7 @@
                     proofTrace.classList.remove('visible');
                 }
 
+                // time-series panel: symbolic s(t), r(t), + engine s²(t)
                 const sHist2 = codex.sHistory;
                 const rHist2 = codex.rHistory;
                 if (sHist2.length > 2) {
@@ -3288,6 +3512,17 @@
                         return `${x.toFixed(1)},${y.toFixed(1)}`;
                     }).join(' ');
                     rPolyline.setAttribute('points', rPoints);
+                }
+                if (codex.engineArcHistory.length > 2) {
+                    const eMax = Math.max(...codex.engineArcHistory.map(d => Math.abs(d.val)), 0.001);
+                    const ePoints = codex.engineArcHistory.map((d, i) => {
+                        const x = (i / codex.engineArcHistory.length) * 200;
+                        const y = 50 - (d.val / eMax) * 40;
+                        return `${x.toFixed(1)},${y.toFixed(1)}`;
+                    }).join(' ');
+                    engineArcPolyline.setAttribute('points', ePoints);
+                } else {
+                    engineArcPolyline.setAttribute('points', '');
                 }
 
                 lingosoActiveSpan.textContent = codex.activePhoneme;
@@ -3391,6 +3626,8 @@
         document.getElementById('pauseBtn').classList.remove('active');
         coherenceSpan.textContent = 'INITIALIZING';
         coherenceSpan.style.color = 'var(--tma-text)';
+        coherenceSpan.classList.remove('symbolic-mode');
+        coherenceSourceSpan.textContent = '—';
         generationSpan.textContent = '0';
         deviationSpan.textContent = '0.0000';
         epsilonSpan.textContent = '1/100';
@@ -3438,7 +3675,6 @@
             engRelaySpan.textContent = '—';
             engRelaySpan.className = 'value relay-wait';
         }
-        // ═══ PATCH-A1: reset trail fields ═══
         if (engTrailActiveSpan) { engTrailActiveSpan.textContent = '—'; engTrailActiveSpan.className = 'value trail-inactive'; }
         if (engTrailSLSpan) engTrailSLSpan.textContent = '—';
         if (engTrailTPSpan) engTrailTPSpan.textContent = '—';
@@ -3446,14 +3682,12 @@
         if (engTrailSideSpan) engTrailSideSpan.textContent = '—';
         if (engHasLongSpan) engHasLongSpan.textContent = '—';
         if (engHasShortSpan) engHasShortSpan.textContent = '—';
-        // ═══ PATCH-A4: reset KC/prime/dime fields ═══
         if (engKCSpan) { engKCSpan.textContent = '—'; engKCSpan.className = 'value'; }
         if (engPrimeSpan) { engPrimeSpan.textContent = '—'; engPrimeSpan.className = 'value'; }
         if (engDimeSpan) { engDimeSpan.textContent = '—'; engDimeSpan.className = 'value'; }
         if (engMemSpan) engMemSpan.textContent = '—';
         if (engTagSpan) engTagSpan.textContent = '—';
         if (engInvertSpan) engInvertSpan.textContent = '—';
-        // ═══ PATCH-A5: reset scanner counters ═══
         if (engOnTrackSpan) { engOnTrackSpan.textContent = '—'; engOnTrackSpan.className = 'value counter-zero'; }
         if (engOnStandSpan) { engOnStandSpan.textContent = '—'; engOnStandSpan.className = 'value counter-zero'; }
         if (engLastKronSpan) engLastKronSpan.textContent = '—';
@@ -3495,8 +3729,17 @@
         proofLatest.textContent = '';
         sPolyline.setAttribute('points', '');
         rPolyline.setAttribute('points', '');
+        engineArcPolyline.setAttribute('points', '');
         lingosoActiveSpan.textContent = '—';
         lingosoCoordsSpan.textContent = '(0.00, 0.00, 0.00)';
+        if (continuityBadge) {
+            continuityBadge.classList.remove('coherent', 'deviant', 'symbolic');
+            continuityBadge.classList.add('waiting');
+            continuityBadge.textContent = '● ARC-LENGTH: WAITING';
+        }
+        if (metricsAuthorityArc) metricsAuthorityArc.style.display = 'none';
+        if (metricsAuthorityArcSym) metricsAuthorityArcSym.style.display = 'inline-block';
+        if (engineAuthorityBadge) engineAuthorityBadge.style.display = 'none';
         hideError();
     });
 
@@ -3518,6 +3761,7 @@
             timestamp: Date.now(),
             backend_url: BACKEND_URL,
             relay_url: RELAY_URL,
+            coherence_authority: (codex.engineConnected && codex.engineCoherent !== null) ? 'ENGINE' : 'SYMBOLIC',
             tma: {
                 available: TMA.available,
                 userId: TMA.userId,
@@ -3542,7 +3786,6 @@
                 indicator_populate_count: codex.engineState.indicator_populate_count,
                 imbalance_fire_count: codex.engineState.imbalance_fire_count,
                 relay_url: codex.engineState.relay_url,
-                // ═══ PATCH-A1: export trail state ═══
                 trailing_stop_active: codex.engineState.trailing_stop_active,
                 trailing_stop_price: codex.engineState.trailing_stop_price,
                 trailing_take_profit: codex.engineState.trailing_take_profit,
@@ -3550,14 +3793,12 @@
                 trailing_stop_side: codex.engineState.trailing_stop_side,
                 has_open_long: codex.engineState.has_open_long,
                 has_open_short: codex.engineState.has_open_short,
-                // ═══ PATCH-A4: export KC/prime/dime ═══
                 KC: codex.engineState.KC,
                 prime: codex.engineState.prime,
                 dime: codex.engineState.dime,
                 mem: codex.engineState.mem,
                 tag: codex.engineState.tag,
                 invert: codex.engineState.invert,
-                // ═══ PATCH-A5: export scanners ═══
                 on_track_runs: codex.engineState.on_track_runs,
                 on_stand_runs: codex.engineState.on_stand_runs,
                 last_kronecker_bar: codex.engineState.last_kronecker_bar,
@@ -3567,16 +3808,18 @@
             } : null,
             time_exact: codex.time.toString(),
             generation: codex.gen,
-            coherent: codex.coherent,
-            s_exact: codex.s.toString(),
-            r_exact: codex.r.toString(),
-            s2_exact: codex.s2.toString(),
-            r2_exact: codex.r2.toString(),
-            sr_ratio_exact: codex.srRatio.toString(),
-            dev_exact: codex.dev.toString(),
+            symbolic_coherent: codex.coherent,
+            symbolic_s_exact: codex.s.toString(),
+            symbolic_r_exact: codex.r.toString(),
+            symbolic_s2_exact: codex.s2.toString(),
+            symbolic_r2_exact: codex.r2.toString(),
+            symbolic_sr_ratio_exact: codex.srRatio.toString(),
+            symbolic_dev_exact: codex.dev.toString(),
+            engine_arc_sq_exact: codex.engineArcSq.toString(),
+            engine_radius_sq_exact: codex.engineRadiusSq.toString(),
+            engine_deviation_exact: codex.engineDeviation.toString(),
+            engine_re_psi_exact: codex.engineRePsi.toString(),
             eps_exact: codex.eps.toString(),
-            rePsi_exact: codex.rePsi.toString(),
-            engineRePsi_exact: codex.engineRePsi.toString(),
             obs_re_exact: codex.obsRe.toString(),
             obs_im_exact: codex.obsIm.toString(),
             obs_grid_count: codex.obsGridCount,
@@ -3621,6 +3864,7 @@
             })) : [],
             sHistory: codex.sHistory.slice(-200),
             rHistory: codex.rHistory.slice(-200),
+            engineArcHistory: codex.engineArcHistory.slice(-200),
             proofTrace: codex.proofTrace.slice(-32),
             trajectory: codex.traj.slice(-100).map(t => ({
                 x: t.x, y: t.y, z: t.z, coherent: t.coherent, dev: t.dev
@@ -3799,15 +4043,13 @@
             if (!state) return;
             this.backendState = state;
             this.connected = true;
+            this.codex.engineConnected = true;
             this.codex.ingestEngineState(state);
             if (state.endpoint) {
                 TMA.backendEndpoint = state.endpoint;
             }
             if (state.relay_url) {
                 RELAY_URL = String(state.relay_url);
-            }
-            if (state.webapp_user_id && !TMA.handshakeOk) {
-                tmaLog('Backend reports webapp_user_id=' + state.webapp_user_id);
             }
             try {
                 if (state.price !== undefined) {
@@ -3851,6 +4093,7 @@
         updateFromCodex() {}
 
         addFVG(type, priceFraction) {
+            // PATCH-A: engine-authoritative coherence gate
             let coherent = null;
             let devStr = '';
             if (this.backendState && this.backendState.coherent !== undefined) {
@@ -3936,39 +4179,25 @@
 
         _validateContinuity() {
             const dev = this.codex.dev;
-            const thresh = new Fraction(2, 1000);
+            const thresh = new Fraction(2n, 1000n);
             return {
-                coherent: dev.abs().toFloat() < thresh.toFloat(),
+                coherent: Math.abs(dev.toFloat()) < thresh.toFloat(),
                 dev: dev
             };
         }
 
+        // PATCH-K: single unified badge update
         _flashContinuityBadge(ok) {
-            const badge = document.getElementById('continuityBadge');
-            if (!badge) return;
-            badge.classList.remove('coherent', 'deviant', 'waiting');
-            badge.classList.add(ok ? 'coherent' : 'deviant');
-            badge.textContent = ok
-                ? '● ARC-LENGTH: COHERENT (s²=r²)'
-                : '● ARC-LENGTH: DEVIATION (s²≠r²)';
+            if (!continuityBadge) return;
+            continuityBadge.classList.remove('coherent', 'deviant', 'waiting', 'symbolic');
+            continuityBadge.classList.add(ok ? 'coherent' : 'deviant');
+            if (ok) {
+                continuityBadge.textContent = '● ARC-LENGTH: COHERENT (engine: s²=r²)';
+            } else {
+                continuityBadge.textContent = '● ARC-LENGTH: DEVIATION (engine: s²≠r²)';
+            }
             setTimeout(() => {
-                let isCoherent = null;
-                if (this.backendState && this.backendState.coherent !== undefined) {
-                    isCoherent = !!this.backendState.coherent;
-                } else {
-                    isCoherent = this._validateContinuity().coherent;
-                }
-                badge.classList.remove('coherent', 'deviant', 'waiting');
-                if (isCoherent === null) {
-                    badge.classList.add('waiting');
-                    badge.textContent = '● ARC-LENGTH: WAITING';
-                } else if (isCoherent) {
-                    badge.classList.add('coherent');
-                    badge.textContent = '● ARC-LENGTH: COHERENT (s²=r²)';
-                } else {
-                    badge.classList.add('deviant');
-                    badge.textContent = '● ARC-LENGTH: DEVIATION (s²≠r²)';
-                }
+                updateContinuityBadge();
             }, 900);
         }
 
@@ -4002,10 +4231,14 @@
                         msg: `FVG 422: ${err.detail}`
                     });
                 } else if (res.status === 201) {
+                    const respData = await res.json();
+                    const leechInfo = respData.leech_hash
+                        ? ` Λ=${respData.leech_hash.slice(0, 12)}${respData.is_lattice_point ? ' ✓' : ''}`
+                        : '';
                     this.codex.pushTrace({
                         type: 'tma',
                         t: this.codex.time.toFloat(),
-                        msg: `FVG POST OK: ${line.type} @ ${line.price.toString()}`
+                        msg: `FVG POST OK: ${line.type} @ ${line.price.toString()}${leechInfo}`
                     });
                 }
             } catch (err) {
@@ -4147,11 +4380,13 @@
                 const exactStr = line.price.toString();
                 const floatStr = line.price.toFloat().toFixed(6);
                 const userTag = line.user_id ? `<span class="fvg-user">u${line.user_id}</span>` : '';
+                const leechTag = line.leech_hash ? `<span class="fvg-leech">Λ=${line.leech_hash.slice(0, 8)}</span>` : '';
                 html += `<div class="fvg-row ${cls}" data-idx="${line.idx}">` +
                     `<span class="fvg-type">${symbol}</span>` +
                     `<span class="fvg-price">${floatStr}<span class="fvg-price-exact">${exactStr}</span></span>` +
                     `<span class="fvg-status coherent">s=r</span>` +
                     `${userTag}` +
+                    `${leechTag}` +
                     `<span class="fvg-del" data-del="${line.idx}">✖</span>` +
                     `</div>`;
             }
@@ -4272,7 +4507,6 @@
                 c.setLineDash([]);
             }
 
-            // ═══ PATCH-A1: render trailing stop lines on chart ═══
             if (this.backendState && this.backendState.trailing_stop_active) {
                 try {
                     const slPrice = parseFloat(this.backendState.trailing_stop_price);
@@ -4384,14 +4618,11 @@
             const hudInd = document.getElementById('hud-ind');
             const hudSig = document.getElementById('hud-sig');
             const hudRePsi = document.getElementById('hud-repsi');
-            // ═══ PATCH-A1: HUD trail refs ═══
             const hudTrail = document.getElementById('hud-trail');
             const hudTrailSide = document.getElementById('hud-trail-side');
-            // ═══ PATCH-A4: HUD KC/prime/dime refs ═══
             const hudKC = document.getElementById('hud-kc');
             const hudPrime = document.getElementById('hud-prime');
             const hudDime = document.getElementById('hud-dime');
-            // ═══ PATCH-A5: HUD scanner refs ═══
             const hudOnTrack = document.getElementById('hud-ontrack');
             const hudOnStand = document.getElementById('hud-onstand');
 
@@ -4425,8 +4656,7 @@
                 }
                 if (hudInd) hudInd.textContent = String(this.backendState.indicator_populate_count || 0);
                 if (hudSig) hudSig.textContent = String(this.backendState.imbalance_fire_count || 0);
-                if (hudRePsi) hudRePsi.textContent = this.backendState.re_psi !== undefined ? String(this.backendState.re_psi).slice(0, 12) : '—';
-                // ═══ PATCH-A1: HUD trail ═══
+                if (hudRePsi) hudRePsi.textContent = this.backendState.re_psi !== undefined ? String(this.backendState.re_psi).slice(0, 14) : '—';
                 if (hudTrail) {
                     if (this.backendState.trailing_stop_active) {
                         hudTrail.textContent = 'ACTIVE';
@@ -4437,7 +4667,6 @@
                     }
                 }
                 if (hudTrailSide) hudTrailSide.textContent = this.backendState.trailing_stop_side || '—';
-                // ═══ PATCH-A4: HUD KC/prime/dime ═══
                 if (hudKC) {
                     const kc = this.backendState.KC;
                     hudKC.textContent = kc ? 'T' : 'F';
@@ -4451,7 +4680,6 @@
                     const d = this.backendState.dime;
                     hudDime.textContent = (d >= 0) ? String(d) : '—';
                 }
-                // ═══ PATCH-A5: HUD scanner counters ═══
                 if (hudOnTrack) hudOnTrack.textContent = String(this.backendState.on_track_runs || 0);
                 if (hudOnStand) hudOnStand.textContent = String(this.backendState.on_stand_runs || 0);
             } else {
@@ -4605,11 +4833,11 @@
         seedRelayUrlFromConfig();
 
         try {
-            codex.step(new Fraction(1, 100));
-            codex.step(new Fraction(1, 100));
-            codex.step(new Fraction(1, 100));
-            codex.step(new Fraction(1, 100));
-            codex.step(new Fraction(1, 100));
+            codex.step(new Fraction(1n, 100n));
+            codex.step(new Fraction(1n, 100n));
+            codex.step(new Fraction(1n, 100n));
+            codex.step(new Fraction(1n, 100n));
+            codex.step(new Fraction(1n, 100n));
         } catch (e) {
             showError('State seed error: ' + e.message);
             console.error('Seed error:', e);
@@ -4633,6 +4861,7 @@
                     window.telegramBridge = null;
                     connectBtn.textContent = 'CONNECT';
                     connectBtn.classList.remove('active');
+                    codex.engineConnected = false;
                     console.log('Bridge disconnected.');
                 } else {
                     window.telegramBridge = new TelegramBridge(window.chartOverlay, {
@@ -4684,8 +4913,11 @@
     }
 
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('⚡ CODEX SYMBOLICA · ÆEA');
+    console.log('⚡ CODEX SYMBOLICA · ÆEA — PATCHED EDITION');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(' PATCH-A: Engine-authoritative coherence panel');
+    console.log(' PATCH-B: BigInt-backed arbitrary-precision Fraction');
+    console.log(' PATCH-K: Single unified coherence badge');
     console.log(' ⌨  T=Top | B=Bottom | D=Delete | Esc=Pan tool');
     console.log(' ⌨  Shift+T = Trace | H=Help | Space=Pause | R=Reset');
     console.log(' 🖱  Right-click on a line also deletes it');
