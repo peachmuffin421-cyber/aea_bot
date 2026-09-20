@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Codex Symbolica · ÆEA Chart Overlay</title>
+    <title>Codex Symbolica · ÆEA Mini App (MQL4-Parity)</title>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
@@ -20,7 +20,9 @@
             --tma-destructive: #ff4466;
             --tma-header: #050510;
         }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         html, body {
             overflow: hidden;
             background: var(--tma-bg);
@@ -34,6 +36,7 @@
             overscroll-behavior: none;
             padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
         }
+
         #mainCanvas {
             position: absolute;
             top: 0;
@@ -44,6 +47,7 @@
             z-index: 1;
             touch-action: none;
         }
+
         #chartCanvas {
             position: absolute;
             top: 0;
@@ -58,6 +62,7 @@
             background: rgba(5, 5, 16, 0.85);
             border-left: 1px solid #1a2a3a;
         }
+
         #info {
             position: absolute;
             top: 20px;
@@ -96,6 +101,18 @@
             letter-spacing: 1px;
             border: 1px solid #00ff88;
         }
+        #info .symbolic-tag-inline {
+            display: inline-block;
+            background: #221133;
+            color: #aa66ff;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 0.45rem;
+            margin-left: 4px;
+            letter-spacing: 1px;
+            border: 1px solid #aa66ff;
+        }
+
         #metrics {
             position: absolute;
             top: 130px;
@@ -141,6 +158,7 @@
             color: #aa66ff;
             border: 1px solid #aa66ff;
         }
+
         #status {
             position: absolute;
             bottom: 100px;
@@ -163,6 +181,7 @@
         #status .deviation-status { color: #ff6644; }
         #status .dbz-status { color: #ff66aa; }
         #status .aeae-status { color: #44ddff; }
+
         #controls {
             position: absolute;
             bottom: 20px;
@@ -194,6 +213,7 @@
             color: var(--tma-button-text);
             border-color: var(--tma-accent);
         }
+
         #legend {
             position: absolute;
             bottom: 20px;
@@ -223,6 +243,7 @@
         .dot-pink { background: #ff66aa; }
         .dot-white { background: #ffffff; }
         .dot-teal { background: #44ffcc; }
+
         #gaugeContainer {
             position: absolute;
             bottom: 100px;
@@ -234,6 +255,7 @@
             height: 65px;
         }
         #gaugeSVG { width: 100%; height: 100%; }
+
         #proofChain {
             position: absolute;
             top: 80px;
@@ -272,6 +294,7 @@
             background: linear-gradient(90deg, #44ffcc, #ffaa44);
             transition: width 0.3s ease;
         }
+
         #proofTrace {
             position: absolute;
             top: 130px;
@@ -312,6 +335,9 @@
         #proofTrace .pt-trail { color: #ff66aa; font-weight: bold; }
         #proofTrace .pt-order { color: #88ff88; font-weight: bold; }
         #proofTrace .pt-kc { color: #44aaff; font-weight: bold; }
+        #proofTrace .pt-mql { color: #44ffcc; font-weight: bold; }
+        #proofTrace .pt-scan { color: #ffaa44; font-weight: bold; }
+
         #errorDisplay {
             position: absolute;
             bottom: 200px;
@@ -329,6 +355,7 @@
             text-align: center;
             backdrop-filter: blur(8px);
         }
+
         #fallback {
             position: absolute;
             top: 50%;
@@ -344,6 +371,7 @@
         }
         #fallback h2 { color: #ff6688; }
         #fallback p { color: var(--tma-text); font-size: 0.9rem; }
+
         #timeSeriesPanel {
             position: absolute;
             bottom: 180px;
@@ -360,6 +388,7 @@
             box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
         #timeSeriesSVG { width: 100%; height: 100%; }
+
         #spiralLegend {
             position: absolute;
             bottom: 170px;
@@ -373,6 +402,7 @@
         }
         #spiralLegend span:nth-child(2) { color: #ffaa44; }
         #spiralLegend span:nth-child(3) { color: #aa66ff; font-style: italic; }
+
         #lingosoPanel {
             position: absolute;
             bottom: 280px;
@@ -401,6 +431,7 @@
             border: 1px solid #aa66ff;
             margin-left: 4px;
         }
+
         #aeaePanel {
             position: absolute;
             bottom: 100px;
@@ -419,6 +450,7 @@
         }
         #aeaePanel .label { opacity: 0.5; }
         #aeaePanel .value { color: #44ddff; font-weight: bold; }
+
         #observerPanel {
             position: absolute;
             bottom: 280px;
@@ -447,6 +479,7 @@
             border: 1px solid #aa66ff;
             margin-left: 4px;
         }
+
         #zetaPanel {
             position: absolute;
             bottom: 380px;
@@ -511,6 +544,7 @@
         #enginePanel .value.dime-1 { color: #ff4466; }
         #enginePanel .value.counter-zero { color: #6688aa; }
         #enginePanel .value.counter-active { color: #ffaa44; }
+        #enginePanel .value.scan-num { color: #44ffcc; font-weight: bold; }
         #enginePanel .authority-strip {
             background: #004422;
             color: #00ff88;
@@ -533,6 +567,7 @@
             z-index: 3;
             pointer-events: none;
         }
+
         #chartHUD {
             position: absolute;
             top: 12px;
@@ -645,7 +680,7 @@
         #fvgPanel .fvg-row .fvg-status.coherent { background: #004422; color: #00ff88; }
         #fvgPanel .fvg-row .fvg-status.dev { background: #442200; color: #ffaa44; }
         #fvgPanel .fvg-row .fvg-user { color: #aa66ff; font-size: 0.5rem; margin-left: 4px; opacity: 0.7; }
-        #fvgPanel .fvg-row .fvg-leech { color: #88ffdd; font-size: 0.5rem; opacity: 0.6; margin-left: 4px; }
+        #fvgPanel .fvg-row .fvg-inject { color: #44ddff; font-size: 0.5rem; margin-left: 4px; opacity: 0.8; }
 
         #toolPalette {
             position: absolute;
@@ -839,13 +874,57 @@
         #kpdBadge .kpd-mem.m1 { color: #ffaa44; }
         #kpdBadge .kpd-mem.mn { color: #6688aa; }
 
+        #scanBadge {
+            position: absolute;
+            top: 156px;
+            right: 12px;
+            z-index: 12;
+            pointer-events: none;
+            font-size: 0.5rem;
+            padding: 3px 8px;
+            border-radius: 4px;
+            background: rgba(5,5,16,0.92);
+            border: 1px solid #224466;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 2px 15px rgba(0,0,0,0.4);
+            font-family: 'Courier New', monospace;
+            color: #44ffcc;
+        }
+        #scanBadge .scan-const { color: #4488ff; }
+        #scanBadge .scan-mut { color: #44ffcc; }
+
+        #explainPanel {
+            display: none;
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 11;
+            background: rgba(5,5,16,0.95);
+            border: 1px solid #335577;
+            border-radius: 8px;
+            padding: 12px 20px;
+            font-size: 0.6rem;
+            max-width: 680px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+            line-height: 1.6;
+        }
+        #explainPanel h3 {
+            color: #00ffcc;
+            margin-bottom: 6px;
+            font-size: 0.75rem;
+            letter-spacing: 1px;
+        }
+
         @media (max-width: 1100px) {
             #chartCanvas, #chartPanel { width: 55vw; min-width: 320px; }
             #fvgPanel { width: 55vw; min-width: 320px; }
             #chartHUD { min-width: 200px; font-size: 0.55rem; }
             #toolPalette { top: 180px; right: 6px; }
-            #trailBadge, #kpdBadge { top: auto; }
+            #trailBadge, #kpdBadge, #scanBadge { top: auto; }
         }
+
         @media (max-width: 700px) {
             #chartCanvas, #chartPanel {
                 width: 100vw;
@@ -861,7 +940,7 @@
             #info { max-width: 60vw; font-size: 0.55rem; }
             #controls { max-width: 60vw; }
             #lingosoPanel, #aeaePanel, #observerPanel, #zetaPanel, #enginePanel,
-            #timeSeriesPanel, #spiralLegend, #trailBadge, #kpdBadge { display: none; }
+            #timeSeriesPanel, #spiralLegend, #trailBadge, #kpdBadge, #scanBadge { display: none; }
         }
     </style>
 </head>
@@ -880,7 +959,7 @@
 </div>
 
 <div id="info">
-    <h1>⚡ CODEX SYMBOLICA</h1>
+    <h1>⚡ CODEX SYMBOLICA · MQL4-PARITY</h1>
     <p>S³→S² · DbZ · O[Ψ] · CRT · CF · ζ(s) · Lingoso · ÆEA · ⊢ CS</p>
     <p style="margin-top:4px;">
         <span style="color:#ffaa44;">H</span> help ·
@@ -891,32 +970,37 @@
         <span style="color:#ffaa44;">D</span> delete ·
         <span style="color:#44ffcc;">Esc</span> clear tool
         <span class="tma-badge" id="tmaModeBadge" style="display:none;">TMA</span>
-        <span class="engine-authority" id="engineAuthorityBadge" style="display:none;">ENGINE-AUTHORITATIVE</span>
+        <span class="engine-authority" id="engineAuthorityBadge" style="display:none;">MQL4-PARITY ENGINE</span>
+        <span class="symbolic-tag-inline">SYMBOLIC TELEMETRY</span>
     </p>
 </div>
 
 <div id="metrics">
     <div style="margin-bottom:4px;">
-        <span class="authority-tag engine" id="metrics-authority-arc" style="display:none;">ENGINE</span>
-        <span class="authority-tag symbolic" id="metrics-authority-arc-sym">SYMBOLIC</span>
+        <span class="authority-tag symbolic" id="metrics-authority-sym">SYMBOLIC TELEMETRY</span>
+        <span class="authority-tag engine" id="metrics-authority-eng" style="display:none;">MQL4-PARITY ENGINE</span>
     </div>
-    <div><span class="label">s² (ℚ-exact)</span> <span class="value exact" id="s2-exact" title="Click to copy">0/1</span></div>
-    <div><span class="label">r² (ℚ-exact)</span> <span class="value exact" id="r2-exact" title="Click to copy">1/1</span></div>
-    <div><span class="label">s²</span> <span class="value" id="s2-val">0.0000</span></div>
-    <div><span class="label">r²</span> <span class="value" id="r2-val">0.0000</span></div>
-    <div><span class="label">Δ = s² − r²</span> <span class="value" id="delta-val" style="color:#ff6644;">0.0000</span></div>
-    <div><span class="label">O[Ψ] (4D)</span> <span class="value symbolic" id="obs-val">0.0000</span></div>
-    <div><span class="label">s/r</span> <span class="value" id="sr-ratio">1.0000</span></div>
-    <div><span class="label">|∇×Φ|</span> <span class="value symbolic" id="curl-val">0.0000</span></div>
-    <div><span class="label">‖[Φ, Φ†]‖</span> <span class="value symbolic" id="comm-val">0.0000</span></div>
-    <div><span class="label">‖ψ‖² (L²)</span> <span class="value symbolic" id="psi-norm-val">0.0000</span></div>
-    <div><span class="label">ζ(½+it)</span> <span class="value symbolic" id="zeta-val">0.0000</span></div>
-    <div><span class="label">RELAY</span> <span class="value engine-wait" id="relay-status">—</span></div>
+    <div><span class="label">s² (ℚ-exact, symbolic)</span> <span class="value exact" id="s2-exact" title="Symbolic telemetry — not MQL4 s=r">0/1</span></div>
+    <div><span class="label">r² (ℚ-exact, symbolic)</span> <span class="value exact" id="r2-exact" title="Symbolic telemetry — not MQL4 s=r">1/1</span></div>
+    <div><span class="label">s² (float, symbolic)</span> <span class="value symbolic" id="s2-val">0.0000</span></div>
+    <div><span class="label">r² (float, symbolic)</span> <span class="value symbolic" id="r2-val">0.0000</span></div>
+    <div><span class="label">Δ = s² − r² (symbolic)</span> <span class="value symbolic" id="delta-val">0.0000</span></div>
+    <div><span class="label">O[Ψ] (4D, symbolic)</span> <span class="value symbolic" id="obs-val">0.0000</span></div>
+    <div><span class="label">s/r (symbolic)</span> <span class="value symbolic" id="sr-ratio">1.0000</span></div>
+    <div><span class="label">|∇×Φ| (symbolic)</span> <span class="value symbolic" id="curl-val">0.0000</span></div>
+    <div><span class="label">‖[Φ, Φ†]‖ (symbolic)</span> <span class="value symbolic" id="comm-val">0.0000</span></div>
+    <div><span class="label">‖ψ‖² (L², symbolic)</span> <span class="value symbolic" id="psi-norm-val">0.0000</span></div>
+    <div><span class="label">ζ(½+it) (symbolic)</span> <span class="value symbolic" id="zeta-val">0.0000</span></div>
+    <div style="border-top:1px solid #224466;margin-top:4px;padding-top:4px;">
+        <span class="label">RELAY</span> <span class="value engine-wait" id="relay-status">—</span>
+        <span class="authority-tag engine">ENGINE</span>
+    </div>
     <div><span class="label">ENGINE COHERENCE</span> <span class="value engine-wait" id="engine-coherence">—</span></div>
     <div><span class="label">INDICATOR PASSES</span> <span class="value" id="indicator-passes">0</span></div>
     <div><span class="label">SIGNAL FIRES</span> <span class="value" id="signal-fires">0</span></div>
     <div><span class="label">TRAILING STOP</span> <span class="value engine-wait" id="trail-status-metric">—</span></div>
     <div><span class="label">ONTRACK / ONSTAND</span> <span class="value" id="scanner-counts-metric">0 / 0</span></div>
+    <div><span class="label">M/N (LOCAL @ h)</span> <span class="value" id="mnh-metric">0 / 0</span></div>
 </div>
 
 <div id="status">
@@ -951,7 +1035,7 @@
     <span class="legend-item"><span class="dot dot-cyan"></span> Zeta</span>
     <span class="legend-item"><span class="dot dot-pink"></span> Lingoso</span>
     <span class="legend-item"><span class="dot dot-white"></span> ÆEA</span>
-    <span class="legend-item"><span class="dot dot-teal"></span> s(t),r(t)</span>
+    <span class="legend-item"><span class="dot dot-teal"></span> s(t),r(t) [symbolic]</span>
 </div>
 
 <div id="gaugeContainer">
@@ -981,7 +1065,7 @@
 </div>
 
 <div id="proofTrace">
-    <div style="color:#44ffcc; opacity:0.7;">⊢ DERIVATION TRACE:</div>
+    <div style="color:#44ffcc; opacity:0.7;">⊢ DERIVATION TRACE (symbolic + engine):</div>
     <div id="proofTraceLines"></div>
 </div>
 
@@ -1001,7 +1085,7 @@
 <div id="spiralLegend">
     <span>━ s(t) sym</span>
     <span>━ r(t) sym</span>
-    <span>┅ engine s²</span>
+    <span>┅ engine s² (MQL4 s=r)</span>
 </div>
 
 <div id="lingosoPanel">
@@ -1012,7 +1096,7 @@
 </div>
 
 <div id="aeaePanel">
-    <div class="label">ÆEA PARITY:</div>
+    <div class="label">ÆEA PARITY (MQL4): <span class="symbolic-tag" style="background:#004422;color:#00ff88;border-color:#00ff88;">ENGINE</span></div>
     <div><span class="label">m</span> <span class="value" id="aeae-m">0</span>
          <span class="label">n</span> <span class="value" id="aeae-n">0</span>
          <span class="label">δ</span> <span class="value" id="aeae-delta-panel">0</span></div>
@@ -1038,18 +1122,19 @@
 </div>
 
 <div id="enginePanel">
-    <div class="authority-strip">ENGINE-AUTHORITATIVE</div>
+    <div class="authority-strip">MQL4-PARITY ENGINE</div>
     <div class="label">ENGINE STATE:</div>
     <div><span class="label">Price</span> <span class="value" id="eng-price">—</span></div>
     <div><span class="label">Signal</span> <span class="value" id="eng-signal">—</span></div>
     <div><span class="label">Tick</span> <span class="value" id="eng-tick">—</span></div>
     <div><span class="label">Regime</span> <span class="value" id="eng-regime">—</span></div>
     <div><span class="label">Local m/n</span> <span class="value" id="eng-mn">—</span></div>
-    <div><span class="label">Coherence</span> <span class="value" id="eng-coherence">—</span></div>
-    <div><span class="label">Arc s²</span> <span class="value" id="eng-arc">—</span></div>
-    <div><span class="label">Rad r²</span> <span class="value" id="eng-rad">—</span></div>
-    <div><span class="label">Deviation</span> <span class="value" id="eng-dev">—</span></div>
-    <div><span class="label">Re[Ψ]</span> <span class="value" id="eng-repsi">—</span></div>
+    <div><span class="label">m/n @ h</span> <span class="value" id="eng-mnh">—</span></div>
+    <div><span class="label">Coherence (sym)</span> <span class="value" id="eng-coherence">—</span></div>
+    <div><span class="label">Arc s² (sym)</span> <span class="value" id="eng-arc">—</span></div>
+    <div><span class="label">Rad r² (sym)</span> <span class="value" id="eng-rad">—</span></div>
+    <div><span class="label">Deviation (sym)</span> <span class="value" id="eng-dev">—</span></div>
+    <div><span class="label">Re[Ψ] (sym)</span> <span class="value" id="eng-repsi">—</span></div>
     <div><span class="label">FG Init</span> <span class="value" id="eng-fg">—</span></div>
     <div><span class="label">Ind Pass</span> <span class="value" id="eng-ind">—</span></div>
     <div><span class="label">Sig Fires</span> <span class="value" id="eng-sig">—</span></div>
@@ -1071,37 +1156,50 @@
     <div><span class="label">OnStand Runs</span> <span class="value counter-zero" id="eng-onstand">—</span></div>
     <div><span class="label">Last Kron Bar</span> <span class="value" id="eng-lastkron">—</span></div>
     <div><span class="label">Last Kron m/n/h</span> <span class="value" id="eng-lastkron-mnh">—</span></div>
+    <div style="border-top:1px solid #224466;margin-top:4px;padding-top:4px;">
+        <span class="label">X_PERIOD (const)</span> <span class="value scan-num" id="eng-xperiod">62</span>
+    </div>
+    <div><span class="label">X_scan (mut)</span> <span class="value scan-num" id="eng-xscan">—</span></div>
+    <div><span class="label">Y_scan (mut)</span> <span class="value scan-num" id="eng-yscan">—</span></div>
 </div>
 
-<div id="explainPanel" style="display:none;position:absolute;top:20px;left:50%;transform:translateX(-50%);z-index:11;background:rgba(5,5,16,0.95);border:1px solid #335577;border-radius:8px;padding:12px 20px;font-size:0.6rem;max-width:680px;backdrop-filter:blur(8px);box-shadow:0 4px 30px rgba(0,0,0,0.5);line-height:1.6;">
-    <h3 style="color:#00ffcc;margin-bottom:6px;font-size:0.75rem;letter-spacing:1px;">⚡ VISUALIZATION KEY</h3>
-    <div><span style="color:#ffaa44;font-weight:bold;">ENGINE-AUTHORITATIVE</span> <span style="opacity:0.8;">— When connected, the coherence panel reads arc_sq / radius_sq / deviation directly from the Python engine via /state. These values reflect the true state of s² = r².</span></div>
-    <div><span style="color:#aa66ff;font-weight:bold;">SYMBOLIC</span> <span style="opacity:0.8;">— Client-side visualization. Not the engine's truth. Used for the animated canvas and decorative overlays only.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">s² (ℚ-exact)</span> <span style="opacity:0.8;">— BigInt-backed rational. Displays engine value when connected, symbolic value otherwise.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">Δ = s² − r²</span> <span style="opacity:0.8;">— Deviation from Arc-Length Axiom (s=r). Zero → coherence.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">O[Ψ] (4D)</span> <span style="opacity:0.8;">— Observer Operator: 4D numerical integration ∫ ψ†Φψ d⁴q over the client-side grid. Symbolic.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">‖ψ‖² (L²)</span> <span style="opacity:0.8;">— L² norm of the symbolic wavefunction over the 4D grid. Symbolic.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">ζ(½+it)</span> <span style="opacity:0.8;">— Riemann zeta function on the critical line. Symbolic approximation via 24-term partial sum.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">RELAY</span> <span style="opacity:0.8;">— Cloudflare Worker relay status (upstream Yahoo Finance). Fetched from /config.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">ENGINE COHERENCE</span> <span style="opacity:0.8;">— Live status reported by the Python engine via /state. Source of truth.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">INDICATOR PASSES</span> <span style="opacity:0.8;">— Number of times the 13D indicator matrix has been fully populated by the engine. Non-zero = live.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">SIGNAL FIRES</span> <span style="opacity:0.8;">— Number of Kronecker δ(m−n−2)=1 events (PATCH-D: local m/n at h-bar). Non-zero = trading logic active.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">TRAILING STOP</span> <span style="opacity:0.8;">— MQL4 T() ported with real Ask−Bid spread (PATCH-H). Updates SL/TP from Premium/Discount anchors.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">KC (Constant of Change)</span> <span style="opacity:0.8;">— Non-Hermitian binary inversion flag. Toggles between conjunctive precision and disjunctive adaptation.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">Prime / Dime</span> <span style="opacity:0.8;">— Directional derivatives from OnToe/OnGoe and OnGaurd.</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">OnTrack / OnStand</span> <span style="opacity:0.8;">— Extremum scanners (PATCH-I: MQL4 loop bounds to 4*max).</span></div>
-    <div><span style="color:#ffaa44;font-weight:bold;">Λ₂₄ (Leech)</span> <span style="opacity:0.8;">— FVGs project to true Leech lattice vectors (PATCH-E: mod-8 congruence, even parity, ‖v‖² ∈ 8ℤ).</span></div>
+<div id="explainPanel">
+    <h3>⚡ VISUALIZATION KEY — MQL4-PARITY vs SYMBOLIC</h3>
+    <div>
+        <span style="color:#00ff88;font-weight:bold;">MQL4-PARITY ENGINE</span>
+        <span style="opacity:0.8;">— Values read directly from the corrected Python engine's <code>_on_tick()</code> state machine via <code>/state</code>. These reflect the true MQL4 <code>m</code>/<code>n</code>/<code>k[]</code>/<code>l[]</code>/<code>Regime[]</code>/<code>Premium[]</code>/<code>Discount[]</code> arrays and the constant <code>x = X_PERIOD = 62</code>.</span>
+    </div>
+    <div>
+        <span style="color:#aa66ff;font-weight:bold;">SYMBOLIC TELEMETRY</span>
+        <span style="opacity:0.8;">— Client-side BigInt quaternion engine. Computes a parallel <code>s²/r²</code> from a quaternion trajectory. <b>Not</b> the MQL4 <code>s=r</code> arc-length axiom. Decorative; does not influence trading.</span>
+    </div>
+    <div style="margin-top:6px;">
+        <span style="color:#44ffcc;font-weight:bold;">X_PERIOD (const = 62)</span>
+        <span style="opacity:0.8;">— The MQL4 constant <code>x = max + 2</code>. Never reassigned. Used in <code>OnTick()</code>'s reachability checks: <code>J == x-1</code>, <code>Z != x-1</code>, <code>W != x-1</code>.</span>
+    </div>
+    <div>
+        <span style="color:#44ffcc;font-weight:bold;">X_scan / Y_scan (mut)</span>
+        <span style="opacity:0.8;">— The mutable MQL4 <code>X</code> / <code>Y</code>. Reset to <code>y</code> after <code>OnCall()</code>/<code>OnStand()</code>. Incremented/decremented during boundary scans. Shown here so the constant-vs-mutable distinction is verifiable from the live snapshot.</span>
+    </div>
+    <div style="margin-top:6px;">
+        <span style="color:#ffaa44;font-weight:bold;">ONTRACK / ONSTAND</span>
+        <span style="opacity:0.8;">— Counters for <code>_on_track()</code> / <code>_on_stand()</code>. Non-zero = the MQL4 extremum scanners are reachable and firing.</span>
+    </div>
+    <div>
+        <span style="color:#ffaa44;font-weight:bold;">M/N (LOCAL @ h)</span>
+        <span style="opacity:0.8;">— The MQL4 imbalance counters <code>m</code> and <code>n</code> at bar <code>h</code>. Non-zero = the Kronecker gate <code>δ(m-n-2)=1</code> is being evaluated on live indicator data.</span>
+    </div>
     <div style="margin-top:8px;border-top:1px solid #224466;padding-top:6px;">
         <span style="color:#4488ff;font-weight:bold;">▲ TOP (T)</span>
-        <span style="opacity:0.8;">— Click chart to draw a blue premium FVG line.</span>
+        <span style="opacity:0.8;">— Click chart to draw a blue premium FVG line. Injects into engine <code>Premium[]</code>.</span>
     </div>
     <div>
         <span style="color:#ff4466;font-weight:bold;">▼ BOTTOM (B)</span>
-        <span style="opacity:0.8;">— Click chart to draw a red discount FVG line.</span>
+        <span style="opacity:0.8;">— Click chart to draw a red discount FVG line. Injects into engine <code>Discount[]</code>.</span>
     </div>
     <div>
         <span style="color:#ffaa44;font-weight:bold;">✖ DELETE (D)</span>
-        <span style="opacity:0.8;">— Click an existing line to remove it.</span>
+        <span style="opacity:0.8;">— Click an existing line to remove it (also removes the engine-side anchor).</span>
     </div>
     <div>
         <span style="color:#44ffcc;font-weight:bold;">ESC</span>
@@ -1109,10 +1207,13 @@
     </div>
     <div style="margin-top:8px;border-top:1px solid #224466;padding-top:6px;opacity:0.8;">
         <span style="color:#44ffcc;font-weight:bold;">🌐 DATA PIPELINE</span>
-        — Price flows: Cloudflare Worker → Heroku (app.py) → Bridge (/state) → this Mini App.
-        All FVG commits gated by engine's coherence check. All metric displays distinguish ENGINE (authoritative) from SYMBOLIC (local animation).
+        — Price flows: Cloudflare Worker → Heroku (<code>app.py</code>, MQL4-parity port) → Bridge (<code>/state</code>) → this Mini App.
+        All FVG commits are gated by the engine's coherence check. The engine panel is authoritative for MQL4 state; the symbolic panels are telemetry-only.
     </div>
-    <div style="margin-top:6px;opacity:0.6;">Press <span style="color:#ffaa44;">H</span> to toggle this panel. Press <span style="color:#ffaa44;">Shift+T</span> to toggle TRACE.</div>
+    <div style="margin-top:6px;opacity:0.6;">
+        Press <span style="color:#ffaa44;">H</span> to toggle this panel.
+        Press <span style="color:#ffaa44;">Shift+T</span> to toggle TRACE.
+    </div>
 </div>
 
 <div id="chartPanel">
@@ -1139,7 +1240,7 @@
             <span class="value" id="hud-m">0</span>
             <span class="label">n</span>
             <span class="value" id="hud-n">0</span>
-            <span class="label">δ(m-n-2)</span>
+            <span class="label">δ(m−n−2)</span>
             <span class="value" id="hud-delta">0</span>
         </div>
         <div>
@@ -1182,6 +1283,12 @@
             <span class="label">ONSTAND</span>
             <span class="value" id="hud-onstand">0</span>
         </div>
+        <div>
+            <span class="label">X_SCAN</span>
+            <span class="value" id="hud-xscan">—</span>
+            <span class="label">Y_SCAN</span>
+            <span class="value" id="hud-yscan">—</span>
+        </div>
     </div>
 
     <div id="relayBadge" class="wait">RELAY: —</div>
@@ -1195,8 +1302,14 @@
         <span class="kpd-mem mn" id="kpd-mem">M:—</span>
     </div>
 
+    <div id="scanBadge">
+        <span class="scan-const">X_PERIOD=62</span> ·
+        <span class="scan-mut">X_scan=<span id="scan-xscan">—</span></span> ·
+        <span class="scan-mut">Y_scan=<span id="scan-yscan">—</span></span>
+    </div>
+
     <div id="continuityBadge" class="waiting">
-        ● ARC-LENGTH: WAITING
+        ● ENGINE: WAITING
     </div>
 
     <div id="toolPalette">
@@ -1209,7 +1322,7 @@
 
     <div id="fvgPanel">
         <div class="fvg-header">
-            <span>⊢ FVG TOPOLOGICAL ANCHORS (Λ₂₄)</span>
+            <span>⊢ FVG TOPOLOGICAL ANCHORS (Premium[]/Discount[])</span>
             <span class="count" id="fvg-count">0</span>
         </div>
         <div id="fvgList">
@@ -1238,7 +1351,11 @@
     // ============================================================
     // TELEGRAM WEB APP BOOTSTRAP
     // ============================================================
-    const TelegramWebAppAPI = (typeof window !== 'undefined' && window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+    const TelegramWebAppAPI = (
+        typeof window !== 'undefined'
+        && window.Telegram
+        && window.Telegram.WebApp
+    ) ? window.Telegram.WebApp : null;
 
     const TMA = {
         available: !!TelegramWebAppAPI,
@@ -1285,15 +1402,9 @@
             tg.ready();
             tg.expand();
             if (typeof tg.disableVerticalSwipes === 'function') tg.disableVerticalSwipes();
-            if (typeof tg.setHeaderColor === 'function') {
-                tg.setHeaderColor('#050510');
-            }
-            if (typeof tg.setBackgroundColor === 'function') {
-                tg.setBackgroundColor('#050510');
-            }
-            if (typeof tg.enableClosingConfirmation === 'function') {
-                tg.enableClosingConfirmation();
-            }
+            if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor('#050510');
+            if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor('#050510');
+            if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation();
         } catch (e) {
             console.warn('[TMA] bootstrap call failed:', e);
         }
@@ -1393,7 +1504,8 @@
     function hideError() { errorDisplay.style.display = 'none'; }
 
     // ============================================================
-    // PATCH-B: BigInt-BACKED ARBITRARY-PRECISION FRACTION
+    // BIGINT-BACKED ARBITRARY-PRECISION FRACTION
+    // (Symbolic telemetry engine — does NOT mirror the MQL4 s=r axiom.)
     // ============================================================
     class Fraction {
         constructor(n, d) {
@@ -1462,13 +1574,13 @@
         neg() { return new Fraction(-this.num, this.den); }
         sign() { return this.num > 0n ? 1 : this.num < 0n ? -1 : 0; }
         isZero() { return this.num === 0n; }
+
         toFloat() {
             const n = Number(this.num);
             const d = Number(this.den);
             if (isFinite(n) && isFinite(d) && d !== 0) {
                 return n / d;
             }
-            // Fallback for very large BigInt: scale down via string conversion
             const sign = (this.num < 0n) ? -1 : 1;
             const absNum = this.num < 0n ? -this.num : this.num;
             const numStr = absNum.toString();
@@ -1476,11 +1588,14 @@
             const maxDigits = Math.min(numStr.length, denStr.length, 15);
             const numTrim = numStr.slice(0, maxDigits);
             const denTrim = denStr.slice(0, maxDigits);
-            return sign * (Number(numTrim) / Number(denTrim)) * Math.pow(10, numStr.length - maxDigits - (denStr.length - maxDigits));
+            return sign * (Number(numTrim) / Number(denTrim))
+                * Math.pow(10, numStr.length - maxDigits - (denStr.length - maxDigits));
         }
+
         toString() {
             return this.den === 1n ? this.num.toString() : this.num.toString() + '/' + this.den.toString();
         }
+
         isPerfectSquare() {
             if (this.num < 0n) return false;
             const ns = Fraction._bigintSqrt(this.num);
@@ -1491,6 +1606,7 @@
             if (!this.isPerfectSquare()) return null;
             return new Fraction(Fraction._bigintSqrt(this.num), Fraction._bigintSqrt(this.den));
         }
+
         static _bigintSqrt(n) {
             if (n < 0n) throw new Error('sqrt of negative BigInt');
             if (n < 2n) return n;
@@ -1502,13 +1618,13 @@
             }
             return x0;
         }
+
         sqrt(iterations) {
             iterations = iterations || 40;
             if (this.num < 0n) throw new Error('sqrt of negative fraction');
             if (this.num === 0n) return Fraction.zero();
             const exact = this.exactSqrt();
             if (exact) return exact;
-            // Rational Newton-Raphson with BigInt
             const scale = 10n ** 30n;
             const scaledTarget = (this.num * scale * scale) / this.den;
             let x = Fraction._bigintSqrt(scaledTarget);
@@ -1522,6 +1638,7 @@
             }
             return new Fraction(x, scale);
         }
+
         modRational(m) {
             const mf = Fraction._wrap(m);
             if (mf.num === 0n) return Fraction.zero();
@@ -1531,6 +1648,7 @@
             const remainderNum = numScaled - q * denScaled;
             return new Fraction(remainderNum, this.den * mf.den);
         }
+
         static cosExact(x, terms) {
             terms = terms || 12;
             const TWO_PI = new Fraction(710n, 113n);
@@ -1551,6 +1669,7 @@
             }
             return sum;
         }
+
         static sinExact(x, terms) {
             terms = terms || 12;
             const TWO_PI = new Fraction(710n, 113n);
@@ -1571,7 +1690,8 @@
             }
             return sum;
         }
-        static expPadé(x, order) {
+
+        static expPade(x, order) {
             order = order || 2;
             const xf = Fraction._wrap(x);
             if (order === 2) {
@@ -1580,16 +1700,16 @@
                 const den = Fraction.one().sub(xf.div(new Fraction(2n, 1n))).add(x2_12);
                 if (den.isZero()) return Fraction.one();
                 return num.div(den);
-            } else {
-                let sum = Fraction.one();
-                let term = Fraction.one();
-                for (let k = 1; k <= 8; k++) {
-                    term = term.mul(xf).div(new Fraction(BigInt(k), 1n));
-                    sum = sum.add(term);
-                }
-                return sum;
             }
+            let sum = Fraction.one();
+            let term = Fraction.one();
+            for (let k = 1; k <= 8; k++) {
+                term = term.mul(xf).div(new Fraction(BigInt(k), 1n));
+                sum = sum.add(term);
+            }
+            return sum;
         }
+
         static _wrap(x) {
             if (x instanceof Fraction) return x;
             if (typeof x === 'bigint') return new Fraction(x, 1n);
@@ -1602,13 +1722,15 @@
             }
             return new Fraction(0n, 1n);
         }
+
         static zero() { return new Fraction(0n, 1n); }
         static one() { return new Fraction(1n, 1n); }
+
         static fromFloat(f) {
-            const PRECISION = 1000000000000000n; // 1e15
             const scaled = BigInt(Math.round(f * 1000000));
             return new Fraction(scaled, 1000000n);
         }
+
         static fromExactString(s) {
             if (typeof s !== 'string') s = String(s);
             s = s.trim();
@@ -1628,7 +1750,9 @@
             }
             return new Fraction(sign * BigInt(s), 1n);
         }
+
         clone() { return new Fraction(this.num, this.den); }
+
         lessThan(o) {
             const f = Fraction._wrap(o);
             return this.num * f.den < f.num * this.den;
@@ -1645,7 +1769,7 @@
     }
 
     // ============================================================
-    // QUATERNION ALGEBRA (BigInt-Exact)
+    // SYMBOLIC QUATERNION
     // ============================================================
     class Quat {
         constructor(a, b, c, d) {
@@ -1654,10 +1778,16 @@
             this.c = (c instanceof Fraction) ? c : Fraction._wrap(c || 0);
             this.d = (d instanceof Fraction) ? d : Fraction._wrap(d || 0);
         }
+
         normSq() {
-            return this.a.mul(this.a).add(this.b.mul(this.b)).add(this.c.mul(this.c)).add(this.d.mul(this.d));
+            return this.a.mul(this.a)
+                .add(this.b.mul(this.b))
+                .add(this.c.mul(this.c))
+                .add(this.d.mul(this.d));
         }
+
         norm() { return this.normSq().sqrt(); }
+
         normalize() {
             const ns = this.normSq();
             if (ns.isZero()) return new Quat(Fraction.one(), Fraction.zero(), Fraction.zero(), Fraction.zero());
@@ -1665,9 +1795,11 @@
             const inv = Fraction.one().div(n);
             return new Quat(this.a.mul(inv), this.b.mul(inv), this.c.mul(inv), this.d.mul(inv));
         }
+
         conjugate() {
             return new Quat(this.a, this.b.neg(), this.c.neg(), this.d.neg());
         }
+
         mul(other) {
             const o = other instanceof Quat ? other : new Quat(other);
             const a = this.a.mul(o.a).sub(this.b.mul(o.b)).sub(this.c.mul(o.c)).sub(this.d.mul(o.d));
@@ -1676,22 +1808,27 @@
             const d = this.a.mul(o.d).add(this.b.mul(o.c)).sub(this.c.mul(o.b)).add(this.d.mul(o.a));
             return new Quat(a, b, c, d);
         }
+
         add(other) {
             const o = other instanceof Quat ? other : new Quat(other);
             return new Quat(this.a.add(o.a), this.b.add(o.b), this.c.add(o.c), this.d.add(o.d));
         }
+
         sub(other) {
             const o = other instanceof Quat ? other : new Quat(other);
             return new Quat(this.a.sub(o.a), this.b.sub(o.b), this.c.sub(o.c), this.d.sub(o.d));
         }
+
         scale(s) {
             const f = s instanceof Fraction ? s : Fraction._wrap(s);
             return new Quat(this.a.mul(f), this.b.mul(f), this.c.mul(f), this.d.mul(f));
         }
+
         commutator(other) {
             const o = other instanceof Quat ? other : new Quat(other);
             return this.mul(o).sub(o.mul(this));
         }
+
         projectToS2() {
             const a = this.a, b = this.b, c = this.c, d = this.d;
             const two = new Fraction(2n, 1n);
@@ -1707,22 +1844,34 @@
                 z: z.mul(inv).toFloat()
             };
         }
+
         applyFibration(sFrac, epsFrac, timeFrac) {
-            let pA = Fraction.zero(), pB = Fraction.zero(), pC = Fraction.zero(), pD = Fraction.zero();
+            let pA = Fraction.zero(), pB = Fraction.zero();
+            let pC = Fraction.zero(), pD = Fraction.zero();
             let e = epsFrac;
             const THRESHOLD = new Fraction(1n, 1000000000n);
             for (let k = 1; k <= 12; k++) {
                 const kf = new Fraction(BigInt(k), 1n);
                 const spow = kf.mul(sFrac);
                 const sinv = Fraction.sinExact(spow.add(new Fraction(1n, 2n)), 8);
-                const cosv = Fraction.one().add(new Fraction(1n, 10n).mul(Fraction.cosExact(spow.mul(new Fraction(7n, 10n)), 8)));
+                const cosv = Fraction.one().add(
+                    new Fraction(1n, 10n).mul(Fraction.cosExact(spow.mul(new Fraction(7n, 10n)), 8))
+                );
                 const nf = spow.mul(sinv).mul(cosv);
-                const ph = Fraction.sinExact(timeFrac.mul(new Fraction(2n, 10n)).mul(kf).add(kf), 8);
+                const ph = Fraction.sinExact(
+                    timeFrac.mul(new Fraction(2n, 10n)).mul(kf).add(kf), 8
+                );
                 const contribution = e.mul(nf);
                 pA = pA.add(contribution.mul(ph));
-                pB = pB.add(contribution.mul(Fraction.cosExact(timeFrac.mul(new Fraction(3n, 10n)).mul(kf).add(Fraction.one()), 8)));
-                pC = pC.add(contribution.mul(Fraction.sinExact(timeFrac.mul(new Fraction(25n, 100n)).mul(kf).add(new Fraction(2n, 1n)), 8)));
-                pD = pD.add(contribution.mul(Fraction.cosExact(timeFrac.mul(new Fraction(35n, 100n)).mul(kf).add(new Fraction(3n, 1n)), 8)));
+                pB = pB.add(contribution.mul(
+                    Fraction.cosExact(timeFrac.mul(new Fraction(3n, 10n)).mul(kf).add(Fraction.one()), 8)
+                ));
+                pC = pC.add(contribution.mul(
+                    Fraction.sinExact(timeFrac.mul(new Fraction(25n, 100n)).mul(kf).add(new Fraction(2n, 1n)), 8)
+                ));
+                pD = pD.add(contribution.mul(
+                    Fraction.cosExact(timeFrac.mul(new Fraction(35n, 100n)).mul(kf).add(new Fraction(3n, 1n)), 8)
+                ));
                 e = e.mul(epsFrac);
                 if (Math.abs(e.toFloat()) < THRESHOLD.toFloat()) break;
             }
@@ -1733,11 +1882,14 @@
                 this.d.add(pD.mul(new Fraction(8n, 100n)))
             );
         }
-        clone() { return new Quat(this.a.clone(), this.b.clone(), this.c.clone(), this.d.clone()); }
+
+        clone() {
+            return new Quat(this.a.clone(), this.b.clone(), this.c.clone(), this.d.clone());
+        }
     }
 
     // ============================================================
-    // UTILITY FUNCTIONS
+    // UTILITY FUNCTIONS (continued fractions, zeta, CRT)
     // ============================================================
     function continuedFractionExact(frac, n) {
         const terms = [];
@@ -1752,6 +1904,7 @@
         }
         return terms;
     }
+
     function cfEvaluateExact(cf) {
         if (cf.length === 0) return Fraction.zero();
         let val = new Fraction(BigInt(cf[cf.length - 1]), 1n);
@@ -1760,6 +1913,7 @@
         }
         return val;
     }
+
     function zetaExactOnCriticalLine(imPart, terms) {
         terms = terms || 24;
         let reSum = Fraction.zero();
@@ -1788,6 +1942,7 @@
         }
         return { re: reSum, im: imSum };
     }
+
     function crtLattice(moduli) {
         const N = moduli.reduce((acc, b) => acc * b, 1);
         const result = [];
@@ -1798,11 +1953,13 @@
         }
         return { N, data: result };
     }
+
     function modInv(a, m) {
         a = ((a % m) + m) % m;
         for (let x = 1; x < m; x++) { if ((a * x) % m === 1) return x; }
         return 1;
     }
+
     function crtSolve(residues, lattice) {
         let x = 0;
         for (let i = 0; i < lattice.data.length; i++) {
@@ -1811,6 +1968,7 @@
         }
         return ((x % lattice.N) + lattice.N) % lattice.N;
     }
+
     function crtResidueFromExact(frac, m) {
         const mBig = BigInt(m);
         const r = ((frac.num % mBig) + mBig) % mBig;
@@ -1818,10 +1976,12 @@
     }
 
     // ============================================================
-    // CODEX STATE (PATCH-A: engine-authoritative coherence)
+    // CODEX STATE (symbolic telemetry + engine-authoritative mirror)
     // ============================================================
     const OBS_GRID_DIM = 6;
     const TRACE_MAX = 32;
+    const X_PERIOD_CONSTANT = 62;
+    const Y_START_CONSTANT = 1;
 
     class CodexState {
         constructor() {
@@ -1857,10 +2017,12 @@
             this.lastZetaIm = Fraction.zero();
             this.crtState = 0;
             this.crtResidues = [0, 0, 0, 0];
+            // MQL4-parity engine state (authoritative)
             this.marketM = 0;
             this.marketN = 0;
             this.marketImbalance = 0;
             this.marketRegime = 'NEUTRAL';
+            // Symbolic phonemes
             this.lingosoTraj = [];
             this.curlMagnitude = Fraction.zero();
             this.commutatorNorm = Fraction.zero();
@@ -1889,6 +2051,7 @@
             this._stars = null;
             this._initialized = false;
             this._traceVisible = false;
+            // Engine-authoritative mirror (populated from /state)
             this.engineState = null;
             this.engineConnected = false;
             this.engineCoherent = null;
@@ -1921,43 +2084,21 @@
             this.engineLastKronM = 0;
             this.engineLastKronN = 0;
             this.engineLastKronH = -1;
+            this.engineXScan = Y_START_CONSTANT;
+            this.engineYScan = Y_START_CONSTANT;
+            this.engineXPeriod = X_PERIOD_CONSTANT;
+            this.engineMAtH = 0;
+            this.engineNAtH = 0;
+            this.engineHBar = 0;
             this._lastIndicatorPassesSeen = -1;
             this._lastSignalFiresSeen = -1;
             this._lastCoherenceSeen = null;
             this._lastTrailSeen = null;
             this._lastKronSeen = null;
-        }
-
-        // PATCH-A: when engine connected, its state is authoritative for the metrics panel
-        authoritativeArcSq() {
-            if (this.engineConnected && this.engineState && this.engineState.arc_sq !== undefined) {
-                return this.engineArcSq;
-            }
-            return this.s2;
-        }
-        authoritativeRadiusSq() {
-            if (this.engineConnected && this.engineState && this.engineState.radius_sq !== undefined) {
-                return this.engineRadiusSq;
-            }
-            return this.r2;
-        }
-        authoritativeDeviation() {
-            if (this.engineConnected && this.engineState && this.engineState.deviation !== undefined) {
-                return this.engineDeviation;
-            }
-            return this.dev;
-        }
-        authoritativeRePsi() {
-            if (this.engineConnected && this.engineState && this.engineState.re_psi !== undefined) {
-                return this.engineRePsi;
-            }
-            return this.rePsi;
-        }
-        authoritativeCoherent() {
-            if (this.engineConnected && this.engineCoherent !== null) {
-                return this.engineCoherent;
-            }
-            return this.coherent;
+            this._lastOnTrackSeen = -1;
+            this._lastOnStandSeen = -1;
+            this._lastXScanSeen = Y_START_CONSTANT;
+            this._lastYScanSeen = Y_START_CONSTANT;
         }
 
         coherentWavefunction(qPoint) {
@@ -1970,7 +2111,7 @@
                 const dq = qPoint.sub(q_i);
                 const distSq = dq.normSq();
                 const negDistSq = distSq.neg();
-                const weight = Fraction.expPadé(negDistSq, 2);
+                const weight = Fraction.expPade(negDistSq, 2);
                 const phaseReal = q_i.a;
                 const phaseImag = q_i.b;
                 reSum = reSum.add(weight.mul(phaseReal));
@@ -2077,11 +2218,11 @@
                     if (this._lastCoherenceSeen !== newCoherent) {
                         this._lastCoherenceSeen = newCoherent;
                         this.pushTrace({
-                            type: newCoherent ? 'coherence' : 'evolution',
+                            type: 'coherence',
                             t: this.time.toFloat(),
                             msg: newCoherent
-                                ? `ENGINE reports COHERENT (s²=r²)`
-                                : `ENGINE reports DEVIATION (s²≠r²)`
+                                ? 'ENGINE: symbolic coherence (s²=r²)'
+                                : 'ENGINE: symbolic deviation (s²≠r²)'
                         });
                     }
                     this.engineCoherent = newCoherent;
@@ -2096,7 +2237,6 @@
                 if (engineState.arc_sq !== undefined) {
                     try {
                         this.engineArcSq = Fraction.fromExactString(String(engineState.arc_sq));
-                        // Record engine arc history for the time-series panel
                         const arcFloat = this.engineArcSq.toFloat();
                         if (isFinite(arcFloat)) {
                             this.engineArcHistory.push({ t: this.time.toFloat(), val: arcFloat });
@@ -2121,7 +2261,16 @@
                     else this.marketRegime = 'NEUTRAL';
                 }
                 if (engineState.regime) {
-                    this.marketRegime = engineState.regime.toUpperCase();
+                    this.marketRegime = String(engineState.regime).toUpperCase();
+                }
+                if (engineState.m_at_h !== undefined) {
+                    this.engineMAtH = parseInt(engineState.m_at_h, 10) || 0;
+                }
+                if (engineState.n_at_h !== undefined) {
+                    this.engineNAtH = parseInt(engineState.n_at_h, 10) || 0;
+                }
+                if (engineState.h_bar !== undefined) {
+                    this.engineHBar = parseInt(engineState.h_bar, 10) || 0;
                 }
                 if (engineState.indicator_populate_count !== undefined) {
                     const newVal = parseInt(engineState.indicator_populate_count, 10) || 0;
@@ -2132,7 +2281,7 @@
                             this.pushTrace({
                                 type: 'indicator',
                                 t: this.time.toFloat(),
-                                msg: `Indicator matrix pass #${newVal}`
+                                msg: 'Indicator matrix pass #' + newVal
                             });
                         }
                     }
@@ -2146,34 +2295,26 @@
                             this.pushTrace({
                                 type: 'signal',
                                 t: this.time.toFloat(),
-                                msg: `SIGNAL FIRE #${newVal}`
+                                msg: 'SIGNAL FIRE #' + newVal
                             });
                         }
                     }
                 }
                 if (engineState.relay_url !== undefined) {
                     this.engineRelayUrl = String(engineState.relay_url || '');
-                    if (this.engineRelayUrl) {
-                        RELAY_URL = this.engineRelayUrl;
-                    }
+                    if (this.engineRelayUrl) RELAY_URL = this.engineRelayUrl;
                 }
                 if (engineState.trailing_stop_active !== undefined) {
                     const newTrail = !!engineState.trailing_stop_active;
                     if (this._lastTrailSeen !== newTrail) {
                         this._lastTrailSeen = newTrail;
-                        if (newTrail) {
-                            this.pushTrace({
-                                type: 'trail',
-                                t: this.time.toFloat(),
-                                msg: `Trailing stop ACTIVATED (side=${engineState.trailing_stop_side || '?'})`
-                            });
-                        } else {
-                            this.pushTrace({
-                                type: 'trail',
-                                t: this.time.toFloat(),
-                                msg: `Trailing stop DEACTIVATED`
-                            });
-                        }
+                        this.pushTrace({
+                            type: 'trail',
+                            t: this.time.toFloat(),
+                            msg: newTrail
+                                ? 'Trailing stop ACTIVATED (side=' + (engineState.trailing_stop_side || '?') + ')'
+                                : 'Trailing stop DEACTIVATED'
+                        });
                     }
                     this.engineTrailActive = newTrail;
                 }
@@ -2208,19 +2349,37 @@
                 if (engineState.tag !== undefined) this.engineTag = parseInt(engineState.tag, 10);
                 if (engineState.invert !== undefined) this.engineInvert = !!engineState.invert;
                 if (engineState.on_track_runs !== undefined) {
-                    this.engineOnTrack = parseInt(engineState.on_track_runs, 10) || 0;
+                    const newVal = parseInt(engineState.on_track_runs, 10) || 0;
+                    if (newVal !== this._lastOnTrackSeen && newVal > 0) {
+                        this.pushTrace({
+                            type: 'scan',
+                            t: this.time.toFloat(),
+                            msg: 'OnTrack() fired — run #' + newVal
+                        });
+                    }
+                    this._lastOnTrackSeen = newVal;
+                    this.engineOnTrack = newVal;
                 }
                 if (engineState.on_stand_runs !== undefined) {
-                    this.engineOnStand = parseInt(engineState.on_stand_runs, 10) || 0;
+                    const newVal = parseInt(engineState.on_stand_runs, 10) || 0;
+                    if (newVal !== this._lastOnStandSeen && newVal > 0) {
+                        this.pushTrace({
+                            type: 'scan',
+                            t: this.time.toFloat(),
+                            msg: 'OnStand() fired — run #' + newVal
+                        });
+                    }
+                    this._lastOnStandSeen = newVal;
+                    this.engineOnStand = newVal;
                 }
                 if (engineState.last_kronecker_bar !== undefined) {
                     const newKron = parseInt(engineState.last_kronecker_bar, 10);
                     if (this._lastKronSeen !== newKron && newKron >= 0) {
                         this._lastKronSeen = newKron;
                         this.pushTrace({
-                            type: 'order',
+                            type: 'mql',
                             t: this.time.toFloat(),
-                            msg: `Kronecker @ h=${newKron}`
+                            msg: 'Kronecker @ h=' + newKron
                         });
                     }
                     this.engineLastKronBar = newKron;
@@ -2234,6 +2393,20 @@
                 if (engineState.last_kronecker_h !== undefined) {
                     this.engineLastKronH = parseInt(engineState.last_kronecker_h, 10);
                 }
+                if (engineState.X_scan !== undefined) {
+                    const newX = parseInt(engineState.X_scan, 10);
+                    if (newX !== this._lastXScanSeen) {
+                        this._lastXScanSeen = newX;
+                    }
+                    this.engineXScan = newX;
+                }
+                if (engineState.Y_scan !== undefined) {
+                    const newY = parseInt(engineState.Y_scan, 10);
+                    if (newY !== this._lastYScanSeen) {
+                        this._lastYScanSeen = newY;
+                    }
+                    this.engineYScan = newY;
+                }
             } catch (e) {
                 console.warn('ingestEngineState failed:', e);
             }
@@ -2246,10 +2419,12 @@
 
                 const s = this.time.mul(new Fraction(4n, 10n));
                 const thetaBase = s.mul(new Fraction(7n, 10n));
-                const thetaPerturb = Fraction.sinExact(s.mul(new Fraction(3n, 10n)), 8).mul(new Fraction(2n, 10n));
+                const thetaPerturb = Fraction.sinExact(s.mul(new Fraction(3n, 10n)), 8)
+                    .mul(new Fraction(2n, 10n));
                 const theta = thetaBase.add(thetaPerturb);
                 const phiBase = s.mul(new Fraction(3n, 10n)).add(new Fraction(5n, 10n));
-                const phiPerturb = Fraction.cosExact(s.mul(new Fraction(5n, 10n)), 8).mul(new Fraction(1n, 10n));
+                const phiPerturb = Fraction.cosExact(s.mul(new Fraction(5n, 10n)), 8)
+                    .mul(new Fraction(1n, 10n));
                 const phi = phiBase.add(phiPerturb);
 
                 const halfTheta = theta.div(new Fraction(2n, 1n));
@@ -2290,7 +2465,6 @@
                     this.srRatio = Fraction.zero();
                 }
                 this.dev = this.s2.sub(this.r2);
-                // PATCH-A: only override rePsi locally if not engine-authoritative
                 if (!this.engineConnected || this.engineState === null || this.engineState.re_psi === undefined) {
                     this.rePsi = this.q.a;
                 }
@@ -2308,7 +2482,6 @@
 
                 const thresh = new Fraction(2n, 1000n);
                 const prevDbz = this.dbz;
-                // PATCH-A: coherence determination uses engine when connected
                 if (this.engineConnected && this.engineCoherent !== null) {
                     this.coherent = this.engineCoherent;
                     this.dbz = this.engineState && this.engineState.dbz_branch !== undefined
@@ -2322,10 +2495,13 @@
                             this.pushTrace({
                                 type: 'dbz1',
                                 t: tFloat,
-                                msg: `[SYMBOLIC] DbZ₁ critical-line projection (Re[Ψ]>0) | dev=${this.dev.toFloat().toExponential(3)}`
+                                msg: '[SYM] DbZ₁ critical-line projection | dev='
+                                    + this.dev.toFloat().toExponential(3)
                             });
                         } else {
-                            const delta = Fraction.sinExact(this.time.mul(new Fraction(5n, 10n)).add(Fraction.one()), 8).mul(new Fraction(8n, 10000n));
+                            const delta = Fraction.sinExact(
+                                this.time.mul(new Fraction(5n, 10n)).add(Fraction.one()), 8
+                            ).mul(new Fraction(8n, 10000n));
                             this.eps = this.eps.add(delta);
                             if (this.eps.toFloat() > 0.05) this.eps = new Fraction(5n, 100n);
                             if (this.eps.toFloat() < 0.001) this.eps = new Fraction(1n, 1000n);
@@ -2333,7 +2509,7 @@
                             this.pushTrace({
                                 type: 'dbz2',
                                 t: tFloat,
-                                msg: `[SYMBOLIC] DbZ₂ Natalia fibration (Re[Ψ]≤0) | ε=${this.eps.toString()}`
+                                msg: '[SYM] DbZ₂ Natalia fibration | ε=' + this.eps.toString()
                             });
                         }
                         this.coherent = false;
@@ -2346,7 +2522,7 @@
                             this.pushTrace({
                                 type: 'coherence',
                                 t: tFloat,
-                                msg: `[SYMBOLIC] Coherence restored`
+                                msg: '[SYM] Coherence restored'
                             });
                         }
                         this.dbz = 0;
@@ -2361,7 +2537,7 @@
                         this.pushTrace({
                             type: 'norm',
                             t: tFloat,
-                            msg: `[SYMBOLIC] L² norm |ψ|²=${this.psiNormSq.toFloat().toFixed(4)}`
+                            msg: '[SYM] L² norm |ψ|²=' + this.psiNormSq.toFloat().toFixed(4)
                         });
                     }
                 }
@@ -2391,12 +2567,13 @@
 
                 if (Math.floor(this.time.toFloat() * 10) % 80 === 0) {
                     const zetaMag = Math.sqrt(
-                        zetaVal.re.toFloat() ** 2 + zetaVal.im.toFloat() ** 2
+                        Math.pow(zetaVal.re.toFloat(), 2) + Math.pow(zetaVal.im.toFloat(), 2)
                     );
                     this.pushTrace({
                         type: 'zeta',
                         t: tFloat,
-                        msg: `[SYMBOLIC] ζ(½+${imPart.toFloat().toFixed(3)}i) | mag=${zetaMag.toFixed(4)}`
+                        msg: '[SYM] ζ(½+' + imPart.toFloat().toFixed(3) + 'i) | mag='
+                            + zetaMag.toFixed(4)
                     });
                 }
 
@@ -2409,10 +2586,15 @@
                 const t2 = this.time.mul(new Fraction(2n, 10n));
                 const t25 = this.time.mul(new Fraction(25n, 100n));
                 const t3 = this.time.mul(new Fraction(3n, 10n));
-                const lingX = Fraction.sinExact(t2, 8).mul(new Fraction(1n, 2n)).add(Fraction.cosExact(t3.add(Fraction.one()), 8).mul(new Fraction(3n, 10n)));
-                const lingY = Fraction.cosExact(t25, 8).mul(new Fraction(1n, 2n)).add(Fraction.sinExact(t2.add(new Fraction(2n, 1n)), 8).mul(new Fraction(3n, 10n)));
-                const lingZ = Fraction.sinExact(t3.add(new Fraction(1n, 2n)), 8).mul(new Fraction(1n, 2n)).add(Fraction.cosExact(t25.add(new Fraction(15n, 10n)), 8).mul(new Fraction(3n, 10n)));
-                const lingXf = lingX.toFloat(), lingYf = lingY.toFloat(), lingZf = lingZ.toFloat();
+                const lingX = Fraction.sinExact(t2, 8).mul(new Fraction(1n, 2n))
+                    .add(Fraction.cosExact(t3.add(Fraction.one()), 8).mul(new Fraction(3n, 10n)));
+                const lingY = Fraction.cosExact(t25, 8).mul(new Fraction(1n, 2n))
+                    .add(Fraction.sinExact(t2.add(new Fraction(2n, 1n)), 8).mul(new Fraction(3n, 10n)));
+                const lingZ = Fraction.sinExact(t3.add(new Fraction(1n, 2n)), 8).mul(new Fraction(1n, 2n))
+                    .add(Fraction.cosExact(t25.add(new Fraction(15n, 10n)), 8).mul(new Fraction(3n, 10n)));
+                const lingXf = lingX.toFloat();
+                const lingYf = lingY.toFloat();
+                const lingZf = lingZ.toFloat();
                 this.lingosoTraj.push({ x: lingXf, y: lingYf, z: lingZf });
                 if (this.lingosoTraj.length > 100) this.lingosoTraj.shift();
 
@@ -2428,9 +2610,9 @@
                 this.activePhoneme = activeLabels.length > 0 ? activeLabels.join('') : '—';
 
                 const closureMetric = 1 - Math.min(1, Math.abs(
-                    this.dev.toFloat() * 10 +
-                    (this.obsRe.toFloat() - 0.5) * 2 +
-                    (this.marketImbalance / 10)
+                    this.dev.toFloat() * 10
+                    + (this.obsRe.toFloat() - 0.5) * 2
+                    + (this.marketImbalance / 10)
                 ));
                 this.selfRefClosure = Math.max(0, Math.min(1, closureMetric));
 
@@ -2511,12 +2693,16 @@
             for (const p of this.phonemeGrid) p.active = false;
             this._stars = null;
             this._initialized = false;
-            // Engine state is NOT reset — the engine is authoritative
+            // Engine mirror is NOT reset — the engine is authoritative.
             this._lastIndicatorPassesSeen = -1;
             this._lastSignalFiresSeen = -1;
             this._lastCoherenceSeen = null;
             this._lastTrailSeen = null;
             this._lastKronSeen = null;
+            this._lastOnTrackSeen = -1;
+            this._lastOnStandSeen = -1;
+            this._lastXScanSeen = Y_START_CONSTANT;
+            this._lastYScanSeen = Y_START_CONSTANT;
         }
 
         toggleMode() {
@@ -2590,7 +2776,7 @@
     window.__aei_resize = resizeCanvas;
 
     // ============================================================
-    // 3D PROJECTION
+    // 3D PROJECTION (symbolic 3-sphere visualization)
     // ============================================================
     function project3D(x, y, z, rotX, rotY, zoom) {
         zoom = zoom || 1;
@@ -2625,6 +2811,7 @@
 
     const dt = new Fraction(2n, 100n);
 
+    // Symbolic telemetry DOM handles
     const coherenceSpan = document.getElementById('coherence-status');
     const coherenceSourceSpan = document.getElementById('coherence-source');
     const generationSpan = document.getElementById('generation');
@@ -2642,12 +2829,15 @@
     const commValSpan = document.getElementById('comm-val');
     const psiNormValSpan = document.getElementById('psi-norm-val');
     const zetaValSpan = document.getElementById('zeta-val');
+
+    // Engine-authoritative DOM handles (MQL4-parity)
     const relayStatusSpan = document.getElementById('relay-status');
     const engineCoherenceSpan = document.getElementById('engine-coherence');
     const indicatorPassesSpan = document.getElementById('indicator-passes');
     const signalFiresSpan = document.getElementById('signal-fires');
     const trailStatusMetricSpan = document.getElementById('trail-status-metric');
     const scannerCountsMetricSpan = document.getElementById('scanner-counts-metric');
+    const mnhMetricSpan = document.getElementById('mnh-metric');
     const dbzBranchSpan = document.getElementById('dbz-branch');
     const aeaeDeltaSpan = document.getElementById('aeae-delta');
     const aeaeMSpan = document.getElementById('aeae-m');
@@ -2675,11 +2865,14 @@
     const lingosoActiveSpan = document.getElementById('lingoso-active');
     const lingosoCoordsSpan = document.getElementById('lingoso-coords');
     const explainPanel = document.getElementById('explainPanel');
+
+    // Engine panel DOM handles
     const engPriceSpan = document.getElementById('eng-price');
     const engSignalSpan = document.getElementById('eng-signal');
     const engTickSpan = document.getElementById('eng-tick');
     const engRegimeSpan = document.getElementById('eng-regime');
     const engMnSpan = document.getElementById('eng-mn');
+    const engMnhSpan = document.getElementById('eng-mnh');
     const engCoherenceSpan = document.getElementById('eng-coherence');
     const engArcSpan = document.getElementById('eng-arc');
     const engRadSpan = document.getElementById('eng-rad');
@@ -2706,20 +2899,32 @@
     const engOnStandSpan = document.getElementById('eng-onstand');
     const engLastKronSpan = document.getElementById('eng-lastkron');
     const engLastKronMnhSpan = document.getElementById('eng-lastkron-mnh');
+    const engXPeriodSpan = document.getElementById('eng-xperiod');
+    const engXScanSpan = document.getElementById('eng-xscan');
+    const engYScanSpan = document.getElementById('eng-yscan');
+
+    // Badge DOM handles
     const relayBadge = document.getElementById('relayBadge');
     const trailBadge = document.getElementById('trailBadge');
     const kpdKC = document.getElementById('kpd-kc');
     const kpdPrime = document.getElementById('kpd-prime');
     const kpdDime = document.getElementById('kpd-dime');
     const kpdMem = document.getElementById('kpd-mem');
-    const metricsAuthorityArc = document.getElementById('metrics-authority-arc');
-    const metricsAuthorityArcSym = document.getElementById('metrics-authority-arc-sym');
+    const scanXScanSpan = document.getElementById('scan-xscan');
+    const scanYScanSpan = document.getElementById('scan-yscan');
+    const metricsAuthoritySym = document.getElementById('metrics-authority-sym');
+    const metricsAuthorityEng = document.getElementById('metrics-authority-eng');
     const engineAuthorityBadge = document.getElementById('engineAuthorityBadge');
     const continuityBadge = document.getElementById('continuityBadge');
+
+    // Chart HUD scan rows
+    const hudXScanSpan = document.getElementById('hud-xscan');
+    const hudYScanSpan = document.getElementById('hud-yscan');
 
     let frameCount = 0;
 
     function attachCopyHandler(el) {
+        if (!el) return;
         el.addEventListener('click', () => {
             const text = el.textContent;
             navigator.clipboard.writeText(text).then(() => {
@@ -2754,11 +2959,17 @@
         }
     }
 
+    // ============================================================
+    // BADGE UPDATERS
+    // ============================================================
     function updateRelayBadge() {
         if (relayBadge) {
             if (RELAY_URL) {
                 relayBadge.textContent = 'RELAY: UP';
                 relayBadge.className = 'up';
+            } else if (codex.engineState) {
+                relayBadge.textContent = 'RELAY: DOWN';
+                relayBadge.className = 'down';
             } else {
                 relayBadge.textContent = 'RELAY: WAIT';
                 relayBadge.className = 'wait';
@@ -2779,9 +2990,11 @@
         if (trailBadge) {
             if (codex.engineTrailActive) {
                 const side = codex.engineTrailSide || '?';
-                const slShort = codex.engineTrailSL.length > 10 ? codex.engineTrailSL.slice(0, 10) : codex.engineTrailSL;
-                const tpShort = codex.engineTrailTP.length > 10 ? codex.engineTrailTP.slice(0, 10) : codex.engineTrailTP;
-                trailBadge.textContent = `TRAIL: ${side} SL=${slShort} TP=${tpShort}`;
+                const slShort = codex.engineTrailSL.length > 10
+                    ? codex.engineTrailSL.slice(0, 10) : codex.engineTrailSL;
+                const tpShort = codex.engineTrailTP.length > 10
+                    ? codex.engineTrailTP.slice(0, 10) : codex.engineTrailTP;
+                trailBadge.textContent = 'TRAIL: ' + side + ' SL=' + slShort + ' TP=' + tpShort;
                 trailBadge.className = side === 'LONG' ? 'long' : 'short';
             } else {
                 trailBadge.textContent = 'TRAIL: INACTIVE';
@@ -2823,45 +3036,87 @@
 
     function updateScannerCountsMetric() {
         if (scannerCountsMetricSpan) {
-            scannerCountsMetricSpan.textContent = `${codex.engineOnTrack} / ${codex.engineOnStand}`;
+            scannerCountsMetricSpan.textContent =
+                String(codex.engineOnTrack) + ' / ' + String(codex.engineOnStand);
             const active = codex.engineOnTrack > 0 || codex.engineOnStand > 0;
             scannerCountsMetricSpan.style.color = active ? '#ffaa44' : '#6688aa';
         }
+        if (mnhMetricSpan) {
+            mnhMetricSpan.textContent =
+                String(codex.engineMAtH) + ' / ' + String(codex.engineNAtH);
+            const active = (codex.engineMAtH >= 12) || (codex.engineNAtH >= 12);
+            mnhMetricSpan.style.color = active ? '#ff4488' : '#ffaa44';
+        }
     }
 
-    // PATCH-K: unified coherence badge
+    function updateScanBadge() {
+        if (scanXScanSpan) {
+            scanXScanSpan.textContent = codex.engineConnected
+                ? String(codex.engineXScan)
+                : '—';
+        }
+        if (scanYScanSpan) {
+            scanYScanSpan.textContent = codex.engineConnected
+                ? String(codex.engineYScan)
+                : '—';
+        }
+        if (hudXScanSpan) {
+            hudXScanSpan.textContent = codex.engineConnected
+                ? String(codex.engineXScan)
+                : '—';
+        }
+        if (hudYScanSpan) {
+            hudYScanSpan.textContent = codex.engineConnected
+                ? String(codex.engineYScan)
+                : '—';
+        }
+        if (engXPeriodSpan) {
+            engXPeriodSpan.textContent = String(codex.engineXPeriod);
+        }
+        if (engXScanSpan) {
+            engXScanSpan.textContent = codex.engineConnected
+                ? String(codex.engineXScan)
+                : '—';
+        }
+        if (engYScanSpan) {
+            engYScanSpan.textContent = codex.engineConnected
+                ? String(codex.engineYScan)
+                : '—';
+        }
+    }
+
     function updateContinuityBadge() {
         if (!continuityBadge) return;
         continuityBadge.classList.remove('coherent', 'deviant', 'waiting', 'symbolic');
         if (codex.engineConnected && codex.engineCoherent !== null) {
             if (codex.engineCoherent) {
                 continuityBadge.classList.add('coherent');
-                continuityBadge.textContent = '● ARC-LENGTH: COHERENT (engine: s²=r²)';
+                continuityBadge.textContent = '● ENGINE COHERENT (symbolic s²=r²)';
             } else {
                 continuityBadge.classList.add('deviant');
-                continuityBadge.textContent = '● ARC-LENGTH: DEVIATION (engine: s²≠r²)';
+                continuityBadge.textContent = '● ENGINE DEVIATION (symbolic s²≠r²)';
             }
         } else {
             continuityBadge.classList.add('symbolic');
-            continuityBadge.textContent = '● ARC-LENGTH: SYMBOLIC-ONLY (no engine)';
+            continuityBadge.textContent = '● ENGINE: WAITING';
         }
     }
 
-    // PATCH-A: toggle metrics authority indicators
     function updateMetricsAuthority() {
-        const engineAuthoritative = codex.engineConnected && codex.engineState &&
-            codex.engineState.arc_sq !== undefined;
-        if (metricsAuthorityArc && metricsAuthorityArcSym) {
+        const engineAuthoritative = codex.engineConnected && codex.engineState
+            && codex.engineState.arc_sq !== undefined;
+        if (metricsAuthorityEng && metricsAuthoritySym) {
             if (engineAuthoritative) {
-                metricsAuthorityArc.style.display = 'inline-block';
-                metricsAuthorityArcSym.style.display = 'none';
+                metricsAuthorityEng.style.display = 'inline-block';
+                metricsAuthoritySym.style.display = 'none';
             } else {
-                metricsAuthorityArc.style.display = 'none';
-                metricsAuthorityArcSym.style.display = 'inline-block';
+                metricsAuthorityEng.style.display = 'none';
+                metricsAuthoritySym.style.display = 'inline-block';
             }
         }
         if (engineAuthorityBadge) {
-            engineAuthorityBadge.style.display = engineAuthoritative ? 'inline-block' : 'none';
+            engineAuthorityBadge.style.display = engineAuthoritative
+                ? 'inline-block' : 'none';
         }
     }
 
@@ -2912,7 +3167,7 @@
                     const p = project3D(star.x, star.y, star.z, rotX, rotY, zoom);
                     const twinkle = 0.5 + 0.5 * Math.sin(nowMs * 0.001 + star.twinkle);
                     const sz = Math.max(0.5, star.size * p.persp * 80 * twinkle);
-                    ctx.fillStyle = `rgba(100, 160, 210, ${0.3 + 0.4 * twinkle})`;
+                    ctx.fillStyle = 'rgba(100, 160, 210, ' + (0.3 + 0.4 * twinkle) + ')';
                     ctx.beginPath();
                     ctx.arc(p.sx, p.sy, sz, 0, 2 * Math.PI);
                     ctx.fill();
@@ -2972,7 +3227,7 @@
                         ctx.fill();
                         ctx.shadowBlur = 0;
                         ctx.fillStyle = isActive ? '#ffffff' : 'rgba(100, 100, 150, 0.3)';
-                        ctx.font = `${isActive ? 11 : 7}px "Courier New", monospace`;
+                        ctx.font = (isActive ? 11 : 7) + 'px "Courier New", monospace';
                         ctx.textAlign = 'center';
                         ctx.textBaseline = 'bottom';
                         ctx.fillText(phoneme.label, pp.sx, pp.sy - size - 4);
@@ -3091,16 +3346,22 @@
                     ctx.shadowBlur = 10;
                     ctx.beginPath();
                     for (let i = 1; i < ling.length; i++) {
-                        const p = project3D(ling[i].x * 0.8, ling[i].y * 0.8, ling[i].z * 0.8, rotX, rotY, zoom);
+                        const p = project3D(
+                            ling[i].x * 0.8, ling[i].y * 0.8, ling[i].z * 0.8,
+                            rotX, rotY, zoom
+                        );
                         if (i === 1) ctx.moveTo(p.sx, p.sy);
                         else ctx.lineTo(p.sx, p.sy);
                     }
                     ctx.stroke();
                     ctx.shadowBlur = 0;
                     for (let i = 0; i < ling.length; i += 5) {
-                        const p = project3D(ling[i].x * 0.8, ling[i].y * 0.8, ling[i].z * 0.8, rotX, rotY, zoom);
+                        const p = project3D(
+                            ling[i].x * 0.8, ling[i].y * 0.8, ling[i].z * 0.8,
+                            rotX, rotY, zoom
+                        );
                         const alpha = 0.1 + 0.5 * (i / ling.length);
-                        ctx.fillStyle = `rgba(255, 102, 170, ${alpha})`;
+                        ctx.fillStyle = 'rgba(255, 102, 170, ' + alpha + ')';
                         ctx.beginPath();
                         ctx.arc(p.sx, p.sy, 2, 0, 2 * Math.PI);
                         ctx.fill();
@@ -3112,7 +3373,9 @@
                         const p0 = project3D(traj[i - 1].x, traj[i - 1].y, traj[i - 1].z, rotX, rotY, zoom);
                         const p1 = project3D(traj[i].x, traj[i].y, traj[i].z, rotX, rotY, zoom);
                         const alpha = 0.15 + 0.6 * (i / traj.length);
-                        const color = traj[i].coherent ? `rgba(0, 255, 136, ${alpha})` : `rgba(255, 68, 102, ${alpha})`;
+                        const color = traj[i].coherent
+                            ? 'rgba(0, 255, 136, ' + alpha + ')'
+                            : 'rgba(255, 68, 102, ' + alpha + ')';
                         ctx.strokeStyle = color;
                         ctx.lineWidth = 1.5 + 0.5 * (i / traj.length);
                         ctx.beginPath();
@@ -3123,7 +3386,9 @@
                 }
 
                 const p = project3D(pos.x, pos.y, pos.z, rotX, rotY, zoom);
-                const currentCoherent = codex.authoritativeCoherent();
+                const currentCoherent = codex.engineConnected && codex.engineCoherent !== null
+                    ? codex.engineCoherent
+                    : codex.coherent;
                 const glowColor = currentCoherent ? 'rgba(0, 255, 136, ' : 'rgba(255, 68, 102, ';
                 const grd2 = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, 40 * zoom);
                 grd2.addColorStop(0, glowColor + '0.4)');
@@ -3144,7 +3409,7 @@
                 ctx.shadowBlur = 0;
 
                 ctx.fillStyle = currentCoherent ? '#00ffcc' : '#ff6688';
-                ctx.font = `bold ${22 * zoom}px "Courier New", monospace`;
+                ctx.font = 'bold ' + (22 * zoom) + 'px "Courier New", monospace';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.shadowColor = currentCoherent ? '#00ffcc' : '#ff6688';
@@ -3154,7 +3419,8 @@
                 ctx.shadowBlur = 0;
 
                 if (mode === 0 || mode === 1) {
-                    const dbzColor = codex.dbz === 0 ? '#6688aa' : (codex.dbz === 1 ? '#44ddff' : '#ff66aa');
+                    const dbzColor = codex.dbz === 0 ? '#6688aa'
+                        : (codex.dbz === 1 ? '#44ddff' : '#ff66aa');
                     const dbzScale = codex.dbz === 0 ? 1 : (codex.dbz === 1 ? 0.7 : 1.3);
                     const dpos = { x: pos.x * 1.08, y: pos.y * 1.08, z: pos.z * 1.08 };
                     ctx.strokeStyle = dbzColor;
@@ -3166,7 +3432,9 @@
                     for (let i = 0; i <= 28; i++) {
                         const t = i / 28;
                         const ang = t * 2 * Math.PI;
-                        const rad = (0.28 * dbzScale + 0.12 * dbzScale * Math.sin(t * 4 * Math.PI + codex.time.toFloat() * 0.02)) * zoom;
+                        const rad = (0.28 * dbzScale
+                            + 0.12 * dbzScale * Math.sin(t * 4 * Math.PI + codex.time.toFloat() * 0.02))
+                            * zoom;
                         const ax = dpos.x + rad * Math.cos(ang);
                         const ay = dpos.y + rad * 0.7 * Math.sin(ang + codex.time.toFloat() * 0.01);
                         const az = dpos.z + rad * 0.5 * Math.sin(ang * 1.2 + codex.time.toFloat() * 0.015);
@@ -3188,12 +3456,14 @@
                 }
 
                 if (mode === 0 || mode === 3) {
-                    const obsMag = Math.sqrt(codex.obsRe.toFloat() ** 2 + codex.obsIm.toFloat() ** 2);
+                    const obsMag = Math.sqrt(
+                        Math.pow(codex.obsRe.toFloat(), 2) + Math.pow(codex.obsIm.toFloat(), 2)
+                    );
                     const fieldOpacity = 0.03 + Math.min(1, obsMag) * 0.4;
                     const fieldScale = (0.7 + Math.min(1, obsMag) * 0.6) * zoom;
                     for (let i = 0; i < 12; i++) {
                         const baseAngle = (i / 12) * 2 * Math.PI + codex.time.toFloat() * 0.005;
-                        ctx.strokeStyle = `rgba(255, 170, 68, ${fieldOpacity * 0.5})`;
+                        ctx.strokeStyle = 'rgba(255, 170, 68, ' + (fieldOpacity * 0.5) + ')';
                         ctx.lineWidth = 0.8;
                         ctx.beginPath();
                         for (let j = 0; j <= 28; j++) {
@@ -3214,11 +3484,13 @@
                 if (mode === 0 || mode === 2) {
                     const marketImbalance = codex.marketImbalance;
                     const marketPulse = 0.1 + 0.5 * (1 - Math.min(1, Math.abs(marketImbalance) / 15));
-                    const mColor = marketImbalance > 2 ? 'rgba(68, 255, 136, ' :
-                        marketImbalance < -2 ? 'rgba(255, 68, 102, ' : 'rgba(68, 170, 255, ';
+                    const mColor = marketImbalance > 2 ? 'rgba(68, 255, 136, '
+                        : marketImbalance < -2 ? 'rgba(255, 68, 102, '
+                        : 'rgba(68, 170, 255, ';
                     ctx.strokeStyle = mColor + marketPulse + ')';
                     ctx.lineWidth = 2.5;
-                    ctx.shadowColor = marketImbalance > 2 ? '#44ff88' : (marketImbalance < -2 ? '#ff4466' : '#44aaff');
+                    ctx.shadowColor = marketImbalance > 2 ? '#44ff88'
+                        : (marketImbalance < -2 ? '#ff4466' : '#44aaff');
                     ctx.shadowBlur = 15;
                     ctx.beginPath();
                     for (let i = 0; i <= 40; i++) {
@@ -3237,8 +3509,8 @@
 
                 if (mode === 0 || mode === 1) {
                     const closure = codex.selfRefClosure;
-                    ctx.fillStyle = `rgba(200, 200, 255, ${0.2 + closure * 0.5})`;
-                    ctx.font = `bold ${16 * zoom}px "Courier New", monospace`;
+                    ctx.fillStyle = 'rgba(200, 200, 255, ' + (0.2 + closure * 0.5) + ')';
+                    ctx.font = 'bold ' + (16 * zoom) + 'px "Courier New", monospace';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     ctx.shadowColor = 'rgba(200, 200, 255, 0.2)';
@@ -3247,17 +3519,20 @@
                     ctx.shadowBlur = 0;
                 }
 
-                // ─── DOM updates ──────────────────────────────────────
-                const authArc = codex.authoritativeArcSq();
-                const authRad = codex.authoritativeRadiusSq();
-                const authDev = codex.authoritativeDeviation();
-                const authCoherent = codex.authoritativeCoherent();
+                const authArc = codex.engineConnected ? codex.engineArcSq : codex.s2;
+                const authRad = codex.engineConnected ? codex.engineRadiusSq : codex.r2;
+                const authDev = codex.engineConnected ? codex.engineDeviation : codex.dev;
+                const authCoherent = codex.engineConnected && codex.engineCoherent !== null
+                    ? codex.engineCoherent
+                    : codex.coherent;
 
-                coherenceSpan.textContent = authCoherent ? '✅ COHERENT (s=r)' : '🔄 EVOLVING (s≠r)';
+                coherenceSpan.textContent = authCoherent
+                    ? '✅ COHERENT (symbolic s²=r²)'
+                    : '🔄 EVOLVING (symbolic s²≠r²)';
                 coherenceSpan.style.color = authCoherent ? '#00ff88' : '#ff4466';
                 if (codex.engineConnected && codex.engineCoherent !== null) {
                     coherenceSpan.classList.remove('symbolic-mode');
-                    coherenceSourceSpan.textContent = 'ENGINE';
+                    coherenceSourceSpan.textContent = 'ENGINE (symbolic layer)';
                     coherenceSourceSpan.style.color = '#00ff88';
                 } else {
                     coherenceSpan.classList.add('symbolic-mode');
@@ -3275,9 +3550,8 @@
                 r2Val.textContent = authRad.toFloat().toFixed(6);
                 deltaVal.textContent = authDev.toFloat().toFixed(6);
                 obsVal.textContent = Math.sqrt(
-                    codex.obsRe.toFloat() ** 2 + codex.obsIm.toFloat() ** 2
+                    Math.pow(codex.obsRe.toFloat(), 2) + Math.pow(codex.obsIm.toFloat(), 2)
                 ).toFixed(4);
-                // srRatio uses authoritative values
                 if (!authRad.isZero()) {
                     const srAuth = authArc.div(authRad);
                     srRatioSpan.textContent = srAuth.toFloat().toFixed(4);
@@ -3288,7 +3562,8 @@
                 commValSpan.textContent = codex.commutatorNorm.toFloat().toFixed(4);
                 psiNormValSpan.textContent = Math.sqrt(codex.psiNormSq.toFloat()).toFixed(4);
                 zetaValSpan.textContent = Math.sqrt(
-                    codex.lastZetaRe.toFloat() ** 2 + codex.lastZetaIm.toFloat() ** 2
+                    Math.pow(codex.lastZetaRe.toFloat(), 2)
+                    + Math.pow(codex.lastZetaIm.toFloat(), 2)
                 ).toFixed(4);
 
                 if (relayStatusSpan) {
@@ -3318,33 +3593,36 @@
 
                 if (indicatorPassesSpan) {
                     indicatorPassesSpan.textContent = String(codex.engineIndicatorPasses);
-                    indicatorPassesSpan.style.color = codex.engineIndicatorPasses > 0 ? '#00ff88' : '#ffaa44';
+                    indicatorPassesSpan.style.color =
+                        codex.engineIndicatorPasses > 0 ? '#00ff88' : '#ffaa44';
                 }
                 if (signalFiresSpan) {
                     signalFiresSpan.textContent = String(codex.engineSignalFires);
-                    signalFiresSpan.style.color = codex.engineSignalFires > 0 ? '#ff4488' : '#ffaa44';
+                    signalFiresSpan.style.color =
+                        codex.engineSignalFires > 0 ? '#ff4488' : '#ffaa44';
                 }
 
                 updateTrailBadge();
                 updateKPDBadge();
                 updateScannerCountsMetric();
+                updateScanBadge();
                 updateContinuityBadge();
                 updateMetricsAuthority();
 
                 const dbzLabels = ['NONE', 'CRITICAL LINE', 'NATALIA'];
                 dbzBranchSpan.textContent = dbzLabels[codex.dbz] || 'NONE';
-                dbzBranchSpan.style.color = codex.dbz === 0 ? '#6688aa' :
-                    codex.dbz === 1 ? '#44ddff' : '#ff66aa';
+                dbzBranchSpan.style.color = codex.dbz === 0 ? '#6688aa'
+                    : codex.dbz === 1 ? '#44ddff' : '#ff66aa';
 
                 aeaeDeltaSpan.textContent = codex.marketImbalance;
-                aeaeDeltaSpan.style.color = Math.abs(codex.marketImbalance) < 2 ? '#44ddff' :
-                    codex.marketImbalance > 2 ? '#44ff88' : '#ff4466';
+                aeaeDeltaSpan.style.color = Math.abs(codex.marketImbalance) < 2 ? '#44ddff'
+                    : codex.marketImbalance > 2 ? '#44ff88' : '#ff4466';
                 aeaeMSpan.textContent = codex.marketM;
                 aeaeNSpan.textContent = codex.marketN;
                 aeaeDeltaPanelSpan.textContent = codex.marketImbalance;
                 aeaeRegimeSpan.textContent = codex.marketRegime;
-                aeaeRegimeSpan.style.color = codex.marketRegime === 'BULLISH' ? '#44ff88' :
-                    codex.marketRegime === 'BEARISH' ? '#ff4466' : '#44aaff';
+                aeaeRegimeSpan.style.color = codex.marketRegime === 'BULLISH' ? '#44ff88'
+                    : codex.marketRegime === 'BEARISH' ? '#ff4466' : '#44aaff';
 
                 obsRealSpan.textContent = codex.obsRe.toFloat().toFixed(4);
                 obsImagSpan.textContent = codex.obsIm.toFloat().toFixed(4);
@@ -3354,7 +3632,8 @@
                 zetaReSpan.textContent = codex.lastZetaRe.toFloat().toFixed(4);
                 zetaImSpan.textContent = codex.lastZetaIm.toFloat().toFixed(4);
                 zetaMagSpan.textContent = Math.sqrt(
-                    codex.lastZetaRe.toFloat() ** 2 + codex.lastZetaIm.toFloat() ** 2
+                    Math.pow(codex.lastZetaRe.toFloat(), 2)
+                    + Math.pow(codex.lastZetaIm.toFloat(), 2)
                 ).toFixed(4);
 
                 if (codex.engineState) {
@@ -3364,6 +3643,7 @@
                     if (engTickSpan) engTickSpan.textContent = es.tick !== undefined ? es.tick : '—';
                     if (engRegimeSpan) engRegimeSpan.textContent = es.regime || '—';
                     if (engMnSpan) engMnSpan.textContent = (es.m_count || 0) + '/' + (es.n_count || 0);
+                    if (engMnhSpan) engMnhSpan.textContent = codex.engineMAtH + '/' + codex.engineNAtH;
                     if (engCoherenceSpan) {
                         if (es.coherent) {
                             engCoherenceSpan.textContent = '✅ COHERENT';
@@ -3436,14 +3716,20 @@
                         engOnStandSpan.textContent = String(codex.engineOnStand);
                         engOnStandSpan.className = 'value ' + (codex.engineOnStand > 0 ? 'counter-active' : 'counter-zero');
                     }
-                    if (engLastKronSpan) engLastKronSpan.textContent = codex.engineLastKronBar >= 0 ? String(codex.engineLastKronBar) : '—';
+                    if (engLastKronSpan) {
+                        engLastKronSpan.textContent = codex.engineLastKronBar >= 0 ? String(codex.engineLastKronBar) : '—';
+                    }
                     if (engLastKronMnhSpan) {
                         if (codex.engineLastKronH >= 0) {
-                            engLastKronMnhSpan.textContent = `${codex.engineLastKronM}/${codex.engineLastKronN}/${codex.engineLastKronH}`;
+                            engLastKronMnhSpan.textContent =
+                                codex.engineLastKronM + '/' + codex.engineLastKronN + '/' + codex.engineLastKronH;
                         } else {
                             engLastKronMnhSpan.textContent = '—';
                         }
                     }
+                    if (engXPeriodSpan) engXPeriodSpan.textContent = String(codex.engineXPeriod);
+                    if (engXScanSpan) engXScanSpan.textContent = String(codex.engineXScan);
+                    if (engYScanSpan) engYScanSpan.textContent = String(codex.engineYScan);
                 }
 
                 if (relayBadge) {
@@ -3459,7 +3745,6 @@
                     }
                 }
 
-                // gauge: uses authoritative s²/r² ratio
                 let srAuth = 0;
                 if (!authRad.isZero()) {
                     srAuth = authArc.div(authRad).toFloat();
@@ -3467,15 +3752,16 @@
                 const clampedSr = Math.max(0.4, Math.min(1.6, srAuth));
                 const normalized = (clampedSr - 0.4) / 1.2;
                 const dashLength = Math.min(282, Math.max(0, normalized * 282));
-                gaugeArc.setAttribute('stroke-dasharray', `${dashLength} 282`);
-                gaugeLabel.textContent = `s/r: ${srAuth.toFixed(3)}`;
+                gaugeArc.setAttribute('stroke-dasharray', dashLength + ' 282');
+                gaugeLabel.textContent = 's/r: ' + srAuth.toFixed(3);
 
                 if (codex.proofSteps.length > 1) {
                     proofChain.classList.add('visible');
                     const lastStep = codex.proofSteps[codex.proofSteps.length - 1];
-                    proofDetail.textContent = `(${codex.proofSteps.length} steps · closure ${lastStep.closure.toFixed(3)})`;
-                    proofLatest.textContent = `↳ ${lastStep.type}`;
-                    proofProgress.style.width = `${codex.selfRefClosure * 100}%`;
+                    proofDetail.textContent = '(' + codex.proofSteps.length
+                        + ' steps · closure ' + lastStep.closure.toFixed(3) + ')';
+                    proofLatest.textContent = '↳ ' + lastStep.type;
+                    proofProgress.style.width = (codex.selfRefClosure * 100) + '%';
                 } else {
                     proofChain.classList.remove('visible');
                     proofProgress.style.width = '0%';
@@ -3488,37 +3774,41 @@
                         const e = codex.proofTrace[i];
                         const cls = 'pt-' + e.type;
                         const ts = e.t.toFixed(2);
-                        html += `<div class="pt-line"><span class="pt-ts">[t=${ts}]</span> <span class="${cls}">${e.msg}</span></div>`;
+                        html += '<div class="pt-line">'
+                            + '<span class="pt-ts">[t=' + ts + ']</span> '
+                            + '<span class="' + cls + '">' + e.msg + '</span>'
+                            + '</div>';
                     }
                     proofTraceLines.innerHTML = html;
                 } else {
                     proofTrace.classList.remove('visible');
                 }
 
-                // time-series panel: symbolic s(t), r(t), + engine s²(t)
                 const sHist2 = codex.sHistory;
                 const rHist2 = codex.rHistory;
                 if (sHist2.length > 2) {
-                    const sMax = Math.max(...sHist2.map(d => Math.abs(d.val)), 0.001);
+                    const sMax = Math.max.apply(null, sHist2.map(d => Math.abs(d.val)).concat([0.001]));
                     const sPoints = sHist2.map((d, i) => {
                         const x = (i / sHist2.length) * 200;
                         const y = 50 - (d.val / sMax) * 40;
-                        return `${x.toFixed(1)},${y.toFixed(1)}`;
+                        return x.toFixed(1) + ',' + y.toFixed(1);
                     }).join(' ');
                     sPolyline.setAttribute('points', sPoints);
                     const rPoints = rHist2.map((d, i) => {
                         const x = (i / rHist2.length) * 200;
                         const y = 50 - (d.val / sMax) * 40;
-                        return `${x.toFixed(1)},${y.toFixed(1)}`;
+                        return x.toFixed(1) + ',' + y.toFixed(1);
                     }).join(' ');
                     rPolyline.setAttribute('points', rPoints);
                 }
                 if (codex.engineArcHistory.length > 2) {
-                    const eMax = Math.max(...codex.engineArcHistory.map(d => Math.abs(d.val)), 0.001);
+                    const eMax = Math.max.apply(
+                        null, codex.engineArcHistory.map(d => Math.abs(d.val)).concat([0.001])
+                    );
                     const ePoints = codex.engineArcHistory.map((d, i) => {
                         const x = (i / codex.engineArcHistory.length) * 200;
                         const y = 50 - (d.val / eMax) * 40;
-                        return `${x.toFixed(1)},${y.toFixed(1)}`;
+                        return x.toFixed(1) + ',' + y.toFixed(1);
                     }).join(' ');
                     engineArcPolyline.setAttribute('points', ePoints);
                 } else {
@@ -3528,7 +3818,10 @@
                 lingosoActiveSpan.textContent = codex.activePhoneme;
                 const lastLing = codex.lingosoTraj[codex.lingosoTraj.length - 1];
                 if (lastLing) {
-                    lingosoCoordsSpan.textContent = `(${lastLing.x.toFixed(2)}, ${lastLing.y.toFixed(2)}, ${lastLing.z.toFixed(2)})`;
+                    lingosoCoordsSpan.textContent =
+                        '(' + lastLing.x.toFixed(2) + ', '
+                        + lastLing.y.toFixed(2) + ', '
+                        + lastLing.z.toFixed(2) + ')';
                 }
 
                 frameCount++;
@@ -3541,410 +3834,7 @@
     }
 
     // ============================================================
-    // CONTROLS & EVENT HANDLERS
-    // ============================================================
-    canvas.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-    });
-    window.addEventListener('mousemove', (e) => {
-        if (isDragging) {
-            const dx = e.clientX - lastX;
-            const dy = e.clientY - lastY;
-            rotY += dx * 0.005;
-            rotX += dy * 0.005;
-            rotX = Math.max(-1.5, Math.min(1.5, rotX));
-            lastX = e.clientX;
-            lastY = e.clientY;
-        }
-    });
-    window.addEventListener('mouseup', () => { isDragging = false; });
-
-    canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? -0.05 : 0.05;
-        zoom = Math.max(0.3, Math.min(2.5, zoom + delta));
-    }, { passive: false });
-
-    let touchId = null;
-    let lastTouchDist = 0;
-    canvas.addEventListener('touchstart', (e) => {
-        if (e.touches.length === 1) {
-            const touch = e.touches[0];
-            isDragging = true;
-            lastX = touch.clientX;
-            lastY = touch.clientY;
-            touchId = touch.identifier;
-        } else if (e.touches.length === 2) {
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            lastTouchDist = Math.sqrt(dx * dx + dy * dy);
-        }
-    }, { passive: true });
-    canvas.addEventListener('touchmove', (e) => {
-        e.preventDefault();
-        if (e.touches.length === 1) {
-            for (const touch of e.touches) {
-                if (touch.identifier === touchId || touchId === null) {
-                    const dx = touch.clientX - lastX;
-                    const dy = touch.clientY - lastY;
-                    rotY += dx * 0.005;
-                    rotX += dy * 0.005;
-                    rotX = Math.max(-1.5, Math.min(1.5, rotX));
-                    lastX = touch.clientX;
-                    lastY = touch.clientY;
-                    if (touchId === null) touchId = touch.identifier;
-                    break;
-                }
-            }
-        } else if (e.touches.length === 2) {
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            const delta = (dist - lastTouchDist) * 0.005;
-            zoom = Math.max(0.3, Math.min(2.5, zoom + delta));
-            lastTouchDist = dist;
-        }
-    }, { passive: false });
-    canvas.addEventListener('touchend', () => {
-        isDragging = false;
-        touchId = null;
-        lastTouchDist = 0;
-    }, { passive: true });
-
-    document.getElementById('pauseBtn').addEventListener('click', () => {
-        paused = !paused;
-        document.getElementById('pauseBtn').textContent = paused ? '▶' : '⏸';
-        document.getElementById('pauseBtn').classList.toggle('active', paused);
-    });
-
-    document.getElementById('resetBtn').addEventListener('click', () => {
-        codex.reset();
-        paused = false;
-        document.getElementById('pauseBtn').textContent = '⏸';
-        document.getElementById('pauseBtn').classList.remove('active');
-        coherenceSpan.textContent = 'INITIALIZING';
-        coherenceSpan.style.color = 'var(--tma-text)';
-        coherenceSpan.classList.remove('symbolic-mode');
-        coherenceSourceSpan.textContent = '—';
-        generationSpan.textContent = '0';
-        deviationSpan.textContent = '0.0000';
-        epsilonSpan.textContent = '1/100';
-        s2Exact.textContent = '0/1';
-        r2Exact.textContent = '1/1';
-        s2Val.textContent = '0.0000';
-        r2Val.textContent = '1.0000';
-        deltaVal.textContent = '0.0000';
-        obsVal.textContent = '0.0000';
-        srRatioSpan.textContent = '0.0000';
-        curlValSpan.textContent = '0.0000';
-        commValSpan.textContent = '0.0000';
-        psiNormValSpan.textContent = '0.0000';
-        zetaValSpan.textContent = '0.0000';
-        dbzBranchSpan.textContent = 'NONE';
-        aeaeDeltaSpan.textContent = '0';
-        aeaeMSpan.textContent = '0';
-        aeaeNSpan.textContent = '0';
-        aeaeDeltaPanelSpan.textContent = '0';
-        aeaeRegimeSpan.textContent = 'NEUTRAL';
-        obsRealSpan.textContent = '0.0000';
-        obsImagSpan.textContent = '0.0000';
-        obsGridSpan.textContent = '0';
-        obsPsiNormSpan.textContent = '0.0000';
-        zetaReSpan.textContent = '0.0000';
-        zetaImSpan.textContent = '0.0000';
-        zetaMagSpan.textContent = '0.0000';
-        if (engPriceSpan) engPriceSpan.textContent = '—';
-        if (engSignalSpan) engSignalSpan.textContent = '—';
-        if (engTickSpan) engTickSpan.textContent = '—';
-        if (engRegimeSpan) engRegimeSpan.textContent = '—';
-        if (engMnSpan) engMnSpan.textContent = '—';
-        if (engCoherenceSpan) {
-            engCoherenceSpan.textContent = '—';
-            engCoherenceSpan.className = 'value';
-        }
-        if (engArcSpan) engArcSpan.textContent = '—';
-        if (engRadSpan) engRadSpan.textContent = '—';
-        if (engDevSpan) engDevSpan.textContent = '—';
-        if (engRePsiSpan) engRePsiSpan.textContent = '—';
-        if (engFgSpan) engFgSpan.textContent = '—';
-        if (engIndSpan) engIndSpan.textContent = '—';
-        if (engSigSpan) engSigSpan.textContent = '—';
-        if (engRelaySpan) {
-            engRelaySpan.textContent = '—';
-            engRelaySpan.className = 'value relay-wait';
-        }
-        if (engTrailActiveSpan) { engTrailActiveSpan.textContent = '—'; engTrailActiveSpan.className = 'value trail-inactive'; }
-        if (engTrailSLSpan) engTrailSLSpan.textContent = '—';
-        if (engTrailTPSpan) engTrailTPSpan.textContent = '—';
-        if (engTrailEntrySpan) engTrailEntrySpan.textContent = '—';
-        if (engTrailSideSpan) engTrailSideSpan.textContent = '—';
-        if (engHasLongSpan) engHasLongSpan.textContent = '—';
-        if (engHasShortSpan) engHasShortSpan.textContent = '—';
-        if (engKCSpan) { engKCSpan.textContent = '—'; engKCSpan.className = 'value'; }
-        if (engPrimeSpan) { engPrimeSpan.textContent = '—'; engPrimeSpan.className = 'value'; }
-        if (engDimeSpan) { engDimeSpan.textContent = '—'; engDimeSpan.className = 'value'; }
-        if (engMemSpan) engMemSpan.textContent = '—';
-        if (engTagSpan) engTagSpan.textContent = '—';
-        if (engInvertSpan) engInvertSpan.textContent = '—';
-        if (engOnTrackSpan) { engOnTrackSpan.textContent = '—'; engOnTrackSpan.className = 'value counter-zero'; }
-        if (engOnStandSpan) { engOnStandSpan.textContent = '—'; engOnStandSpan.className = 'value counter-zero'; }
-        if (engLastKronSpan) engLastKronSpan.textContent = '—';
-        if (engLastKronMnhSpan) engLastKronMnhSpan.textContent = '—';
-        if (indicatorPassesSpan) {
-            indicatorPassesSpan.textContent = '0';
-            indicatorPassesSpan.style.color = '#ffaa44';
-        }
-        if (signalFiresSpan) {
-            signalFiresSpan.textContent = '0';
-            signalFiresSpan.style.color = '#ffaa44';
-        }
-        if (trailStatusMetricSpan) {
-            trailStatusMetricSpan.textContent = '—';
-            trailStatusMetricSpan.className = 'value engine-wait';
-        }
-        if (scannerCountsMetricSpan) {
-            scannerCountsMetricSpan.textContent = '0 / 0';
-            scannerCountsMetricSpan.style.color = '#6688aa';
-        }
-        if (relayBadge) {
-            relayBadge.textContent = 'RELAY: —';
-            relayBadge.className = 'wait';
-        }
-        if (trailBadge) {
-            trailBadge.textContent = 'TRAIL: INACTIVE';
-            trailBadge.className = 'inactive';
-        }
-        if (kpdKC) { kpdKC.textContent = 'KC:—'; kpdKC.className = 'kpd-kc kc-false'; }
-        if (kpdPrime) { kpdPrime.textContent = 'P:—'; kpdPrime.className = 'kpd-prime pn'; }
-        if (kpdDime) { kpdDime.textContent = 'D:—'; kpdDime.className = 'kpd-dime dn'; }
-        if (kpdMem) { kpdMem.textContent = 'M:—'; kpdMem.className = 'kpd-mem mn'; }
-        proofChain.classList.remove('visible');
-        proofTrace.classList.remove('visible');
-        proofTraceLines.innerHTML = '';
-        gaugeArc.setAttribute('stroke-dasharray', '0 282');
-        gaugeLabel.textContent = 's/r: 0.000';
-        proofProgress.style.width = '0%';
-        proofLatest.textContent = '';
-        sPolyline.setAttribute('points', '');
-        rPolyline.setAttribute('points', '');
-        engineArcPolyline.setAttribute('points', '');
-        lingosoActiveSpan.textContent = '—';
-        lingosoCoordsSpan.textContent = '(0.00, 0.00, 0.00)';
-        if (continuityBadge) {
-            continuityBadge.classList.remove('coherent', 'deviant', 'symbolic');
-            continuityBadge.classList.add('waiting');
-            continuityBadge.textContent = '● ARC-LENGTH: WAITING';
-        }
-        if (metricsAuthorityArc) metricsAuthorityArc.style.display = 'none';
-        if (metricsAuthorityArcSym) metricsAuthorityArcSym.style.display = 'inline-block';
-        if (engineAuthorityBadge) engineAuthorityBadge.style.display = 'none';
-        hideError();
-    });
-
-    document.getElementById('modeBtn').addEventListener('click', () => {
-        const mode = codex.toggleMode();
-        document.getElementById('modeBtn').textContent = mode;
-        modeDisplay.textContent = mode;
-    });
-
-    document.getElementById('traceBtn').addEventListener('click', () => {
-        showTrace = !showTrace;
-        codex._traceVisible = showTrace;
-        document.getElementById('traceBtn').classList.toggle('active', showTrace);
-        if (!showTrace) proofTrace.classList.remove('visible');
-    });
-
-    document.getElementById('exportBtn').addEventListener('click', () => {
-        const data = {
-            timestamp: Date.now(),
-            backend_url: BACKEND_URL,
-            relay_url: RELAY_URL,
-            coherence_authority: (codex.engineConnected && codex.engineCoherent !== null) ? 'ENGINE' : 'SYMBOLIC',
-            tma: {
-                available: TMA.available,
-                userId: TMA.userId,
-                username: TMA.username,
-                platform: TMA.platform,
-                handshakeOk: TMA.handshakeOk,
-                publicUrl: TMA.publicUrl,
-            },
-            engine_snapshot: codex.engineState ? {
-                price: codex.engineState.price,
-                signal: codex.engineState.signal,
-                tick: codex.engineState.tick,
-                regime: codex.engineState.regime,
-                m_count: codex.engineState.m_count,
-                n_count: codex.engineState.n_count,
-                coherent: codex.engineState.coherent,
-                arc_sq: codex.engineState.arc_sq,
-                radius_sq: codex.engineState.radius_sq,
-                deviation: codex.engineState.deviation,
-                re_psi: codex.engineState.re_psi,
-                engine_initialized: codex.engineState.engine_initialized,
-                indicator_populate_count: codex.engineState.indicator_populate_count,
-                imbalance_fire_count: codex.engineState.imbalance_fire_count,
-                relay_url: codex.engineState.relay_url,
-                trailing_stop_active: codex.engineState.trailing_stop_active,
-                trailing_stop_price: codex.engineState.trailing_stop_price,
-                trailing_take_profit: codex.engineState.trailing_take_profit,
-                trailing_stop_entry: codex.engineState.trailing_stop_entry,
-                trailing_stop_side: codex.engineState.trailing_stop_side,
-                has_open_long: codex.engineState.has_open_long,
-                has_open_short: codex.engineState.has_open_short,
-                KC: codex.engineState.KC,
-                prime: codex.engineState.prime,
-                dime: codex.engineState.dime,
-                mem: codex.engineState.mem,
-                tag: codex.engineState.tag,
-                invert: codex.engineState.invert,
-                on_track_runs: codex.engineState.on_track_runs,
-                on_stand_runs: codex.engineState.on_stand_runs,
-                last_kronecker_bar: codex.engineState.last_kronecker_bar,
-                last_kronecker_m: codex.engineState.last_kronecker_m,
-                last_kronecker_n: codex.engineState.last_kronecker_n,
-                last_kronecker_h: codex.engineState.last_kronecker_h,
-            } : null,
-            time_exact: codex.time.toString(),
-            generation: codex.gen,
-            symbolic_coherent: codex.coherent,
-            symbolic_s_exact: codex.s.toString(),
-            symbolic_r_exact: codex.r.toString(),
-            symbolic_s2_exact: codex.s2.toString(),
-            symbolic_r2_exact: codex.r2.toString(),
-            symbolic_sr_ratio_exact: codex.srRatio.toString(),
-            symbolic_dev_exact: codex.dev.toString(),
-            engine_arc_sq_exact: codex.engineArcSq.toString(),
-            engine_radius_sq_exact: codex.engineRadiusSq.toString(),
-            engine_deviation_exact: codex.engineDeviation.toString(),
-            engine_re_psi_exact: codex.engineRePsi.toString(),
-            eps_exact: codex.eps.toString(),
-            obs_re_exact: codex.obsRe.toString(),
-            obs_im_exact: codex.obsIm.toString(),
-            obs_grid_count: codex.obsGridCount,
-            psi_norm_sq_exact: codex.psiNormSq.toString(),
-            zeta_re_exact: codex.lastZetaRe.toString(),
-            zeta_im_exact: codex.lastZetaIm.toString(),
-            dbz: codex.dbz,
-            marketM: codex.marketM,
-            marketN: codex.marketN,
-            marketImbalance: codex.marketImbalance,
-            marketRegime: codex.marketRegime,
-            crtState: codex.crtState,
-            crtResidues: codex.crtResidues,
-            selfRefClosure: codex.selfRefClosure,
-            proofDepth: codex.proofDepth,
-            activePhoneme: codex.activePhoneme,
-            commutatorNorm_exact: codex.commutatorNorm.toString(),
-            curlMagnitude_exact: codex.curlMagnitude.toString(),
-            engineIndicatorPasses: codex.engineIndicatorPasses,
-            engineSignalFires: codex.engineSignalFires,
-            engineTrailActive: codex.engineTrailActive,
-            engineTrailSL: codex.engineTrailSL,
-            engineTrailTP: codex.engineTrailTP,
-            engineTrailEntry: codex.engineTrailEntry,
-            engineTrailSide: codex.engineTrailSide,
-            engineHasLong: codex.engineHasLong,
-            engineHasShort: codex.engineHasShort,
-            engineKC: codex.engineKC,
-            enginePrime: codex.enginePrime,
-            engineDime: codex.engineDime,
-            engineMem: codex.engineMem,
-            engineTag: codex.engineTag,
-            engineInvert: codex.engineInvert,
-            engineOnTrack: codex.engineOnTrack,
-            engineOnStand: codex.engineOnStand,
-            engineLastKronBar: codex.engineLastKronBar,
-            engineLastKronM: codex.engineLastKronM,
-            engineLastKronN: codex.engineLastKronN,
-            engineLastKronH: codex.engineLastKronH,
-            fvgLines: (window.chartOverlay && window.chartOverlay.fvgLines) ? window.chartOverlay.fvgLines.map(l => ({
-                type: l.type, price_exact: l.price.toString(), idx: l.idx, user_id: l.user_id || null
-            })) : [],
-            sHistory: codex.sHistory.slice(-200),
-            rHistory: codex.rHistory.slice(-200),
-            engineArcHistory: codex.engineArcHistory.slice(-200),
-            proofTrace: codex.proofTrace.slice(-32),
-            trajectory: codex.traj.slice(-100).map(t => ({
-                x: t.x, y: t.y, z: t.z, coherent: t.coherent, dev: t.dev
-            }))
-        };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `codex_symbolica_exact_${Date.now()}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-    });
-
-    document.getElementById('helpBtn').addEventListener('click', () => {
-        showHelp = !showHelp;
-        explainPanel.style.display = showHelp ? 'block' : 'none';
-        document.getElementById('helpBtn').classList.toggle('active', showHelp);
-    });
-
-    window.addEventListener('resize', () => {
-        resizeCanvas();
-        if (window.chartOverlay) window.chartOverlay.resize();
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
-        if (e.key === ' ' || e.key === 'Space') {
-            e.preventDefault();
-            document.getElementById('pauseBtn').click();
-        }
-        if (e.key === 'r' || e.key === 'R') {
-            document.getElementById('resetBtn').click();
-        }
-        if (e.key === 'm' || e.key === 'M') {
-            document.getElementById('modeBtn').click();
-        }
-        if (e.key === 'e' || e.key === 'E') {
-            document.getElementById('exportBtn').click();
-        }
-        if (e.key === 'h' || e.key === 'H') {
-            document.getElementById('helpBtn').click();
-        }
-        if (e.key === 't' || e.key === 'T') {
-            if (e.shiftKey) {
-                document.getElementById('traceBtn').click();
-            } else {
-                if (window.chartOverlay) window.chartOverlay.setTool('top');
-            }
-        }
-        if (e.key === 'b' || e.key === 'B') {
-            if (window.chartOverlay) window.chartOverlay.setTool('bott');
-        }
-        if (e.key === 'd' || e.key === 'D') {
-            if (window.chartOverlay) window.chartOverlay.setTool('del');
-        }
-        if (e.key === 'Escape') {
-            if (window.chartOverlay) window.chartOverlay.setTool('pan');
-        }
-        if (e.key === 's' || e.key === 'S') {
-            if (codex.mode !== 4) {
-                codex.mode = 4;
-                document.getElementById('modeBtn').textContent = 'S_R';
-                modeDisplay.textContent = 'S_R';
-            } else {
-                codex.mode = 0;
-                document.getElementById('modeBtn').textContent = 'FULL';
-                modeDisplay.textContent = 'FULL';
-            }
-        }
-        if (e.key === '+' || e.key === '=') {
-            zoom = Math.min(2.5, zoom + 0.05);
-        }
-        if (e.key === '-') {
-            zoom = Math.max(0.3, zoom - 0.05);
-        }
-    });
-
-    // ============================================================
-    // CHART OVERLAY
+    // CHART OVERLAY — FVG drawing, hit-test, state ingestion
     // ============================================================
     class ChartOverlay {
         constructor(canvasEl, ctxEl, codexRef) {
@@ -4000,7 +3890,11 @@
                 if (e.touches.length === 1) {
                     const rect = c.getBoundingClientRect();
                     const t = e.touches[0];
-                    this._touchStart = { x: t.clientX - rect.left, y: t.clientY - rect.top, t: Date.now() };
+                    this._touchStart = {
+                        x: t.clientX - rect.left,
+                        y: t.clientY - rect.top,
+                        t: Date.now()
+                    };
                 }
             }, { passive: true });
             c.addEventListener('touchend', (e) => {
@@ -4068,10 +3962,14 @@
                 const sig = this.signalExact.toFloat();
                 const now = Date.now();
                 if (bid > 0) {
-                    if (this.candles.length === 0 || now - this.candles[this.candles.length - 1].t > 5000) {
+                    if (this.candles.length === 0
+                        || now - this.candles[this.candles.length - 1].t > 5000) {
                         this.candles.push({
                             t: now,
-                            o: bid, h: Math.max(bid, sig), l: Math.min(bid, sig), c: bid,
+                            o: bid,
+                            h: Math.max(bid, sig),
+                            l: Math.min(bid, sig),
+                            c: bid,
                             regime: state.regime || 'Unknown'
                         });
                     } else {
@@ -4090,10 +3988,7 @@
             }
         }
 
-        updateFromCodex() {}
-
         addFVG(type, priceFraction) {
-            // PATCH-A: engine-authoritative coherence gate
             let coherent = null;
             let devStr = '';
             if (this.backendState && this.backendState.coherent !== undefined) {
@@ -4107,7 +4002,7 @@
                 devStr = localCheck.dev.toString();
             }
             if (!coherent) {
-                console.warn('FVG rejected: engine reports arc-length deviation', devStr);
+                console.warn('FVG rejected: engine reports symbolic deviation', devStr);
                 this._flashContinuityBadge(false);
                 if (TMA.available) {
                     try { TelegramWebAppAPI.HapticFeedback.notificationOccurred('error'); } catch (_) {}
@@ -4127,6 +4022,7 @@
                 created: Date.now(),
                 coherent: true,
                 user_id: TMA.userId || null,
+                injected: false,
             };
             this.fvgLines.push(line);
             this.fvgCounter++;
@@ -4161,7 +4057,8 @@
             if (!this.backendState) return;
             const currentPrice = this.lastPriceExact;
             const regime = this.backendState.regime || 'Unknown';
-            const regimeIsTrend = (regime === 'sTrend' || regime === 'tTrend' || regime === 'sVolatile' || regime === 'tVolatile');
+            const regimeIsTrend = (regime === 'sTrend' || regime === 'tTrend'
+                || regime === 'sVolatile' || regime === 'tVolatile');
             if (!regimeIsTrend) return;
 
             for (let i = this.fvgLines.length - 1; i >= 0; i--) {
@@ -4186,15 +4083,14 @@
             };
         }
 
-        // PATCH-K: single unified badge update
         _flashContinuityBadge(ok) {
             if (!continuityBadge) return;
             continuityBadge.classList.remove('coherent', 'deviant', 'waiting', 'symbolic');
             continuityBadge.classList.add(ok ? 'coherent' : 'deviant');
             if (ok) {
-                continuityBadge.textContent = '● ARC-LENGTH: COHERENT (engine: s²=r²)';
+                continuityBadge.textContent = '● ENGINE COHERENT (symbolic s²=r²)';
             } else {
-                continuityBadge.textContent = '● ARC-LENGTH: DEVIATION (engine: s²≠r²)';
+                continuityBadge.textContent = '● ENGINE DEVIATION (symbolic s²≠r²)';
             }
             setTimeout(() => {
                 updateContinuityBadge();
@@ -4228,21 +4124,27 @@
                     this.codex.pushTrace({
                         type: 'tma',
                         t: this.codex.time.toFloat(),
-                        msg: `FVG 422: ${err.detail}`
+                        msg: 'FVG 422: ' + err.detail
                     });
+                    line.injected = false;
+                    this._renderFVGList();
                 } else if (res.status === 201) {
                     const respData = await res.json();
-                    const leechInfo = respData.leech_hash
-                        ? ` Λ=${respData.leech_hash.slice(0, 12)}${respData.is_lattice_point ? ' ✓' : ''}`
-                        : '';
+                    if (respData.anchor) {
+                        line.injected = true;
+                        this._renderFVGList();
+                    }
+                    const injectTag = respData.anchor ? ' [Premium/Discount in]' : '';
                     this.codex.pushTrace({
                         type: 'tma',
                         t: this.codex.time.toFloat(),
-                        msg: `FVG POST OK: ${line.type} @ ${line.price.toString()}${leechInfo}`
+                        msg: 'FVG POST OK: ' + line.type + ' @ '
+                            + line.price.toString() + injectTag
                     });
                 }
             } catch (err) {
                 console.warn('FVG publish failed (offline):', err.message);
+                line.injected = false;
             }
         }
 
@@ -4336,7 +4238,7 @@
             }
         }
 
-        _onMove(e) { if (this._dragging && this.tool === 'pan') { } }
+        _onMove(e) { if (this._dragging && this.tool === 'pan') { /* reserved */ } }
         _onUp() { this._dragging = false; }
 
         _onClick(e) {
@@ -4352,7 +4254,7 @@
                 const priceFrac = Fraction.fromFloat(priceFloat);
                 const ok = this.addFVG(this.tool === 'top' ? 'top' : 'bott', priceFrac);
                 if (ok) {
-                    console.log(`FVG[${this.tool}] added: price=${priceFrac.toString()}`);
+                    console.log('FVG[' + this.tool + '] added: price=' + priceFrac.toString());
                 }
             } else if (this.tool === 'del') {
                 const hit = this._hitTestFVG(x, y);
@@ -4369,7 +4271,9 @@
             if (!container) return;
             if (countEl) countEl.textContent = this.fvgLines.length;
             if (this.fvgLines.length === 0) {
-                container.innerHTML = '<div class="fvg-empty">No FVGs drawn. Select ▲ or ▼ and click the chart.</div>';
+                container.innerHTML = '<div class="fvg-empty">'
+                    + 'No FVGs drawn. Select ▲ or ▼ and click the chart.'
+                    + '</div>';
                 return;
             }
             const sorted = this.fvgLines.slice().sort((a, b) => b.price.toFloat() - a.price.toFloat());
@@ -4379,16 +4283,19 @@
                 const symbol = line.type === 'top' ? '▲ PREMIUM' : '▼ DISCOUNT';
                 const exactStr = line.price.toString();
                 const floatStr = line.price.toFloat().toFixed(6);
-                const userTag = line.user_id ? `<span class="fvg-user">u${line.user_id}</span>` : '';
-                const leechTag = line.leech_hash ? `<span class="fvg-leech">Λ=${line.leech_hash.slice(0, 8)}</span>` : '';
-                html += `<div class="fvg-row ${cls}" data-idx="${line.idx}">` +
-                    `<span class="fvg-type">${symbol}</span>` +
-                    `<span class="fvg-price">${floatStr}<span class="fvg-price-exact">${exactStr}</span></span>` +
-                    `<span class="fvg-status coherent">s=r</span>` +
-                    `${userTag}` +
-                    `${leechTag}` +
-                    `<span class="fvg-del" data-del="${line.idx}">✖</span>` +
-                    `</div>`;
+                const userTag = line.user_id
+                    ? '<span class="fvg-user">u' + line.user_id + '</span>' : '';
+                const injectTag = line.injected
+                    ? '<span class="fvg-inject">→ engine[]</span>' : '';
+                html += '<div class="fvg-row ' + cls + '" data-idx="' + line.idx + '">'
+                    + '<span class="fvg-type">' + symbol + '</span>'
+                    + '<span class="fvg-price">' + floatStr
+                    + '<span class="fvg-price-exact">' + exactStr + '</span></span>'
+                    + '<span class="fvg-status coherent">s=r</span>'
+                    + userTag
+                    + injectTag
+                    + '<span class="fvg-del" data-del="' + line.idx + '">✖</span>'
+                    + '</div>';
             }
             container.innerHTML = html;
 
@@ -4446,13 +4353,18 @@
                     const bull = candle.c >= candle.o;
 
                     let tint = 'rgba(80, 140, 200, 0.15)';
-                    if (candle.regime && candle.regime.indexOf('Volatile') >= 0) tint = 'rgba(255, 102, 170, 0.15)';
-                    else if (candle.regime && candle.regime.indexOf('Trend') >= 0) tint = 'rgba(255, 170, 68, 0.15)';
-                    else if (candle.regime && candle.regime.indexOf('Range') >= 0) tint = 'rgba(68, 136, 255, 0.15)';
+                    if (candle.regime && candle.regime.indexOf('Volatile') >= 0)
+                        tint = 'rgba(255, 102, 170, 0.15)';
+                    else if (candle.regime && candle.regime.indexOf('Trend') >= 0)
+                        tint = 'rgba(255, 170, 68, 0.15)';
+                    else if (candle.regime && candle.regime.indexOf('Range') >= 0)
+                        tint = 'rgba(68, 136, 255, 0.15)';
 
                     const yH = this._priceToY(candle.h);
                     const yL = this._priceToY(candle.l);
-                    c.strokeStyle = bull ? 'rgba(0, 255, 136, 0.65)' : 'rgba(255, 68, 102, 0.65)';
+                    c.strokeStyle = bull
+                        ? 'rgba(0, 255, 136, 0.65)'
+                        : 'rgba(255, 68, 102, 0.65)';
                     c.lineWidth = 1;
                     c.beginPath();
                     c.moveTo(xMid, yH);
@@ -4463,7 +4375,9 @@
                     const yC = this._priceToY(candle.c);
                     const bodyTop = Math.min(yO, yC);
                     const bodyH = Math.max(1, Math.abs(yC - yO));
-                    c.fillStyle = bull ? tint.replace('0.15', '0.55') : 'rgba(255, 68, 102, 0.55)';
+                    c.fillStyle = bull
+                        ? tint.replace('0.15', '0.55')
+                        : 'rgba(255, 68, 102, 0.55)';
                     c.fillRect(x0 + 1, bodyTop, Math.max(1, cw - 2), bodyH);
                 }
             } else {
@@ -4561,8 +4475,12 @@
             for (const line of this.fvgLines) {
                 const y = this._priceToY(line.price.toFloat());
                 const isTop = line.type === 'top';
-                const color = isTop ? 'rgba(68, 136, 255, 0.85)' : 'rgba(255, 68, 102, 0.85)';
-                const glowColor = isTop ? 'rgba(68, 136, 255, 0.25)' : 'rgba(255, 68, 102, 0.25)';
+                const color = isTop
+                    ? 'rgba(68, 136, 255, 0.85)'
+                    : 'rgba(255, 68, 102, 0.85)';
+                const glowColor = isTop
+                    ? 'rgba(68, 136, 255, 0.25)'
+                    : 'rgba(255, 68, 102, 0.25)';
 
                 c.strokeStyle = glowColor;
                 c.lineWidth = 6;
@@ -4592,7 +4510,11 @@
             }
 
             if (this.tool !== 'pan') {
-                const labels = { top: '▲ DRAW PREMIUM', bott: '▼ DRAW DISCOUNT', del: '✖ DELETE FVG' };
+                const labels = {
+                    top: '▲ DRAW PREMIUM',
+                    bott: '▼ DRAW DISCOUNT',
+                    del: '✖ DELETE FVG'
+                };
                 c.fillStyle = 'rgba(0, 255, 204, 0.9)';
                 c.font = 'bold 10px "Courier New", monospace';
                 c.textAlign = 'left';
@@ -4625,6 +4547,8 @@
             const hudDime = document.getElementById('hud-dime');
             const hudOnTrack = document.getElementById('hud-ontrack');
             const hudOnStand = document.getElementById('hud-onstand');
+            const hudXScan = document.getElementById('hud-xscan');
+            const hudYScan = document.getElementById('hud-yscan');
 
             if (this.backendState) {
                 if (hudSymbol) hudSymbol.textContent = this.backendState.symbol || 'BTC-USD';
@@ -4634,7 +4558,11 @@
                 if (hudTick) hudTick.textContent = this.backendState.tick || '0';
                 if (hudM) hudM.textContent = this.backendState.m_count || '0';
                 if (hudN) hudN.textContent = this.backendState.n_count || '0';
-                if (hudDelta) hudDelta.textContent = (this.backendState.m_count - this.backendState.n_count - 2) || '0';
+                if (hudDelta) {
+                    const m = parseInt(this.backendState.m_count || 0, 10);
+                    const n = parseInt(this.backendState.n_count || 0, 10);
+                    hudDelta.textContent = String(m - n - 2);
+                }
                 if (hudRegime) {
                     const r = this.backendState.regime || 'Unknown';
                     hudRegime.textContent = r;
@@ -4656,7 +4584,10 @@
                 }
                 if (hudInd) hudInd.textContent = String(this.backendState.indicator_populate_count || 0);
                 if (hudSig) hudSig.textContent = String(this.backendState.imbalance_fire_count || 0);
-                if (hudRePsi) hudRePsi.textContent = this.backendState.re_psi !== undefined ? String(this.backendState.re_psi).slice(0, 14) : '—';
+                if (hudRePsi) {
+                    hudRePsi.textContent = this.backendState.re_psi !== undefined
+                        ? String(this.backendState.re_psi).slice(0, 14) : '—';
+                }
                 if (hudTrail) {
                     if (this.backendState.trailing_stop_active) {
                         hudTrail.textContent = 'ACTIVE';
@@ -4682,6 +4613,14 @@
                 }
                 if (hudOnTrack) hudOnTrack.textContent = String(this.backendState.on_track_runs || 0);
                 if (hudOnStand) hudOnStand.textContent = String(this.backendState.on_stand_runs || 0);
+                if (hudXScan) {
+                    hudXScan.textContent = this.backendState.X_scan !== undefined
+                        ? String(this.backendState.X_scan) : '—';
+                }
+                if (hudYScan) {
+                    hudYScan.textContent = this.backendState.Y_scan !== undefined
+                        ? String(this.backendState.Y_scan) : '—';
+                }
             } else {
                 if (hudConn) {
                     hudConn.textContent = 'LOCAL-ONLY';
@@ -4701,6 +4640,8 @@
                 if (hudDime) hudDime.textContent = '—';
                 if (hudOnTrack) hudOnTrack.textContent = '0';
                 if (hudOnStand) hudOnStand.textContent = '0';
+                if (hudXScan) hudXScan.textContent = '—';
+                if (hudYScan) hudYScan.textContent = '—';
             }
         }
 
@@ -4714,7 +4655,7 @@
     }
 
     // ============================================================
-    // TELEGRAM BRIDGE
+    // TELEGRAM BRIDGE — handshake + poll
     // ============================================================
     class TelegramBridge {
         constructor(overlay, opts) {
@@ -4736,7 +4677,9 @@
             const url = this.endpoint.replace(/\/$/, '') + '/handshake';
             const payload = {
                 initData: TMA.initData,
-                chat_id: TMA.initDataUnsafe && TMA.initDataUnsafe.user ? TMA.initDataUnsafe.user.id : null
+                chat_id: (TMA.initDataUnsafe && TMA.initDataUnsafe.user)
+                    ? TMA.initDataUnsafe.user.id
+                    : null
             };
             try {
                 const res = await fetch(url, {
@@ -4750,7 +4693,7 @@
                     this.overlay.codex.pushTrace({
                         type: 'tma',
                         t: this.overlay.codex.time.toFloat(),
-                        msg: `TMA handshake failed: ${res.status}`
+                        msg: 'TMA handshake failed: ' + res.status
                     });
                     return;
                 }
@@ -4763,7 +4706,7 @@
                 this.overlay.codex.pushTrace({
                     type: 'tma',
                     t: this.overlay.codex.time.toFloat(),
-                    msg: `TMA handshake OK: @${TMA.username} (id=${TMA.userId})`
+                    msg: 'TMA handshake OK: @' + TMA.username + ' (id=' + TMA.userId + ')'
                 });
             } catch (err) {
                 tmaLog('Handshake error: ' + err.message);
@@ -4816,11 +4759,14 @@
     }
 
     // ============================================================
-    // INITIALIZATION
+    // GLOBAL BOOTSTRAP VARIABLES
     // ============================================================
     window.chartOverlay = null;
     window.telegramBridge = null;
 
+    // ============================================================
+    // INITIALIZATION
+    // ============================================================
     function initializeVisualization() {
         if (!preFlightValidate()) {
             showError('Canvas not ready. Retrying…');
@@ -4849,10 +4795,18 @@
             window.chartOverlay.setTool('pan');
             window.chartOverlay._renderFVGList();
 
-            document.getElementById('toolPan').addEventListener('click', () => window.chartOverlay.setTool('pan'));
-            document.getElementById('toolTop').addEventListener('click', () => window.chartOverlay.setTool('top'));
-            document.getElementById('toolBott').addEventListener('click', () => window.chartOverlay.setTool('bott'));
-            document.getElementById('toolDel').addEventListener('click', () => window.chartOverlay.setTool('del'));
+            document.getElementById('toolPan').addEventListener('click', () => {
+                window.chartOverlay.setTool('pan');
+            });
+            document.getElementById('toolTop').addEventListener('click', () => {
+                window.chartOverlay.setTool('top');
+            });
+            document.getElementById('toolBott').addEventListener('click', () => {
+                window.chartOverlay.setTool('bott');
+            });
+            document.getElementById('toolDel').addEventListener('click', () => {
+                window.chartOverlay.setTool('del');
+            });
 
             const connectBtn = document.getElementById('connectBtn');
             connectBtn.addEventListener('click', () => {
@@ -4888,6 +4842,379 @@
             console.error('Chart overlay error:', e);
         }
 
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            paused = !paused;
+            document.getElementById('pauseBtn').textContent = paused ? '▶' : '⏸';
+            document.getElementById('pauseBtn').classList.toggle('active', paused);
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            codex.reset();
+            paused = false;
+            document.getElementById('pauseBtn').textContent = '⏸';
+            document.getElementById('pauseBtn').classList.remove('active');
+            coherenceSpan.textContent = 'INITIALIZING';
+            coherenceSpan.style.color = 'var(--tma-text)';
+            coherenceSpan.classList.remove('symbolic-mode');
+            coherenceSourceSpan.textContent = '—';
+            generationSpan.textContent = '0';
+            deviationSpan.textContent = '0.0000';
+            epsilonSpan.textContent = '1/100';
+            s2Exact.textContent = '0/1';
+            r2Exact.textContent = '1/1';
+            s2Val.textContent = '0.0000';
+            r2Val.textContent = '1.0000';
+            deltaVal.textContent = '0.0000';
+            obsVal.textContent = '0.0000';
+            srRatioSpan.textContent = '0.0000';
+            curlValSpan.textContent = '0.0000';
+            commValSpan.textContent = '0.0000';
+            psiNormValSpan.textContent = '0.0000';
+            zetaValSpan.textContent = '0.0000';
+            dbzBranchSpan.textContent = 'NONE';
+            aeaeDeltaSpan.textContent = '0';
+            aeaeMSpan.textContent = '0';
+            aeaeNSpan.textContent = '0';
+            aeaeDeltaPanelSpan.textContent = '0';
+            aeaeRegimeSpan.textContent = 'NEUTRAL';
+            obsRealSpan.textContent = '0.0000';
+            obsImagSpan.textContent = '0.0000';
+            obsGridSpan.textContent = '0';
+            obsPsiNormSpan.textContent = '0.0000';
+            zetaReSpan.textContent = '0.0000';
+            zetaImSpan.textContent = '0.0000';
+            zetaMagSpan.textContent = '0.0000';
+            if (engPriceSpan) engPriceSpan.textContent = '—';
+            if (engSignalSpan) engSignalSpan.textContent = '—';
+            if (engTickSpan) engTickSpan.textContent = '—';
+            if (engRegimeSpan) engRegimeSpan.textContent = '—';
+            if (engMnSpan) engMnSpan.textContent = '—';
+            if (engMnhSpan) engMnhSpan.textContent = '—';
+            if (engCoherenceSpan) {
+                engCoherenceSpan.textContent = '—';
+                engCoherenceSpan.className = 'value';
+            }
+            if (engArcSpan) engArcSpan.textContent = '—';
+            if (engRadSpan) engRadSpan.textContent = '—';
+            if (engDevSpan) engDevSpan.textContent = '—';
+            if (engRePsiSpan) engRePsiSpan.textContent = '—';
+            if (engFgSpan) engFgSpan.textContent = '—';
+            if (engIndSpan) engIndSpan.textContent = '—';
+            if (engSigSpan) engSigSpan.textContent = '—';
+            if (engRelaySpan) {
+                engRelaySpan.textContent = '—';
+                engRelaySpan.className = 'value relay-wait';
+            }
+            if (engTrailActiveSpan) {
+                engTrailActiveSpan.textContent = '—';
+                engTrailActiveSpan.className = 'value trail-inactive';
+            }
+            if (engTrailSLSpan) engTrailSLSpan.textContent = '—';
+            if (engTrailTPSpan) engTrailTPSpan.textContent = '—';
+            if (engTrailEntrySpan) engTrailEntrySpan.textContent = '—';
+            if (engTrailSideSpan) engTrailSideSpan.textContent = '—';
+            if (engHasLongSpan) engHasLongSpan.textContent = '—';
+            if (engHasShortSpan) engHasShortSpan.textContent = '—';
+            if (engKCSpan) { engKCSpan.textContent = '—'; engKCSpan.className = 'value'; }
+            if (engPrimeSpan) { engPrimeSpan.textContent = '—'; engPrimeSpan.className = 'value'; }
+            if (engDimeSpan) { engDimeSpan.textContent = '—'; engDimeSpan.className = 'value'; }
+            if (engMemSpan) engMemSpan.textContent = '—';
+            if (engTagSpan) engTagSpan.textContent = '—';
+            if (engInvertSpan) engInvertSpan.textContent = '—';
+            if (engOnTrackSpan) {
+                engOnTrackSpan.textContent = '—';
+                engOnTrackSpan.className = 'value counter-zero';
+            }
+            if (engOnStandSpan) {
+                engOnStandSpan.textContent = '—';
+                engOnStandSpan.className = 'value counter-zero';
+            }
+            if (engLastKronSpan) engLastKronSpan.textContent = '—';
+            if (engLastKronMnhSpan) engLastKronMnhSpan.textContent = '—';
+            if (engXPeriodSpan) engXPeriodSpan.textContent = String(X_PERIOD_CONSTANT);
+            if (engXScanSpan) engXScanSpan.textContent = '—';
+            if (engYScanSpan) engYScanSpan.textContent = '—';
+            if (indicatorPassesSpan) {
+                indicatorPassesSpan.textContent = '0';
+                indicatorPassesSpan.style.color = '#ffaa44';
+            }
+            if (signalFiresSpan) {
+                signalFiresSpan.textContent = '0';
+                signalFiresSpan.style.color = '#ffaa44';
+            }
+            if (trailStatusMetricSpan) {
+                trailStatusMetricSpan.textContent = '—';
+                trailStatusMetricSpan.className = 'value engine-wait';
+            }
+            if (scannerCountsMetricSpan) {
+                scannerCountsMetricSpan.textContent = '0 / 0';
+                scannerCountsMetricSpan.style.color = '#6688aa';
+            }
+            if (mnhMetricSpan) {
+                mnhMetricSpan.textContent = '0 / 0';
+                mnhMetricSpan.style.color = '#ffaa44';
+            }
+            if (relayBadge) {
+                relayBadge.textContent = 'RELAY: —';
+                relayBadge.className = 'wait';
+            }
+            if (trailBadge) {
+                trailBadge.textContent = 'TRAIL: INACTIVE';
+                trailBadge.className = 'inactive';
+            }
+            if (kpdKC) { kpdKC.textContent = 'KC:—'; kpdKC.className = 'kpd-kc kc-false'; }
+            if (kpdPrime) { kpdPrime.textContent = 'P:—'; kpdPrime.className = 'kpd-prime pn'; }
+            if (kpdDime) { kpdDime.textContent = 'D:—'; kpdDime.className = 'kpd-dime dn'; }
+            if (kpdMem) { kpdMem.textContent = 'M:—'; kpdMem.className = 'kpd-mem mn'; }
+            if (scanXScanSpan) scanXScanSpan.textContent = '—';
+            if (scanYScanSpan) scanYScanSpan.textContent = '—';
+            if (hudXScanSpan) hudXScanSpan.textContent = '—';
+            if (hudYScanSpan) hudYScanSpan.textContent = '—';
+            proofChain.classList.remove('visible');
+            proofTrace.classList.remove('visible');
+            proofTraceLines.innerHTML = '';
+            gaugeArc.setAttribute('stroke-dasharray', '0 282');
+            gaugeLabel.textContent = 's/r: 0.000';
+            proofProgress.style.width = '0%';
+            proofLatest.textContent = '';
+            sPolyline.setAttribute('points', '');
+            rPolyline.setAttribute('points', '');
+            engineArcPolyline.setAttribute('points', '');
+            lingosoActiveSpan.textContent = '—';
+            lingosoCoordsSpan.textContent = '(0.00, 0.00, 0.00)';
+            if (continuityBadge) {
+                continuityBadge.classList.remove('coherent', 'deviant', 'symbolic');
+                continuityBadge.classList.add('waiting');
+                continuityBadge.textContent = '● ENGINE: WAITING';
+            }
+            if (metricsAuthoritySym) metricsAuthoritySym.style.display = 'inline-block';
+            if (metricsAuthorityEng) metricsAuthorityEng.style.display = 'none';
+            if (engineAuthorityBadge) engineAuthorityBadge.style.display = 'none';
+            hideError();
+        });
+
+        document.getElementById('modeBtn').addEventListener('click', () => {
+            const mode = codex.toggleMode();
+            document.getElementById('modeBtn').textContent = mode;
+            modeDisplay.textContent = mode;
+        });
+
+        document.getElementById('traceBtn').addEventListener('click', () => {
+            showTrace = !showTrace;
+            codex._traceVisible = showTrace;
+            document.getElementById('traceBtn').classList.toggle('active', showTrace);
+            if (!showTrace) proofTrace.classList.remove('visible');
+        });
+
+        document.getElementById('exportBtn').addEventListener('click', () => {
+            const data = {
+                timestamp: Date.now(),
+                backend_url: BACKEND_URL,
+                relay_url: RELAY_URL,
+                coherence_authority: (codex.engineConnected && codex.engineCoherent !== null)
+                    ? 'ENGINE' : 'SYMBOLIC',
+                x_period_constant: X_PERIOD_CONSTANT,
+                y_start_constant: Y_START_CONSTANT,
+                engine_x_scan: codex.engineXScan,
+                engine_y_scan: codex.engineYScan,
+                tma: {
+                    available: TMA.available,
+                    userId: TMA.userId,
+                    username: TMA.username,
+                    platform: TMA.platform,
+                    handshakeOk: TMA.handshakeOk,
+                    publicUrl: TMA.publicUrl,
+                },
+                engine_snapshot: codex.engineState ? {
+                    price: codex.engineState.price,
+                    signal: codex.engineState.signal,
+                    tick: codex.engineState.tick,
+                    regime: codex.engineState.regime,
+                    m_count: codex.engineState.m_count,
+                    n_count: codex.engineState.n_count,
+                    m_at_h: codex.engineState.m_at_h,
+                    n_at_h: codex.engineState.n_at_h,
+                    h_bar: codex.engineState.h_bar,
+                    coherent: codex.engineState.coherent,
+                    arc_sq: codex.engineState.arc_sq,
+                    radius_sq: codex.engineState.radius_sq,
+                    deviation: codex.engineState.deviation,
+                    re_psi: codex.engineState.re_psi,
+                    engine_initialized: codex.engineState.engine_initialized,
+                    indicator_populate_count: codex.engineState.indicator_populate_count,
+                    imbalance_fire_count: codex.engineState.imbalance_fire_count,
+                    relay_url: codex.engineState.relay_url,
+                    trailing_stop_active: codex.engineState.trailing_stop_active,
+                    trailing_stop_price: codex.engineState.trailing_stop_price,
+                    trailing_take_profit: codex.engineState.trailing_take_profit,
+                    trailing_stop_entry: codex.engineState.trailing_stop_entry,
+                    trailing_stop_side: codex.engineState.trailing_stop_side,
+                    has_open_long: codex.engineState.has_open_long,
+                    has_open_short: codex.engineState.has_open_short,
+                    KC: codex.engineState.KC,
+                    prime: codex.engineState.prime,
+                    dime: codex.engineState.dime,
+                    mem: codex.engineState.mem,
+                    tag: codex.engineState.tag,
+                    invert: codex.engineState.invert,
+                    on_track_runs: codex.engineState.on_track_runs,
+                    on_stand_runs: codex.engineState.on_stand_runs,
+                    last_kronecker_bar: codex.engineState.last_kronecker_bar,
+                    last_kronecker_m: codex.engineState.last_kronecker_m,
+                    last_kronecker_n: codex.engineState.last_kronecker_n,
+                    last_kronecker_h: codex.engineState.last_kronecker_h,
+                    X_scan: codex.engineState.X_scan,
+                    Y_scan: codex.engineState.Y_scan,
+                } : null,
+                time_exact: codex.time.toString(),
+                generation: codex.gen,
+                symbolic_coherent: codex.coherent,
+                symbolic_s_exact: codex.s.toString(),
+                symbolic_r_exact: codex.r.toString(),
+                symbolic_s2_exact: codex.s2.toString(),
+                symbolic_r2_exact: codex.r2.toString(),
+                symbolic_sr_ratio_exact: codex.srRatio.toString(),
+                symbolic_dev_exact: codex.dev.toString(),
+                engine_arc_sq_exact: codex.engineArcSq.toString(),
+                engine_radius_sq_exact: codex.engineRadiusSq.toString(),
+                engine_deviation_exact: codex.engineDeviation.toString(),
+                engine_re_psi_exact: codex.engineRePsi.toString(),
+                eps_exact: codex.eps.toString(),
+                obs_re_exact: codex.obsRe.toString(),
+                obs_im_exact: codex.obsIm.toString(),
+                obs_grid_count: codex.obsGridCount,
+                psi_norm_sq_exact: codex.psiNormSq.toString(),
+                zeta_re_exact: codex.lastZetaRe.toString(),
+                zeta_im_exact: codex.lastZetaIm.toString(),
+                dbz: codex.dbz,
+                marketM: codex.marketM,
+                marketN: codex.marketN,
+                marketImbalance: codex.marketImbalance,
+                marketRegime: codex.marketRegime,
+                crtState: codex.crtState,
+                crtResidues: codex.crtResidues,
+                selfRefClosure: codex.selfRefClosure,
+                proofDepth: codex.proofDepth,
+                activePhoneme: codex.activePhoneme,
+                commutatorNorm_exact: codex.commutatorNorm.toString(),
+                curlMagnitude_exact: codex.curlMagnitude.toString(),
+                engineIndicatorPasses: codex.engineIndicatorPasses,
+                engineSignalFires: codex.engineSignalFires,
+                engineOnTrack: codex.engineOnTrack,
+                engineOnStand: codex.engineOnStand,
+                engineMAtH: codex.engineMAtH,
+                engineNAtH: codex.engineNAtH,
+                engineHBar: codex.engineHBar,
+                engineTrailActive: codex.engineTrailActive,
+                engineTrailSL: codex.engineTrailSL,
+                engineTrailTP: codex.engineTrailTP,
+                engineTrailEntry: codex.engineTrailEntry,
+                engineTrailSide: codex.engineTrailSide,
+                engineHasLong: codex.engineHasLong,
+                engineHasShort: codex.engineHasShort,
+                engineKC: codex.engineKC,
+                enginePrime: codex.enginePrime,
+                engineDime: codex.engineDime,
+                engineMem: codex.engineMem,
+                engineTag: codex.engineTag,
+                engineInvert: codex.engineInvert,
+                engineLastKronBar: codex.engineLastKronBar,
+                engineLastKronM: codex.engineLastKronM,
+                engineLastKronN: codex.engineLastKronN,
+                engineLastKronH: codex.engineLastKronH,
+                engineXScan: codex.engineXScan,
+                engineYScan: codex.engineYScan,
+                engineXPeriod: codex.engineXPeriod,
+                fvgLines: (window.chartOverlay && window.chartOverlay.fvgLines)
+                    ? window.chartOverlay.fvgLines.map(l => ({
+                        type: l.type,
+                        price_exact: l.price.toString(),
+                        idx: l.idx,
+                        user_id: l.user_id || null,
+                        injected: !!l.injected,
+                    }))
+                    : [],
+                sHistory: codex.sHistory.slice(-200),
+                rHistory: codex.rHistory.slice(-200),
+                engineArcHistory: codex.engineArcHistory.slice(-200),
+                proofTrace: codex.proofTrace.slice(-32),
+                trajectory: codex.traj.slice(-100).map(t => ({
+                    x: t.x, y: t.y, z: t.z, coherent: t.coherent, dev: t.dev
+                }))
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'codex_symbolica_exact_' + Date.now() + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('helpBtn').addEventListener('click', () => {
+            showHelp = !showHelp;
+            explainPanel.style.display = showHelp ? 'block' : 'none';
+            document.getElementById('helpBtn').classList.toggle('active', showHelp);
+        });
+
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            if (window.chartOverlay) window.chartOverlay.resize();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+            if (e.key === ' ' || e.key === 'Space') {
+                e.preventDefault();
+                document.getElementById('pauseBtn').click();
+            }
+            if (e.key === 'r' || e.key === 'R') {
+                document.getElementById('resetBtn').click();
+            }
+            if (e.key === 'm' || e.key === 'M') {
+                document.getElementById('modeBtn').click();
+            }
+            if (e.key === 'e' || e.key === 'E') {
+                document.getElementById('exportBtn').click();
+            }
+            if (e.key === 'h' || e.key === 'H') {
+                document.getElementById('helpBtn').click();
+            }
+            if (e.key === 't' || e.key === 'T') {
+                if (e.shiftKey) {
+                    document.getElementById('traceBtn').click();
+                } else {
+                    if (window.chartOverlay) window.chartOverlay.setTool('top');
+                }
+            }
+            if (e.key === 'b' || e.key === 'B') {
+                if (window.chartOverlay) window.chartOverlay.setTool('bott');
+            }
+            if (e.key === 'd' || e.key === 'D') {
+                if (window.chartOverlay) window.chartOverlay.setTool('del');
+            }
+            if (e.key === 'Escape') {
+                if (window.chartOverlay) window.chartOverlay.setTool('pan');
+            }
+            if (e.key === 's' || e.key === 'S') {
+                if (codex.mode !== 4) {
+                    codex.mode = 4;
+                    document.getElementById('modeBtn').textContent = 'S_R';
+                    modeDisplay.textContent = 'S_R';
+                } else {
+                    codex.mode = 0;
+                    document.getElementById('modeBtn').textContent = 'FULL';
+                    modeDisplay.textContent = 'FULL';
+                }
+            }
+            if (e.key === '+' || e.key === '=') {
+                zoom = Math.min(2.5, zoom + 0.05);
+            }
+            if (e.key === '-') {
+                zoom = Math.max(0.3, zoom - 0.05);
+            }
+        });
+
         try {
             render();
         } catch (e) {
@@ -4896,16 +5223,24 @@
         }
     }
 
+    // ============================================================
+    // RAF WRAPPER — drives the ChartOverlay.tick() alongside the
+    // main symbolic render loop.
+    // ============================================================
     const _rafOrig = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = function(cb) {
         return _rafOrig(function(ts) {
             if (window.chartOverlay) {
-                try { window.chartOverlay.tick(); } catch (e) { console.error('Overlay tick error:', e); }
+                try { window.chartOverlay.tick(); }
+                catch (e) { console.error('Overlay tick error:', e); }
             }
             cb(ts);
         });
     };
 
+    // ============================================================
+    // BOOT
+    // ============================================================
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
         setTimeout(initializeVisualization, 50);
     } else {
@@ -4913,11 +5248,12 @@
     }
 
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('⚡ CODEX SYMBOLICA · ÆEA — PATCHED EDITION');
+    console.log('⚡ CODEX SYMBOLICA · ÆEA — MQL4-PARITY EDITION');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(' PATCH-A: Engine-authoritative coherence panel');
-    console.log(' PATCH-B: BigInt-backed arbitrary-precision Fraction');
-    console.log(' PATCH-K: Single unified coherence badge');
+    console.log(' X_PERIOD (const) = 62 · Y_START (const) = 1');
+    console.log(' X_scan / Y_scan are MUTABLE — reset to y after OnCall/OnStand');
+    console.log(' ENGINE panel is authoritative for m/n/k/l/Regime/Premium/Discount');
+    console.log(' SYMBOLIC panels are telemetry — do NOT mirror MQL4 s=r');
     console.log(' ⌨  T=Top | B=Bottom | D=Delete | Esc=Pan tool');
     console.log(' ⌨  Shift+T = Trace | H=Help | Space=Pause | R=Reset');
     console.log(' 🖱  Right-click on a line also deletes it');
