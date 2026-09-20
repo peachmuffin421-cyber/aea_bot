@@ -6,7 +6,7 @@ Complete Quantum-Financial Topology Implementation
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: Final + PATCH-C through PATCH-I (constraint-locked, MQL4 parity)
+Version: Final + PATCH-C through PATCH-L (constraint-locked, MQL4 parity)
 """
 import asyncio
 import hashlib
@@ -46,18 +46,22 @@ from decimal import Decimal, getcontext
 #     finite decimal input.
 #
 #   REGIME-R (rational approximation):
-#     Fraction.cos_exact / sin_exact  →  REGIME-R. Uses Milü's 710/113 for 2π
-#         and a 12-term Taylor truncation. NOT the exact transcendental.
-#         The "_exact" suffix is historical; the true name is
-#         cos_rational, sin_rational. Aliases are provided below.
-#     Fraction.exp_pade  →  REGIME-R. [2/2] Padé approximant.
-#     Fraction.sqrt      →  REGIME-R. Newton–Raphson over ℚ with 30 iterations;
-#         returns a rational convergent, not the exact irrational root.
+#     Fraction.cos_rational / sin_rational  →  REGIME-R. Uses Milü's 710/113
+#         for 2π and a 12-term Taylor truncation. NOT the exact transcendental.
+#     Fraction.exp_rational  →  REGIME-R. [2/2] Padé approximant.
+#     Fraction.sqrt  →  REGIME-R. Newton–Raphson over ℚ with bounded
+#         iterations; returns a rational convergent, not the exact irrational.
+#         Iteration count is capped at REGIME_R_SQRT_ITERATIONS to keep the
+#         hot path (Quat.norm / normalize / step_quaternion_field) from
+#         blowing up the numerator/denominator to astronomically large BigInts.
 #
 # Rule of thumb: any operation that touches π, e, or √ is REGIME-R.
 # All other Fraction arithmetic is REGIME-E.
 # ============================================================================
 getcontext().prec = 50
+
+REGIME_R_SQRT_ITERATIONS = 8
+REGIME_R_SQRT_SCALE = 10 ** 12
 
 # ============================================================================
 # EXACT FRACTION WRAPPER
@@ -69,7 +73,7 @@ class Fraction:
         if isinstance(num, Fraction):
             self._f = num._f
         elif isinstance(num, PyFraction):
-            self._f = num
+            self._f = num._f
         elif isinstance(num, int) and isinstance(den, int):
             if den == 0:
                 raise ZeroDivisionError("Fraction denominator cannot be zero")
@@ -199,9 +203,9 @@ class Fraction:
     def __repr__(self):
         return f"Fraction({self._f.numerator}/{self._f.denominator})"
 
-    # ── REGIME-R: rational approximations (PATCH-C disclosure) ──────────────
+    # ── REGIME-R: rational approximations ─────────────────────────────────
     @staticmethod
-    def cos_exact(x: 'Fraction', terms: int = 12) -> 'Fraction':
+    def cos_rational(x: 'Fraction', terms: int = 12) -> 'Fraction':
         TWO_PI = Fraction(710, 113)
         xr = x
         xf = xr.to_float()
@@ -221,7 +225,7 @@ class Fraction:
         return total
 
     @staticmethod
-    def sin_exact(x: 'Fraction', terms: int = 12) -> 'Fraction':
+    def sin_rational(x: 'Fraction', terms: int = 12) -> 'Fraction':
         TWO_PI = Fraction(710, 113)
         xr = x
         xf = xr.to_float()
@@ -241,7 +245,7 @@ class Fraction:
         return total
 
     @staticmethod
-    def exp_pade(x: 'Fraction') -> 'Fraction':
+    def exp_rational(x: 'Fraction') -> 'Fraction':
         x2_12 = x * x / Fraction(12, 1)
         num = Fraction(1, 1) + x / Fraction(2, 1) + x2_12
         den = Fraction(1, 1) - x / Fraction(2, 1) + x2_12
@@ -249,7 +253,7 @@ class Fraction:
             return Fraction(1, 1)
         return num / den
 
-    def sqrt(self, iterations: int = 30) -> 'Fraction':
+    def sqrt(self, iterations: int = REGIME_R_SQRT_ITERATIONS) -> 'Fraction':
         if self._f.numerator < 0:
             raise ValueError("sqrt of negative fraction")
         if self._f.numerator == 0:
@@ -260,21 +264,22 @@ class Fraction:
         ds = int(math.isqrt(d))
         if ns * ns == n and ds * ds == d:
             return Fraction(ns, ds)
-        x0 = max(1, int(math.isqrt(int(self.to_float() * 1000000))))
-        x = Fraction(x0, 1000)
+        x0 = max(1, int(math.isqrt(int(self.to_float() * REGIME_R_SQRT_SCALE))))
+        x = Fraction(x0, int(math.isqrt(REGIME_R_SQRT_SCALE)))
         two = Fraction(2, 1)
         for _ in range(iterations):
             x = (x + self / x) / two
         return x
 
-# PATCH-C aliases: name the approximation regime truthfully.
-Fraction.cos_rational = staticmethod(Fraction.cos_exact)
-Fraction.sin_rational = staticmethod(Fraction.sin_exact)
-Fraction.exp_rational = staticmethod(Fraction.exp_pade)
+# Aliases: name the approximation regime truthfully.
+Fraction.cos_exact = staticmethod(Fraction.cos_rational)
+Fraction.sin_exact = staticmethod(Fraction.sin_rational)
+Fraction.exp_pade = staticmethod(Fraction.exp_rational)
+
+Fraction.cos_rational._regime = "R"
+Fraction.sin_rational._regime = "R"
+Fraction.exp_rational._regime = "R"
 Fraction.sqrt._regime = "R"
-Fraction.cos_exact._regime = "R"
-Fraction.sin_exact._regime = "R"
-Fraction.exp_pade._regime = "R"
 Fraction.__add__._regime = "E"
 Fraction.__sub__._regime = "E"
 Fraction.__mul__._regime = "E"
@@ -463,15 +468,15 @@ class Quat:
         for k in range(1, 13):
             kf = Fraction(k, 1)
             spow = kf * s
-            sinv = Fraction.sin_exact(spow + Fraction(1, 2), 8)
-            cosv = Fraction(1, 1) + Fraction(1, 10) * Fraction.cos_exact(spow * Fraction(7, 10), 8)
+            sinv = Fraction.sin_rational(spow + Fraction(1, 2), 8)
+            cosv = Fraction(1, 1) + Fraction(1, 10) * Fraction.cos_rational(spow * Fraction(7, 10), 8)
             nf = spow * sinv * cosv
-            ph = Fraction.sin_exact(time_f * Fraction(2, 10) * kf + kf, 8)
+            ph = Fraction.sin_rational(time_f * Fraction(2, 10) * kf + kf, 8)
             contribution = e * nf
             pA = pA + contribution * ph
-            pB = pB + contribution * Fraction.cos_exact(time_f * Fraction(3, 10) * kf + Fraction(1, 1), 8)
-            pC = pC + contribution * Fraction.sin_exact(time_f * Fraction(25, 100) * kf + Fraction(2, 1), 8)
-            pD = pD + contribution * Fraction.cos_exact(time_f * Fraction(35, 100) * kf + Fraction(3, 1), 8)
+            pB = pB + contribution * Fraction.cos_rational(time_f * Fraction(3, 10) * kf + Fraction(1, 1), 8)
+            pC = pC + contribution * Fraction.sin_rational(time_f * Fraction(25, 100) * kf + Fraction(2, 1), 8)
+            pD = pD + contribution * Fraction.cos_rational(time_f * Fraction(35, 100) * kf + Fraction(3, 1), 8)
             e = e * eps
             if e.abs().to_float() < threshold.to_float():
                 break
@@ -846,6 +851,24 @@ def to_decimal(value):
     except Exception:
         return Decimal('0.0')
 
+def symbol_point(symbol: str) -> Decimal:
+    """Return the point size (10^-digits) for the given symbol."""
+    try:
+        digits = int(_symbol_digits(symbol))
+    except Exception:
+        digits = 2
+    return Decimal(10) ** Decimal(-digits)
+
+def _symbol_digits(symbol: str) -> int:
+    try:
+        import MetaTrader5 as _mt5  # type: ignore
+        info = _mt5.symbol_info(symbol)
+        if info is not None and hasattr(info, "digits"):
+            return int(info.digits)
+    except Exception:
+        pass
+    return 2
+
 # ============================================================================
 # TELEGRAM WEB APP AUTHENTICATION
 # ============================================================================
@@ -889,7 +912,7 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
     return (u.get("id"), u.get("username"), True)
 
 # ============================================================================
-# FEED CLIENT — CLOUDFLARE WORKER RELAY  (PATCH-J: optional X-Relay-Key)
+# FEED CLIENT — CLOUDFLARE WORKER RELAY  (optional X-Relay-Key)
 # ============================================================================
 class FeedClient:
     def __init__(self, symbol: str = "BTC-USD"):
@@ -1092,6 +1115,7 @@ class AEEA_Engine:
         self._active_trailing_stop: Decimal = Decimal('0.0')
         self._active_trailing_tp: Decimal = Decimal('0.0')
         self._last_kronecker_bar: int = -1
+        self._point_size: Decimal = symbol_point(SYMBOL)
 
     def OnInit(self) -> None:
         logger.info("🟢 OnInit(): ÆEA engine lifecycle beginning")
@@ -1114,17 +1138,17 @@ class AEEA_Engine:
         s_param_time = st.time_fraction * Fraction(4, 10)
         s_param = s_param_time + normalized_delta
         theta_base = s_param * Fraction(7, 10)
-        theta_perturb = Fraction.sin_exact(s_param * Fraction(3, 10), 8) * Fraction(2, 10)
+        theta_perturb = Fraction.sin_rational(s_param * Fraction(3, 10), 8) * Fraction(2, 10)
         theta = theta_base + theta_perturb
         phi_base = s_param * Fraction(3, 10) + Fraction(5, 10)
-        phi_perturb = Fraction.cos_exact(s_param * Fraction(5, 10), 8) * Fraction(1, 10)
+        phi_perturb = Fraction.cos_rational(s_param * Fraction(5, 10), 8) * Fraction(1, 10)
         phi = phi_base + phi_perturb
         half_theta = theta / Fraction(2, 1)
         half_phi = phi / Fraction(2, 1)
-        q0 = Fraction.cos_exact(half_theta, 8) * Fraction.cos_exact(half_phi, 8)
-        q1 = Fraction.sin_exact(half_theta, 8) * Fraction.cos_exact(half_phi, 8)
-        q2 = Fraction.cos_exact(half_theta, 8) * Fraction.sin_exact(half_phi, 8)
-        q3 = Fraction.sin_exact(half_theta, 8) * Fraction.sin_exact(half_phi, 8)
+        q0 = Fraction.cos_rational(half_theta, 8) * Fraction.cos_rational(half_phi, 8)
+        q1 = Fraction.sin_rational(half_theta, 8) * Fraction.cos_rational(half_phi, 8)
+        q2 = Fraction.cos_rational(half_theta, 8) * Fraction.sin_rational(half_phi, 8)
+        q3 = Fraction.sin_rational(half_theta, 8) * Fraction.sin_rational(half_phi, 8)
         base = Quat(q0, q1, q2, q3)
         q_new = base.apply_natalia_fibration(s_param, self._eps, st.time_fraction).normalize()
         if q_new.norm_sq().is_zero():
@@ -1166,7 +1190,7 @@ class AEEA_Engine:
                     self._eps = Fraction(1, 100)
                 return 1
             else:
-                delta = Fraction.sin_exact(self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8) * Fraction(8, 10000)
+                delta = Fraction.sin_rational(self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8) * Fraction(8, 10000)
                 self._eps = self._eps + delta
                 if self._eps.to_float() > 0.05:
                     self._eps = Fraction(5, 100)
@@ -1320,7 +1344,8 @@ class AEEA_Engine:
             bid, ask = self.feed.get_current_price()
             if bid > Decimal('0.0'):
                 state.price = bid
-                state.Price = bid                state.t = datetime.now()
+                state.Price = bid
+                state.t = datetime.now()
         if state.X <= state.y:
             state.X = state.y + MAX_PERIOD
         size = state.X - state.y
@@ -1740,7 +1765,6 @@ class AEEA_Engine:
         if state.iI == state.iz: state.iJ = state.iw
         else: state.iJ = state.iz
 
-    # ═══ PATCH-F: regime-conditional inversion of C/c flags (MQL4 O()) ═══
     def _O(self, inp, inp0, inp1):
         state = self.state
         regime_idx = inp0 - state.y - 1
@@ -1749,16 +1773,16 @@ class AEEA_Engine:
         regime = state.Regime[regime_idx]
 
         if inp0 == state.O:
-            if (inp < inp1) and (regime == "sRange " or regime == "tRange "):
+            if (inp < inp1) and (regime == "sRange" or regime == "tRange"):
                 state.C = state.Cc
-            elif (regime != "sRange ") and (regime != "tRange "):
+            elif (regime != "sRange") and (regime != "tRange"):
                 state.C = not state.Cc
             else:
                 state.C = not state.Cc
         elif inp0 == state.o:
-            if (inp < inp1) and (regime == "sRange " or regime == "tRange "):
+            if (inp < inp1) and (regime == "sRange" or regime == "tRange"):
                 state.c = state.Cc
-            elif (regime != "sRange ") and (regime != "tRange "):
+            elif (regime != "sRange") and (regime != "tRange"):
                 state.c = not state.cC
             else:
                 state.c = not state.cC
@@ -1838,20 +1862,35 @@ class AEEA_Engine:
                 if state.Regime[idx] != "Stable":
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                     n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                    if idx < len(state.l): state.l[idx] = n >= 12
+                    if idx < len(state.k):
+                        state.k[idx] = m >= 12
+                    if idx < len(state.l):
+                        state.l[idx] = n >= 12
                     if self._on_fire(j, "sVolatile", "tVolatile"): state.Regime[idx] = "sVolatile"
+                else:
+                    if idx < len(state.k): state.k[idx] = False
+                    if idx < len(state.l): state.l[idx] = False
             elif iStdDev_norm < Decimal('50.0') and iATR_norm < Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     self._R(j)
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                     n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
-                    if idx < len(state.k): state.k[idx] = m >= 12
-                    if idx < len(state.l): state.l[idx] = n >= 12
+                    if idx < len(state.k):
+                        state.k[idx] = m >= 12
+                    if idx < len(state.l):
+                        state.l[idx] = n >= 12
                     if self._on_fire(j, "sRange", "tRange"): state.Regime[idx] = "sRange"
-            elif self._on_fire(j, "sTrend", "tTrend"): state.Regime[idx] = "sTrend"
+                else:
+                    if idx < len(state.k): state.k[idx] = False
+                    if idx < len(state.l): state.l[idx] = False
+            elif self._on_fire(j, "sTrend", "tTrend"):
+                state.Regime[idx] = "sTrend"
+                if idx < len(state.k): state.k[idx] = False
+                if idx < len(state.l): state.l[idx] = False
+            else:
+                if idx < len(state.k): state.k[idx] = False
+                if idx < len(state.l): state.l[idx] = False
 
-    # ═══ PATCH-G: per-j HH/LL anchored to the correct historical bar ═══
     def _anchor_j(self, j):
         st = self.state
         if not self.ohlcv_history:
@@ -1879,6 +1918,14 @@ class AEEA_Engine:
                         if idx < len(state.k): state.k[idx] = m >= 12
                         if idx < len(state.l): state.l[idx] = n >= 12
                         state.Regime[idx] = "tVolatile"
+                    else:
+                        m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
+                        n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
+                        if idx < len(state.k): state.k[idx] = m >= 12
+                        if idx < len(state.l): state.l[idx] = n >= 12
+                else:
+                    if idx < len(state.k): state.k[idx] = False
+                    if idx < len(state.l): state.l[idx] = False
             elif iStdDev_norm < Decimal('50.0') and iATR_norm < Decimal('50.0'):
                 if state.Regime[idx] != "Stable":
                     self._R(j)
@@ -1890,16 +1937,23 @@ class AEEA_Engine:
                         _H_j, _L_j = self._anchor_j(j)
                         self._F(j, _H_j, _L_j)
                         state.Regime[idx] = "tRange"
+                else:
+                    if idx < len(state.k): state.k[idx] = False
+                    if idx < len(state.l): state.l[idx] = False
             elif (state.Regime[idx] != "tTrend" and state.Regime[idx] != "sTrend" and
                   idx < len(state.LL) and idx < len(state.Discount) and
                   idx < len(state.HH) and idx < len(state.Premium) and
                   state.LL[idx] < state.Discount[idx] and state.HH[idx] > state.Premium[idx]):
                 state.Regime[idx] = "Stable"
+                if idx < len(state.k): state.k[idx] = False
+                if idx < len(state.l): state.l[idx] = False
             else:
                 if state.Regime[idx] != "tTrend":
                     _H_j, _L_j = self._anchor_j(j)
                     self._F(j, _H_j, _L_j)
                     state.Regime[idx] = "tTrend"
+                if idx < len(state.k): state.k[idx] = False
+                if idx < len(state.l): state.l[idx] = False
         if len(self.ohlcv_history) >= y + 1:
             close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
             state.Stock, _, state.Sale = bollinger_bands(close_prices, y)
@@ -1912,6 +1966,9 @@ class AEEA_Engine:
         if self._tick_log_counter >= 100:
             self._tick_log_counter = 0
             logger.info(f"⚡ Tick #{state.tick}: Price={state.price:.5f}, Signal={state.signal:.5f}, FG={state.FG}, Coherent={state.arc_coherent}")
+
+        # Trailing stop is evaluated first, mirroring MQL4's T() at the top of OnTick.
+        self._execute_trailing_stop()
 
         prev_price = self._last_price_for_quat
         self._step_quaternion_field(price_data.bid, prev_price)
@@ -2038,9 +2095,7 @@ class AEEA_Engine:
             state.GF = False
         if state.signature and state.chat_id:
             self._send_signal_alert()
-        self._execute_trailing_stop()
 
-    # ═══ PATCH-I: MQL4 loop bounds in on_track ═══
     def _on_track(self):
         state = self.state
         state.on_track_runs += 1
@@ -2073,13 +2128,11 @@ class AEEA_Engine:
                 if state.iw != 0 and state.jC == state.Cc: state.h = state.I
                 state.jC = not state.C
                 if state.iStdDev > Decimal('50.0'):
-                    state.S += 1
                     state.iz = s
                     state.iI = state.iw
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                     if idx < len(state.k): state.k[idx] = m >= 12
                 elif state.iATR < Decimal('50.0'):
-                    state.S += 1
                     state.iO = s
                     state.io = s
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
@@ -2087,12 +2140,12 @@ class AEEA_Engine:
                 else:
                     m = self._M(j, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
                     if idx < len(state.k): state.k[idx] = m >= 12
-                if self._on_fire(j, "Stable", "tVolatile"):
-                    self._F(j, state.iH, state.iL)
-                    state.Regime[idx] = "tVolatile"
-                else:
-                    state.Regime[idx] = "sVolatile"
-                state.S += 1
+                    if self._on_fire(j, "Stable", "tVolatile"):
+                        self._F(j, state.iH, state.iL)
+                        state.Regime[idx] = "tVolatile"
+                    else:
+                        state.Regime[idx] = "sVolatile"
+                    state.S += 1
             if state.Demand >= state.price or state.iDemand >= state.price or state.iDemand >= state.iL:
                 state.I = state.iZ
                 state.W = state.X - 1
@@ -2102,13 +2155,11 @@ class AEEA_Engine:
                 if state.iz != 0 and state.iC == state.Cc: state.h = state.I
                 state.iC = not state.C
                 if state.iStdDev > Decimal('50.0'):
-                    state.S += 1
                     state.iw = s
                     state.iI = state.iz
                     n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
                     if idx < len(state.l): state.l[idx] = n >= 12
                 elif state.iATR < Decimal('50.0'):
-                    state.S += 1
                     state.iO = s
                     state.io = s
                     n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
@@ -2116,12 +2167,12 @@ class AEEA_Engine:
                 else:
                     n = self._N(j, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
                     if idx < len(state.l): state.l[idx] = n >= 12
-                if self._on_fire(j, "Stable", "tVolatile"):
-                    self._F(j, state.iH, state.iL)
-                    state.Regime[idx] = "tVolatile"
-                else:
-                    state.Regime[idx] = "sVolatile"
-                state.S += 1
+                    if self._on_fire(j, "Stable", "tVolatile"):
+                        self._F(j, state.iH, state.iL)
+                        state.Regime[idx] = "tVolatile"
+                    else:
+                        state.Regime[idx] = "sVolatile"
+                    state.S += 1
             s += 1
         state.S = state.X
         state.T = state.X
@@ -2134,7 +2185,6 @@ class AEEA_Engine:
             else: state.w = state.X - 1
         else: state.w = state.X - 1
 
-    # ═══ PATCH-I: MQL4 loop bounds in on_stand (removed asymmetric s > 2) ═══
     def _on_stand(self):
         state = self.state
         state.on_stand_runs += 1
@@ -2300,7 +2350,6 @@ class AEEA_Engine:
                 state.tag = 0
         self._KC()
 
-    # ═══ PATCH-D: local m/n at call-site h-bar, not global sums ═══
     def _signal(self):
         state = self.state
         if state.price <= Decimal('0.0'):
@@ -2311,7 +2360,6 @@ class AEEA_Engine:
             logger.info(f"📡 Signal suppressed: h={state.h} maps to invalid index {h_idx}")
             return
 
-        # PATCH-D: recompute LOCAL m/n at the h-bar from the live indicator matrix.
         m_local = self._M(state.h, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
         n_local = self._N(state.h, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
 
@@ -2473,7 +2521,6 @@ class AEEA_Engine:
         self._populate_indicator_matrix()
         logger.info(f"🔄 OnReInit() completed — Tick preserved: {state.tick}")
 
-    # ═══ PATCH-H: real spread from Ask−Bid + commission ═══
     def _execute_trailing_stop(self):
         state = self.state
         has_long = state.has_open_long
@@ -2491,7 +2538,7 @@ class AEEA_Engine:
         if idx < 0 or idx >= len(state.Regime):
             return
         regime = state.Regime[idx]
-        if regime in ("tStable", "tCoherent", "sStable", "sCoherent"):
+        if regime in ("tStable", "tCoherent", "sStable", "sCoherent", "Stable"):
             return
         if state.price <= Decimal('0.0'):
             return
@@ -2511,26 +2558,26 @@ class AEEA_Engine:
             )
             return
 
-        # PATCH-H: real spread + commission
         if len(self.price_history) > 0:
             last = self.price_history[-1]
             current_spread = last.ask - last.bid
         else:
             current_spread = Decimal('0.0')
         commission_abs = abs(COMMISSION)
-        friction_points = ((current_spread + commission_abs) / Decimal('0.00001'))
+        point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        friction_points = ((current_spread + commission_abs) / point_size)
         safety_buffer = Decimal('1.0')
-        min_trail_threshold = (friction_points + safety_buffer) * Decimal('0.00001')
+        min_trail_threshold = (friction_points + safety_buffer) * point_size
 
         if has_long:
-            pnl_points = (state.price - state.trailing_stop_entry) / Decimal('0.00001')
+            pnl_points = (state.price - state.trailing_stop_entry) / point_size
         else:
-            pnl_points = (state.trailing_stop_entry - state.price) / Decimal('0.00001')
+            pnl_points = (state.trailing_stop_entry - state.price) / point_size
 
         if pnl_points <= (friction_points + safety_buffer):
             return
 
-        trail_step = max(min_trail_threshold, pnl_points * Decimal('0.00001') * Decimal('0.3'))
+        trail_step = max(min_trail_threshold, pnl_points * point_size * Decimal('0.3'))
         new_sl = state.trailing_stop_price
         topological_target = Decimal('0.0')
         if has_long:
@@ -2538,16 +2585,16 @@ class AEEA_Engine:
                 if ji < len(state.Premium) and state.Premium[ji] > state.price and state.Premium[ji] != Decimal('0.0'):
                     topological_target = state.Premium[ji]
                     break
-            slDistance = max(trail_step, SLIPPAGE * Decimal('0.00001'))
+            slDistance = max(trail_step, SLIPPAGE * point_size)
             proposedSL = state.price - slDistance
             if ((proposedSL > state.trailing_stop_price or state.trailing_stop_price == Decimal('0.0'))
                 and (topological_target == Decimal('0.0') or proposedSL < (topological_target - min_trail_threshold))):
                 new_sl = proposedSL
             tpDistance = Decimal('0.0')
             if topological_target > Decimal('0.0'):
-                tpDistance = max(topological_target - state.price, TAKE_PROFIT * Decimal('0.00001'))
+                tpDistance = max(topological_target - state.price, TAKE_PROFIT * point_size)
             else:
-                tpDistance = max(trail_step * Decimal('2.0'), TAKE_PROFIT * Decimal('0.00001'))
+                tpDistance = max(trail_step * Decimal('2.0'), TAKE_PROFIT * point_size)
             proposedTP = state.price + tpDistance
             if proposedTP > (state.price + min_trail_threshold):
                 state.trailing_take_profit = proposedTP
@@ -2556,16 +2603,16 @@ class AEEA_Engine:
                 if ji < len(state.Discount) and state.Discount[ji] < state.price and state.Discount[ji] != Decimal('0.0'):
                     topological_target = state.Discount[ji]
                     break
-            slDistance = max(trail_step, SLIPPAGE * Decimal('0.00001'))
+            slDistance = max(trail_step, SLIPPAGE * point_size)
             proposedSL = state.price + slDistance
             if ((state.trailing_stop_price == Decimal('0.0') or proposedSL < state.trailing_stop_price)
                 and (topological_target == Decimal('0.0') or proposedSL > (topological_target + min_trail_threshold))):
                 new_sl = proposedSL
             tpDistance = Decimal('0.0')
             if topological_target > Decimal('0.0'):
-                tpDistance = max(state.price - topological_target, TAKE_PROFIT * Decimal('0.00001'))
+                tpDistance = max(state.price - topological_target, TAKE_PROFIT * point_size)
             else:
-                tpDistance = max(trail_step * Decimal('2.0'), TAKE_PROFIT * Decimal('0.00001'))
+                tpDistance = max(trail_step * Decimal('2.0'), TAKE_PROFIT * point_size)
             proposedTP = state.price - tpDistance
             if proposedTP < (state.price - min_trail_threshold):
                 state.trailing_take_profit = proposedTP
@@ -2596,7 +2643,10 @@ class AEEA_Engine:
 
     def _send_signal_alert(self):
         state = self.state
-        if not state.chat_id or not self.application: return
+        target_chat = state.chat_id
+        if target_chat is None and state.webapp_user_id is not None:
+            target_chat = state.webapp_user_id
+        if not target_chat or not self.application: return
         if self._last_signal_time:
             elapsed = (datetime.now() - self._last_signal_time).seconds
             if elapsed < self._signal_cooldown: return
@@ -2630,8 +2680,8 @@ class AEEA_Engine:
             f"💎 Natalia Tanyatia"
         )
         try:
-            self.application.bot.send_message(chat_id=state.chat_id, text=msg, parse_mode="Markdown")
-            logger.info(f"📤 Signal alert sent to {state.chat_id}")
+            self.application.bot.send_message(chat_id=target_chat, text=msg, parse_mode="Markdown")
+            logger.info(f"📤 Signal alert sent to {target_chat}")
             self._last_signal_time = datetime.now()
         except Exception as e:
             logger.error(f"❌ Failed to send signal alert: {e}")
@@ -2641,7 +2691,6 @@ class AEEA_Engine:
         h_idx = state.h - state.y - 1
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
-        # PATCH-D: local m/n at h
         m_local = self._M(state.h, state.price, state.Price, state.iA, state.cA, state.kA, state.HH)
         n_local = self._N(state.h, state.price, state.Price, state.iA, state.cA, state.lA, state.LL)
         condition_met = (m_local >= 12) or (n_local >= 12)
@@ -2694,6 +2743,47 @@ class AEEA_Engine:
             "last_kronecker_n": int(state.last_kronecker_n),
             "last_kronecker_h": int(state.last_kronecker_h),
         }
+
+    def _record_entry(self, side: str, price: Decimal) -> None:
+        if side == "LONG":
+            self.state.has_open_long = True
+            self.state.trailing_stop_entry = price
+            self.state.trailing_stop_side = "LONG"
+        elif side == "SHORT":
+            self.state.has_open_short = True
+            self.state.trailing_stop_entry = price
+            self.state.trailing_stop_side = "SHORT"
+
+    def _record_exit(self, side: str) -> None:
+        if side == "LONG":
+            self.state.has_open_long = False
+            self.state.lOrder_id = -1
+        elif side == "SHORT":
+            self.state.has_open_short = False
+            self.state.kOrder_id = -1
+
+    # MQL4 A()/B()/P()/Q() equivalents, translated to state-only semantics.
+    def _A(self, price: Decimal) -> None:
+        self._record_exit("LONG")
+        self.state.A = True
+        self.state.B = False
+        self.state.K = False
+        self.state.Buy = -1
+
+    def _B(self, price: Decimal) -> None:
+        self._record_exit("SHORT")
+        self.state.A = False
+        self.state.B = True
+        self.state.K = False
+        self.state.Sell = -1
+
+    def _P(self, price: Decimal) -> None:
+        self.state.Buy += 1
+        self._record_entry("LONG", price)
+
+    def _Q(self, price: Decimal) -> None:
+        self.state.Sell += 1
+        self._record_entry("SHORT", price)
 
 # ============================================================================
 # HTTP BRIDGE
@@ -2790,6 +2880,49 @@ class BridgeState:
             self._inject_into_engine(fvg_type, price_dec, idx)
         return idx
 
+    def add_fvg_rational(self, fvg_type, num, den, user_id=None, requested_idx=None):
+        try:
+            num_i = int(num)
+            den_i = int(den)
+        except (TypeError, ValueError):
+            raise ValueError("num and den must be integers")
+        if den_i == 0:
+            raise ValueError("den must be non-zero")
+        if num_i <= 0 or den_i < 0:
+            raise ValueError("price must be > 0")
+        price_frac = Fraction(num_i, den_i)
+        if price_frac.to_decimal() <= Decimal('0.0'):
+            raise ValueError("price must be > 0")
+        with self._lock:
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is not None:
+                info = engine._verify_arc_length_coherence()
+                if info["initialized"] and not info["coherent"]:
+                    dev_float = info["deviation_float"]
+                    if abs(dev_float) > 1.0:
+                        raise ValueError(
+                            "ARC-LENGTH DEVIATION: s²={} ≠ r²={} (dev={:.6f})".format(
+                                info["arc_sq"], info["radius_sq"], dev_float
+                            )
+                        )
+            if requested_idx is not None and isinstance(requested_idx, int) and requested_idx >= 0:
+                idx = requested_idx
+                if idx >= self._next_fvg_idx:
+                    self._next_fvg_idx = idx + 1
+            else:
+                idx = self._next_fvg_idx
+                self._next_fvg_idx += 1
+            self._fvgs[idx] = {
+                "type": fvg_type,
+                "price": f"{num_i}/{den_i}",
+                "num": num_i, "den": den_i,
+                "idx": idx,
+                "created": datetime.now().isoformat(),
+                "user_id": user_id,
+            }
+            self._inject_into_engine(fvg_type, price_frac, idx)
+        return idx
+
     def remove_fvg(self, idx):
         with self._lock:
             if idx in self._fvgs:
@@ -2804,13 +2937,12 @@ class BridgeState:
         with self._lock:
             return list(self._fvgs.values())
 
-    def _inject_into_engine(self, fvg_type, price, idx):
+    def _inject_into_engine(self, fvg_type, price_fraction, idx):
         engine = BRIDGE_ENGINE_REF.get("engine")
         if engine is None:
             return
         try:
-            price_frac = Fraction.from_string(str(price))
-            anchor = engine._anchor_fvg_to_leech(idx, price_frac, fvg_type)
+            anchor = engine._anchor_fvg_to_leech(idx, price_fraction, fvg_type)
             with self._lock:
                 if idx in self._fvgs:
                     self._fvgs[idx]["leech_hash"] = anchor["vector_hash"]
@@ -3155,22 +3287,36 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 data = json.loads(raw.decode("utf-8")) if raw else {}
                 fvg_type = data.get("type")
                 price_str = data.get("price")
+                num = data.get("num")
+                den = data.get("den")
                 requested_idx = data.get("idx")
-                if fvg_type is None or price_str is None:
-                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price"]})
+                if fvg_type is None:
+                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price|num+den"]})
                     return
                 try:
                     requested_idx_int = int(requested_idx) if requested_idx is not None else None
                 except (TypeError, ValueError):
                     requested_idx_int = None
-                idx = BRIDGE_STATE.add_fvg(fvg_type, price_str, user_id=user_id, requested_idx=requested_idx_int)
+                if num is not None and den is not None:
+                    idx = BRIDGE_STATE.add_fvg_rational(
+                        fvg_type, num, den, user_id=user_id, requested_idx=requested_idx_int
+                    )
+                    price_label = f"{int(num)}/{int(den)}"
+                elif price_str is not None:
+                    idx = BRIDGE_STATE.add_fvg(
+                        fvg_type, price_str, user_id=user_id, requested_idx=requested_idx_int
+                    )
+                    price_label = str(price_str)
+                else:
+                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price|num+den"]})
+                    return
                 anchor_info = {}
                 engine = BRIDGE_ENGINE_REF.get("engine")
                 if engine is not None and idx in engine.state.fvg_anchor_map:
                     anchor_info = engine.state.fvg_anchor_map[idx]
-                logger.info(f"🔷 FVG committed: type={fvg_type} price={price_str} idx={idx} verified={verified} user={username}")
+                logger.info(f"🔷 FVG committed: type={fvg_type} price={price_label} idx={idx} verified={verified} user={username}")
                 self._send_json(201, {
-                    "ok": True, "idx": idx, "type": fvg_type, "price": price_str,
+                    "ok": True, "idx": idx, "type": fvg_type, "price": price_label,
                     "verified": verified,
                     "leech_hash": anchor_info.get("vector_hash") if anchor_info else None,
                     "leech_norm_sq": anchor_info.get("norm_squared") if anchor_info else None,
@@ -3352,7 +3498,7 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
 
     engine._on_tick = wrapped_on_tick
     engine._bridge_attached = True
-    logger.info("🔗 Bridge attached to AEEA_Engine (PATCH-C through PATCH-I extended)")
+    logger.info("🔗 Bridge attached to AEEA_Engine")
 
 def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     if getattr(bot, "_bridge_attached", False):
@@ -3915,6 +4061,7 @@ class AEI_Bot:
                 self.engine.application = self.application
                 self.engine.state.on_track_runs = prev_on_track
                 self.engine.state.on_stand_runs = prev_on_stand
+                self.engine._point_size = symbol_point(yahoo_symbol)
                 BRIDGE_ENGINE_REF["engine"] = self.engine
                 _bridge_attach_to_engine(self.engine)
                 historical = self.engine.feed.get_historical_klines(limit=200)
@@ -4074,17 +4221,17 @@ class AEI_Bot:
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
         logger.info(f"📊 Quantum-Financial Topology Engine initialized.")
-        logger.info(f"🧠 ℚ-exact Fraction arithmetic + REGIME-R disclosure (PATCH-C).")
+        logger.info(f"🧠 ℚ-exact Fraction arithmetic + REGIME-R disclosure.")
         logger.info(f"🌿 DbZ branching: Re[Ψ] quaternion component.")
-        logger.info(f"🧬 Λ₂₄ anchoring: true Leech congruence (PATCH-E).")
+        logger.info(f"🧬 Λ₂₄ anchoring: true Leech congruence.")
         logger.info(f"⚡ Live indicator extraction: 13D Hilbert-space projection populated per bar.")
         logger.info(f"⚡ Telegram Mini App enabled.")
-        logger.info(f"📈 Trailing stop: real Ask−Bid spread + commission (PATCH-H).")
-        logger.info(f"🎯 Kronecker gate: LOCAL m/n at h-bar (PATCH-D).")
-        logger.info(f"🔀 O() regime mutation restored (PATCH-F).")
-        logger.info(f"📊 OnBar per-j HH/LL anchoring (PATCH-G).")
-        logger.info(f"📡 OnTrack/OnStand MQL4 loop bounds (PATCH-I).")
-        logger.info(f"🔒 Relay shared-secret gate available (PATCH-J).")
+        logger.info(f"📈 Trailing stop: real Ask−Bid spread + symbol-adaptive point size.")
+        logger.info(f"🎯 Kronecker gate: LOCAL m/n at h-bar.")
+        logger.info(f"🔀 O() regime mutation restored.")
+        logger.info(f"📊 OnBar per-j HH/LL anchoring.")
+        logger.info(f"📡 OnTrack/OnStand MQL4 loop bounds restored.")
+        logger.info(f"🔒 Relay shared-secret gate available.")
         logger.info(f"💎 Ready. Use /start to begin.")
         self.application.run_polling()
 
