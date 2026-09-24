@@ -6,7 +6,7 @@ Faithful Unabridged Port of æea.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 2.3.1 (MQL4 parity — Signal Firing & Extrema Fallback Patch)
+Version: 2.3.0 (MQL4 parity — Chart & Signal Integration Patch)
 """
 import asyncio
 import hashlib
@@ -31,15 +31,19 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Any
 from fractions import Fraction as PyFraction
 from decimal import Decimal, getcontext
+
 getcontext().prec = 50
+
 REGIME_R_SQRT_ITERATIONS = 8
 REGIME_R_SQRT_SCALE = 10 ** 12
 ARC_COHERENCE_TOLERANCE = 1e-6
+
 # ============================================================================
 # EXACT FRACTION WRAPPER
 # ============================================================================
 class Fraction:
     __slots__ = ('_f',)
+
     def __init__(self, num=0, den=1):
         if isinstance(num, Fraction):
             self._f = num._f
@@ -284,15 +288,19 @@ MIN_PERIOD: int = 3
 X_PERIOD: int = MAX_PERIOD + 2
 Y_START: int = MIN_PERIOD - 2
 MIN_HISTORY_WINDOW: int = 52
+
 F_THRESHOLD: Fraction = Fraction(200, 3)
 G_THRESHOLD: Fraction = Fraction(100, 3)
 GF_TOLERANCE: Fraction = Fraction(40, 15)
+
 F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD.num()) / Decimal(F_THRESHOLD.den())
 G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD.num()) / Decimal(G_THRESHOLD.den())
 GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE.num()) / Decimal(GF_TOLERANCE.den())
+
 PHI_SYMBOLIC = "(1 + sqrt(5)) / 2"
 PI_SYMBOLIC = "PI"
 ARC_LENGTH_AXIOM = "s=r"
+
 TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
 BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
 BRIDGE_PORT: int = int(os.getenv("PORT", os.getenv("BRIDGE_PORT", "8765")))
@@ -302,14 +310,17 @@ BRIDGE_TLS_KEY: str = os.getenv("BRIDGE_TLS_KEY", "").strip()
 BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
 BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
 TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
 RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
 RELAY_KEY: str = os.getenv("RELAY_KEY", "").strip()
 RELAY_TIMEOUT: int = int(os.getenv("RELAY_TIMEOUT", "10"))
 RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
+
 CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
 SYMBOL: str = "BTC-USD"
 INTERVAL: str = "1m"
 UPDATE_INTERVAL: int = 30
+
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
     "ADAUSDT": "ADA-USD", "SOLUSDT": "SOL-USD", "DOGEUSDT": "DOGE-USD",
@@ -322,6 +333,7 @@ SYMBOL_MAP = {
     "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZS=F": "ZS=F", "ZM=F": "ZM=F",
     "ZW=F": "ZW=F", "KE=F": "KE=F"
 }
+
 SYMBOL_FALLBACKS: Dict[str, List[str]] = {
     "BTC-USD":  ["BTC-USD", "BTCUSD=X"], "ETH-USD":  ["ETH-USD", "ETHUSD=X"],
     "XRP-USD":  ["XRP-USD", "XRPUSD=X"], "ADA-USD":  ["ADA-USD", "ADAUSD=X"],
@@ -337,6 +349,7 @@ SYMBOL_FALLBACKS: Dict[str, List[str]] = {
     "ZB=F": ["ZB=F"], "ZN=F": ["ZN=F"], "ZS=F": ["ZS=F"], "ZM=F": ["ZM=F"],
     "ZW=F": ["ZW=F"], "KE=F": ["KE=F"],
 }
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -352,6 +365,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -519,6 +533,8 @@ class AEI_CoreState:
     webapp_username: Optional[str] = None
     webapp_verified: bool = False
     webapp_last_seen: Optional[datetime] = None
+
+    # Symbolic / Quaternion State
     q_field: Any = None
     quat_history: List[Any] = field(default_factory=list)
     time_fraction: Fraction = field(default_factory=lambda: Fraction(0, 1))
@@ -528,6 +544,8 @@ class AEI_CoreState:
     re_psi_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
     dbz_branch: int = 0
     arc_coherent: bool = True
+
+    # Execution & Trailing
     trailing_stop_active: bool = False
     trailing_stop_price: Decimal = Decimal('0.0')
     trailing_take_profit: Decimal = Decimal('0.0')
@@ -537,11 +555,15 @@ class AEI_CoreState:
     has_open_short: bool = False
     trailing_stop_entry: Decimal = Decimal('0.0')
     trailing_stop_side: str = ""
+
+    # Kronecker / Imbalance Tracking
     last_kronecker_m: int = 0
     last_kronecker_n: int = 0
     last_kronecker_h: int = -1
     fvg_anchor_map: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     _raw_price_missing: bool = False
+
+    # Signal History for Chart Display
     signal_history: List[Dict[str, Any]] = field(default_factory=list)
     max_signal_history: int = 100
 
@@ -660,6 +682,7 @@ def _symbol_digits(symbol: str) -> int:
 # ============================================================================
 class Quat:
     __slots__ = ('a', 'b', 'c', 'd')
+
     def __init__(self, a=0, b=0, c=0, d=0):
         self.a = a if isinstance(a, Fraction) else Fraction(a)
         self.b = b if isinstance(b, Fraction) else Fraction(b)
@@ -800,7 +823,7 @@ class LeechLatticeAnchor:
         parity = coords[0] & 1
         for c in coords:
             assert (c & 1) == parity, "Λ₂₄: parity mismatch"
-            assert (sum(coords) % 8) == 0, "Λ₂₄: mod-8 congruence violated"
+        assert (sum(coords) % 8) == 0, "Λ₂₄: mod-8 congruence violated"
         return [Fraction(c, 1) for c in coords]
 
     @staticmethod
@@ -1089,6 +1112,8 @@ class AEEA_Engine:
         self._bridge_publish_callback = None
         self._last_relay_warn: Optional[datetime] = None
         self._consecutive_zero_prices: int = 0
+
+        # Symbolic State Initialization
         self.state.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
         self.state.quat_history = [self.state.q_field.clone()]
         self.state.time_fraction = Fraction(0, 1)
@@ -1098,6 +1123,8 @@ class AEEA_Engine:
         self._indicator_populate_count: int = 0
         self._imbalance_fire_count: int = 0
         self._last_price_for_quat: Optional[Decimal] = None
+
+        # Execution State
         self._active_trailing_stop: Decimal = Decimal('0.0')
         self._active_trailing_tp: Decimal = Decimal('0.0')
         self._last_kronecker_bar: int = -1
@@ -1108,7 +1135,7 @@ class AEEA_Engine:
         self._point_size: Decimal = symbol_point(SYMBOL)
 
     def OnInit(self) -> None:
-        logger.info("⚙️ OnInit(): EA engine lifecycle beginning")
+        logger.info("️ OnInit(): EA engine lifecycle beginning")
         self.OnReInit()
         logger.info("🟢 OnInit(): state reset to baseline")
 
@@ -1122,6 +1149,7 @@ class AEEA_Engine:
         saved_tick = st.tick
         saved_on_track = st.on_track_runs
         saved_on_stand = st.on_stand_runs
+
         st.KC = st.invert
         size = X_PERIOD - Y_START
         for i in range(13):
@@ -1189,7 +1217,8 @@ class AEEA_Engine:
         st.BL = []
         st.bottomLine = "   "
         st.bL = "   "
-        st.h = 0
+
+        # Reset Symbolic State
         st.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
         st.quat_history = [st.q_field.clone()]
         st.time_fraction = Fraction(0, 1)
@@ -1199,21 +1228,10 @@ class AEEA_Engine:
         st.re_psi_exact = Fraction(1, 1)
         st.dbz_branch = 0
         st.arc_coherent = True
-        st.trailing_stop_active = False
-        st.trailing_stop_price = Decimal('0.0')
-        st.trailing_take_profit = Decimal('0.0')
-        st.trailing_stop_entry = Decimal('0.0')
-        st.trailing_stop_side = ""
-        st.last_kronecker_m = 0
-        st.last_kronecker_n = 0
-        st.last_kronecker_h = -1
         st.fvg_anchor_map = {}
-        st.signal_history = []
+
         self._eps = Fraction(1, 100)
         self._s_acc_exact = Fraction(0, 1)
-        self._last_price_for_quat = None
-        self._last_signal_time = None
-        self._last_kronecker_bar = -1
         self.ohlcv_history = saved_ohlcv
         st.price = saved_price
         st.Price = saved_Price
@@ -1236,6 +1254,7 @@ class AEEA_Engine:
         high_prices = [d["high"] for d in window]
         low_prices = [d["low"] for d in window]
         close_prices = [d["close"] for d in window]
+
         atr_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1249,6 +1268,7 @@ class AEEA_Engine:
             st.iATR = Decimal('100.0') * ((atr_list[0] - minATR) / rangeATR)
         else:
             st.iATR = Decimal('50.0')
+
         sd_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1273,22 +1293,26 @@ class AEEA_Engine:
         high_prices = [d["high"] for d in window]
         low_prices = [d["low"] for d in window]
         volume_data = [d.get("volume", Decimal('0.0')) for d in window]
+
         if len(close_prices) >= j:
             upper, _, lower = bollinger_bands(close_prices, j, Decimal('2.0'))
             st.Suply = upper
             st.Demand = lower
-            if len(close_prices) >= 2:
-                upper_prev, _, lower_prev = bollinger_bands(close_prices[:-1], j, Decimal('2.0'))
-                st.iSuply = upper_prev
-                st.iDemand = lower_prev
+        if len(close_prices) >= 2:
+            upper_prev, _, lower_prev = bollinger_bands(close_prices[:-1], j, Decimal('2.0'))
+            st.iSuply = upper_prev
+            st.iDemand = lower_prev
+
         col_i = j - (y + 1)
         col_c = j - (st.Y_scan + 1)
         if col_i < 0 or col_i >= len(st.iA[0]):
             return
         if col_c < 0 or col_c >= len(st.cA[0]):
             col_c = col_i
+
         f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
         g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
+
         adx_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1304,11 +1328,13 @@ class AEEA_Engine:
                 cADX_val = abs(Decimal('100.0') * ((adx_list[1] - minADX) / rangeADX)) if len(adx_list) > 1 else iADX_val
                 st.iA[0][col_i] = iADX_val
                 st.cA[0][col_c] = cADX_val
+
         k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, j, 3)
         st.iA[1][col_i] = (k_stoch + d_stoch) / Decimal('2.0')
         if len(close_prices) > 1:
             k_p, d_p = stochastic(high_prices[:-1], low_prices[:-1], close_prices[:-1], j, 3)
             st.cA[1][col_c] = (k_p + d_p) / Decimal('2.0')
+
         rvi_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1320,6 +1346,7 @@ class AEEA_Engine:
             if rangeRVI != Decimal('0.0'):
                 st.iA[2][col_i] = Decimal('100.0') * ((rvi_list[0] - minRVI) / rangeRVI)
                 st.cA[2][col_c] = Decimal('100.0') * ((rvi_list[1] - minRVI) / rangeRVI) if len(rvi_list) > 1 else st.iA[2][col_i]
+
         ac_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1331,6 +1358,7 @@ class AEEA_Engine:
             if rangeAC != Decimal('0.0'):
                 st.iA[3][col_i] = abs(Decimal('100.0') * ((ac_list[0] - minAC) / rangeAC))
                 st.cA[3][col_c] = abs(Decimal('100.0') * ((ac_list[1] - minAC) / rangeAC)) if len(ac_list) > 1 else st.iA[3][col_i]
+
         force_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1343,6 +1371,7 @@ class AEEA_Engine:
             if rangeForce != Decimal('0.0'):
                 st.iA[4][col_i] = Decimal('100.0') * ((force_list[0] - minForce) / rangeForce)
                 st.cA[4][col_c] = Decimal('100.0') * ((force_list[1] - minForce) / rangeForce) if len(force_list) > 1 else st.iA[4][col_i]
+
         obv_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1355,6 +1384,7 @@ class AEEA_Engine:
             if rangeOBV != Decimal('0.0'):
                 st.iA[5][col_i] = Decimal('100.0') * ((obv_list[0] - minOBV) / rangeOBV)
                 st.cA[5][col_c] = Decimal('100.0') * ((obv_list[1] - minOBV) / rangeOBV) if len(obv_list) > 1 else st.iA[5][col_i]
+
         ad_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1369,6 +1399,7 @@ class AEEA_Engine:
             if rangeAD != Decimal('0.0'):
                 st.iA[6][col_i] = Decimal('100.0') * ((ad_list[0] - minAD) / rangeAD)
                 st.cA[6][col_c] = Decimal('100.0') * ((ad_list[1] - minAD) / rangeAD) if len(ad_list) > 1 else st.iA[6][col_i]
+
         mfi_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1383,6 +1414,7 @@ class AEEA_Engine:
             if rangeMFI != Decimal('0.0'):
                 st.iA[7][col_i] = Decimal('100.0') * ((mfi_list[0] - minMFI) / rangeMFI)
                 st.cA[7][col_c] = Decimal('100.0') * ((mfi_list[1] - minMFI) / rangeMFI) if len(mfi_list) > 1 else st.iA[7][col_i]
+
         mom_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1394,6 +1426,7 @@ class AEEA_Engine:
             if rangeMOM != Decimal('0.0'):
                 st.iA[8][col_i] = Decimal('100.0') * ((mom_list[0] - minMOM) / rangeMOM)
                 st.cA[8][col_c] = Decimal('100.0') * ((mom_list[1] - minMOM) / rangeMOM) if len(mom_list) > 1 else st.iA[8][col_i]
+
         dem_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1406,11 +1439,13 @@ class AEEA_Engine:
             if rangeDM != Decimal('0.0'):
                 st.iA[9][col_i] = Decimal('100.0') * ((dem_list[0] - minDM) / rangeDM)
                 st.cA[9][col_c] = Decimal('100.0') * ((dem_list[1] - minDM) / rangeDM) if len(dem_list) > 1 else st.iA[9][col_i]
+
         wpr_now = self._compute_wpr(high_prices, low_prices, close_prices, j) + Decimal('100.0')
         st.iA[10][col_i] = wpr_now
         if len(close_prices) > 1:
             wpr_prev = self._compute_wpr(high_prices[:-1], low_prices[:-1], close_prices[:-1], j) + Decimal('100.0')
             st.cA[10][col_c] = wpr_prev
+
         cci_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1424,6 +1459,7 @@ class AEEA_Engine:
             if rangeCCI != Decimal('0.0'):
                 st.iA[11][col_i] = Decimal('100.0') * ((cci_list[0] - minCCI) / rangeCCI)
                 st.cA[11][col_c] = Decimal('100.0') * ((cci_list[1] - minCCI) / rangeCCI) if len(cci_list) > 1 else st.iA[11][col_i]
+
         rsi_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1435,6 +1471,7 @@ class AEEA_Engine:
             if rangeRSI != Decimal('0.0'):
                 st.iA[12][col_i] = Decimal('100.0') * ((rsi_list[0] - minRSI) / rangeRSI)
                 st.cA[12][col_c] = Decimal('100.0') * ((rsi_list[1] - minRSI) / rangeRSI) if len(rsi_list) > 1 else st.iA[12][col_i]
+
         ihk = ichimoku(high_prices, low_prices, close_prices)
         st.iIHKk = ihk["kijun"]
         st.iIHKt = ihk["tenkan"]
@@ -1835,25 +1872,31 @@ class AEEA_Engine:
             self._unify(j)
             self._normalize(j)
             if st.iStdDev < Decimal('50.0') and st.iATR > Decimal('50.0'):
-                if st.Regime[idx] != "tVolatile":
-                    self._F(j, st.iH, st.iL)
-                    self._H(j)
-                    self._L(j)
-                    st.Regime[idx] = "tVolatile"
+                if st.Regime[idx] != "Stable":
+                    if st.Regime[idx] != "tVolatile":
+                        self._F(j, st.iH, st.iL)
+                        self._H(j)
+                        self._L(j)
+                        st.Regime[idx] = "tVolatile"
             elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
                 if st.Regime[idx] != "Stable":
                     self._R(j)
                     self._H(j)
                     self._L(j)
-                    premium_val = st.Premium[idx] if idx < len(st.Premium) else st.price
-                    if st.price > premium_val:
+                    if st.Regime[idx] != "tRange":
+                        self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tRange"
-                    else:
-                        st.Regime[idx] = "sRange"
+            elif (st.Regime[idx] != "tTrend" and st.Regime[idx] != "sTrend"
+                  and idx < len(st.LL) and idx < len(st.Discount)
+                  and idx < len(st.HH) and idx < len(st.Premium)
+                  and st.LL[idx] < st.Discount[idx]
+                  and st.HH[idx] > st.Premium[idx]):
+                st.Regime[idx] = "Stable"
             else:
                 if st.Regime[idx] != "tTrend":
                     self._F(j, st.iH, st.iL)
                     st.Regime[idx] = "tTrend"
+
         if len(self.ohlcv_history) >= y + 1:
             close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
             st.Stock, _, st.Sale = bollinger_bands(close_prices, y)
@@ -1862,6 +1905,7 @@ class AEEA_Engine:
             else:
                 st.iStock = st.Stock
                 st.iSale = st.Sale
+
         if len(self.ohlcv_history) >= 2:
             st.iopen = self.ohlcv_history[-2]["open"]
             st.iPrice = self.ohlcv_history[-2]["close"]
@@ -1883,7 +1927,7 @@ class AEEA_Engine:
                 st.iC = st.C
                 if st.iw != 0 and st.jC == st.Cc:
                     st.h = st.I
-                    st.jC = not st.C
+                st.jC = not st.C
                 if self._on_hold(j, "sTrend", "tTrend"):
                     st.iz = i
                     st.z = i
@@ -1899,7 +1943,7 @@ class AEEA_Engine:
                 st.jC = st.C
                 if st.iz != 0 and st.iC == st.Cc:
                     st.h = st.I
-                    st.iC = not st.C
+                st.iC = not st.C
                 if self._on_hold(j, "sTrend", "tTrend"):
                     st.iw = i
                     st.w = i
@@ -1951,28 +1995,25 @@ class AEEA_Engine:
                 st.iC = st.C
                 if st.iw != 0 and st.jC == st.Cc:
                     st.h = st.I
-                    st.jC = not st.C
+                st.jC = not st.C
                 if st.iStdDev > Decimal('50.0'):
                     st.S += 1
                     st.iz = i
                     st.iI = st.iw
-                    j = i
                     self._H(j)
                 elif st.iATR < Decimal('50.0'):
                     st.S += 1
                     st.iO = i
                     st.io = i
-                    j = i
                     self._H(j)
                 else:
-                    j = i
                     self._H(j)
                     if is_now != st.t:
                         if self._on_fire(j, "Stable", "tVolatile"):
                             self._F(j, st.iH, st.iL)
-                            st.Regime[j - (y + 1)] = "tVolatile"
-                    else:
-                        st.Regime[j - (y + 1)] = "sVolatile"
+                            st.Regime[idx] = "tVolatile"
+                        else:
+                            st.Regime[idx] = "sVolatile"
                     st.S += 1
             if st.Demand >= st.price or st.iDemand >= st.price or st.iDemand >= st.iL:
                 i = s
@@ -1983,28 +2024,25 @@ class AEEA_Engine:
                 st.jC = st.C
                 if st.iz != 0 and st.iC == st.Cc:
                     st.h = st.I
-                    st.iC = not st.C
+                st.iC = not st.C
                 if st.iStdDev > Decimal('50.0'):
                     st.S += 1
                     st.iw = i
                     st.iI = st.iz
-                    j = i
                     self._L(j)
                 elif st.iATR < Decimal('50.0'):
                     st.S += 1
                     st.iO = i
                     st.io = i
-                    j = i
                     self._L(j)
                 else:
-                    j = i
                     self._L(j)
                     if is_now != st.t:
                         if self._on_fire(j, "Stable", "tVolatile"):
                             self._F(j, st.iH, st.iL)
-                            st.Regime[j - (y + 1)] = "tVolatile"
-                    else:
-                        st.Regime[j - (y + 1)] = "sVolatile"
+                            st.Regime[idx] = "tVolatile"
+                        else:
+                            st.Regime[idx] = "sVolatile"
                     st.S += 1
             s += 1
         s = X_PERIOD - 1
@@ -2032,8 +2070,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         elif st.Z != scan_limit and st.Z < st.z:
             j = MAX_PERIOD
             st.z = j
@@ -2043,8 +2081,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         else:
             j = X_PERIOD - 1
             st.z = j
@@ -2054,8 +2092,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         if st.W != scan_limit and st.W >= st.w:
             j = MAX_PERIOD - 1
             st.w = j
@@ -2065,8 +2103,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         elif st.W != scan_limit and st.W < st.w:
             j = MAX_PERIOD
             st.w = j
@@ -2076,8 +2114,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         else:
             j = X_PERIOD - 1
             st.w = j
@@ -2087,8 +2125,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
 
     def _on_stand(self) -> None:
         st = self.state
@@ -2132,31 +2170,28 @@ class AEEA_Engine:
                 st.iC = st.C
                 if st.iw != 0 and st.jC == st.Cc:
                     st.h = st.I
-                    st.jC = not st.C
+                st.jC = not st.C
                 if st.X_scan != st.Y_scan and st.iz == 0 and st.iStdDev > Decimal('50.0'):
                     st.ij = i
                     st.iz = i
                     st.iI = st.iw
-                    j = i
                     self._H(j)
                     if st.ir == 0 and st.Y_scan != 2:
                         st.Y_scan -= 1
                 elif st.X_scan != st.Y_scan and st.iO == 0 and st.iATR < Decimal('50.0'):
                     st.iO = i
                     st.ir = i
-                    j = i
                     self._H(j)
                     if st.ij == 0 and st.Y_scan != 2:
                         st.Y_scan -= 1
                 elif st.X_scan == st.Y_scan:
-                    j = i
                     self._H(j)
                     if is_now != st.t:
                         if self._on_fire(j, "Stable", "tVolatile"):
                             self._F(j, st.iH, st.iL)
-                            st.Regime[j - (y + 1)] = "tVolatile"
-                    else:
-                        st.Regime[j - (y + 1)] = "sVolatile"
+                            st.Regime[idx] = "tVolatile"
+                        else:
+                            st.Regime[idx] = "sVolatile"
                     if st.Y_scan != 2 and st.X_scan != 2:
                         st.Y_scan -= 1
                         st.X_scan -= 1
@@ -2169,12 +2204,11 @@ class AEEA_Engine:
                 st.jC = st.C
                 if st.iz != 0 and st.iC == st.Cc:
                     st.h = st.I
-                    st.iC = not st.C
+                st.iC = not st.C
                 if st.X_scan != st.Y_scan and st.iw == 0 and st.iStdDev > Decimal('50.0'):
                     st.ij = i
                     st.iw = i
                     st.iI = st.iz
-                    j = i
                     self._L(j)
                     if st.ir == 0 and st.Y_scan != 2:
                         st.Y_scan -= 1
@@ -2182,19 +2216,17 @@ class AEEA_Engine:
                     st.iO = i
                     st.io = i
                     st.ir = 0
-                    j = i
                     self._L(j)
                     if st.ij == 0 and st.Y_scan != 2:
                         st.Y_scan -= 1
                 elif st.X_scan == st.Y_scan:
-                    j = i
                     self._L(j)
                     if is_now != st.t:
                         if self._on_fire(j, "Stable", "tVolatile"):
                             self._F(j, st.iH, st.iL)
-                            st.Regime[j - (y + 1)] = "tVolatile"
-                    else:
-                        st.Regime[j - (y + 1)] = "sVolatile"
+                            st.Regime[idx] = "tVolatile"
+                        else:
+                            st.Regime[idx] = "sVolatile"
                     if st.Y_scan != 2 and st.X_scan != 2:
                         st.Y_scan -= 1
                         st.X_scan -= 1
@@ -2228,8 +2260,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         elif st.Z != 2 and st.Z < st.z:
             j = MIN_PERIOD + 1
             st.z = j
@@ -2239,8 +2271,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         else:
             j = y + 1
             st.z = j
@@ -2250,8 +2282,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         if st.W != 2 and st.W >= st.w:
             j = MIN_PERIOD
             st.w = j
@@ -2261,8 +2293,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         elif st.W != 2 and st.W < st.w:
             j = MIN_PERIOD + 1
             st.w = j
@@ -2272,8 +2304,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
         else:
             j = y + 1
             st.w = j
@@ -2283,8 +2315,8 @@ class AEEA_Engine:
                     if st.Regime[idx] != "tTrend":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tTrend"
-                else:
-                    st.Regime[idx] = "sTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
 
     def _on_goe(self) -> None:
         st = self.state
@@ -2344,7 +2376,7 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-        self._KC()
+            self._KC()
 
     def _on_toe(self) -> None:
         st = self.state
@@ -2404,7 +2436,7 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-        self._KC()
+            self._KC()
 
     def _signal(self) -> None:
         st = self.state
@@ -2416,14 +2448,19 @@ class AEEA_Engine:
         st.tally = " "
         st.signal = st.price
         st.signature = True
+
         h_idx = st.h - (st.y + 1)
         m_local = self._M(st.h) if 0 <= h_idx < len(st.k) else 0
         n_local = self._N(st.h) if 0 <= h_idx < len(st.l) else 0
+
         st.last_kronecker_m = m_local
         st.last_kronecker_n = n_local
         st.last_kronecker_h = st.h
         self._last_kronecker_bar = st.h
         self._imbalance_fire_count += 1
+        self._last_signal_time = datetime.now()
+
+        # Record signal for chart display
         regime_idx = st.h - (st.y + 1)
         regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else "Unknown"
         signal_record = {
@@ -2441,6 +2478,7 @@ class AEEA_Engine:
         st.signal_history.append(signal_record)
         if len(st.signal_history) > st.max_signal_history:
             st.signal_history = st.signal_history[-st.max_signal_history:]
+
         logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: price={st.price:.5f}, tick={st.tick}, h={st.h}, m_local={m_local}, n_local={n_local}, prime={st.prime}, dime={st.dime}")
 
     def _on_gaurd(self, inp: int) -> bool:
@@ -2468,7 +2506,7 @@ class AEEA_Engine:
             st.lOrder_id = -1
             st.has_open_long = False
         elif st.v and st.kOrder_id != -1:
-            logger.info(f"🔴 A(): Close short #{st.kOrder_id} at {price}")
+            logger.info(f" A(): Close short #{st.kOrder_id} at {price}")
             st.kOrder_id = -1
             st.has_open_short = False
         st.E = Decimal('0.0')
@@ -2487,7 +2525,7 @@ class AEEA_Engine:
             st.kOrder_id = -1
             st.has_open_short = False
         elif st.u and st.lOrder_id != -1:
-            logger.info(f"🔵 B(): Close long #{st.lOrder_id} at {price}")
+            logger.info(f" B(): Close long #{st.lOrder_id} at {price}")
             st.lOrder_id = -1
             st.has_open_long = False
         st.D = Decimal('0.0')
@@ -2511,9 +2549,9 @@ class AEEA_Engine:
                     st.trailing_stop_side = "LONG"
                     st.Buy += 1
                     logger.info(f"🟢 P(): BUY executed at {price:.5f}, target={target:.5f}")
-                else:
-                    self._A(price)
-            logger.info("⚠️ P(): BUY rejected — projected PnL <= spread friction")
+            else:
+                self._A(price)
+                logger.info("⚠️ P(): BUY rejected — projected PnL <= spread friction")
 
     def _Q(self, price: Decimal) -> None:
         st = self.state
@@ -2527,9 +2565,9 @@ class AEEA_Engine:
                     st.trailing_stop_side = "SHORT"
                     st.Sell += 1
                     logger.info(f"🔴 Q(): SELL executed at {price:.5f}, target={target:.5f}")
-                else:
-                    self._B(price)
-            logger.info("⚠️ Q(): SELL rejected — projected PnL <= spread friction")
+            else:
+                self._B(price)
+                logger.info("⚠️ Q(): SELL rejected — projected PnL <= spread friction")
 
     def _S(self) -> None:
         st = self.state
@@ -2547,11 +2585,11 @@ class AEEA_Engine:
         if not (has_long or has_short):
             if st.trailing_stop_active:
                 logger.info("📉 Trailing stop deactivated — no open orders")
-            st.trailing_stop_active = False
-            st.trailing_stop_price = Decimal('0.0')
-            st.trailing_take_profit = Decimal('0.0')
-            st.trailing_stop_entry = Decimal('0.0')
-            st.trailing_stop_side = ""
+                st.trailing_stop_active = False
+                st.trailing_stop_price = Decimal('0.0')
+                st.trailing_take_profit = Decimal('0.0')
+                st.trailing_stop_entry = Decimal('0.0')
+                st.trailing_stop_side = ""
             return
         idx = st.Z - (st.y + 1)
         if 0 <= idx < len(st.Regime):
@@ -2569,7 +2607,7 @@ class AEEA_Engine:
                 st.trailing_take_profit = st.price * Decimal('1.02')
             else:
                 st.trailing_take_profit = st.price * Decimal('0.98')
-            logger.info(f"⚡ Trailing stop ACTIVATED at {st.trailing_stop_price:.5f}, TP={st.trailing_take_profit:.5f}, direction={st.trailing_stop_side}")
+            logger.info(f" Trailing stop ACTIVATED at {st.trailing_stop_price:.5f}, TP={st.trailing_take_profit:.5f}, direction={st.trailing_stop_side}")
             return
         if len(self.price_history) > 0:
             last = self.price_history[-1]
@@ -2730,7 +2768,7 @@ class AEEA_Engine:
         h_idx = st.h - (st.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-        condition_met = (m_local >= 3) or (n_local >= 3) or (st.h > 0)
+        condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
         info = self._verify_arc_length_coherence()
@@ -2740,11 +2778,11 @@ class AEEA_Engine:
             coherence_str = f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
         msg = (
             f"🎯 *ÆEA SIGNAL ALERT*\n"
-            f"🧭 *Direction:* {direction}\n"
+            f" *Direction:* {direction}\n"
             f"🎯 *Signal Level:* {st.signal:.5f}\n"
-            f"💰 *Current Price:* {st.price:.5f}\n"
+            f" *Current Price:* {st.price:.5f}\n"
             f"📊 *Regime:* {regime}\n"
-            f"⚖️ *Imbalance @ h={st.h}:* m={m_at_h}, n={n_at_h}\n"
+            f"️ *Imbalance @ h={st.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"✅ *δ(m-n-2)=1 (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
             f"🧠 *Arc-Length Coherence:* {coherence_str}\n"
@@ -2756,7 +2794,7 @@ class AEEA_Engine:
             logger.info(f"📡 Signal alert sent to {target_chat}")
             self._last_signal_time = datetime.now()
         except Exception as e:
-            logger.error(f"❌ Failed to send signal alert: {e}")
+            logger.error(f" Failed to send signal alert: {e}")
 
     def get_signal_status(self) -> Dict[str, Any]:
         st = self.state
@@ -2765,7 +2803,7 @@ class AEEA_Engine:
         n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
         m_local = self._M(st.h) if st.h > 0 else 0
         n_local = self._N(st.h) if st.h > 0 else 0
-        condition_met = (m_local >= 3) or (n_local >= 3) or (st.h > 0)
+        condition_met = (m_local >= 12) or (n_local >= 12)
         info = self._verify_arc_length_coherence()
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else "Unknown"
@@ -2816,6 +2854,7 @@ class AEEA_Engine:
             "last_kronecker_h": int(st.last_kronecker_h),
             "X_scan": int(st.X_scan),
             "Y_scan": int(st.Y_scan),
+            "quat_tick_count": int(self._quat_tick_count),
             "q_field": {"a": str(st.q_field.a), "b": str(st.q_field.b), "c": str(st.q_field.c), "d": str(st.q_field.d)} if st.q_field else None,
             "s_squared_exact": str(st.s_squared_exact),
             "r_squared_exact": str(st.r_squared_exact),
@@ -2888,6 +2927,7 @@ class AEEA_Engine:
         st.r_squared_exact = q_new.norm_sq()
         st.deviation_exact = st.s_squared_exact - st.r_squared_exact
         st.re_psi_exact = q_new.a
+        st.q_field = q_new
         st.dbz_branch = self._apply_dbz_branch(st.deviation_exact, st.re_psi_exact)
         dev_float = st.deviation_exact.to_float()
         st.arc_coherent = (abs(dev_float) < ARC_COHERENCE_TOLERANCE)
@@ -2982,9 +3022,6 @@ class AEEA_Engine:
             logger.warning("⏳ Cannot force-init: price not yet available")
             return
         logger.info("🚀 First valid tick detected. Forcing engine initialization...")
-        if st.h <= 0:
-            st.h = st.y + 1
-            logger.info(f"📌 Initialized h={st.h} (anchor bar)")
         if not st.signature:
             st.D = st.price
             st.E = st.price
@@ -2995,50 +3032,19 @@ class AEEA_Engine:
         st.Y_scan = st.y
         if len(st.k) != size:
             st.k = [False] * size
-        if len(st.l) != size:
             st.l = [False] * size
-        if len(st.Premium) < X_PERIOD:
-            st.Premium = [st.price] * X_PERIOD
-        if len(st.Discount) < X_PERIOD:
-            st.Discount = [st.price] * X_PERIOD
-        if len(st.HH) < X_PERIOD:
-            st.HH = [st.price] * X_PERIOD
-        if len(st.LL) < X_PERIOD:
-            st.LL = [st.price] * X_PERIOD
-        if len(st.Regime) < X_PERIOD:
-            st.Regime = ["sRange"] * X_PERIOD
+            st.HH = [Decimal('0.0')] * size
+            st.LL = [Decimal('0.0')] * size
+            st.Premium = [Decimal('0.0')] * size
+            st.Discount = [Decimal('0.0')] * size
+            st.Regime = ["sRange"] * size
+        iH = self.ohlcv_history[-1]["high"] if self.ohlcv_history else st.price
+        iL = self.ohlcv_history[-1]["low"] if self.ohlcv_history else st.price
         for j in range(st.y + 1, X_PERIOD):
-            self._F(j, st.price, st.price)
+            self._F(j, iH, iL)
         st.FG = True
         st._initialized = True
-        logger.info(f"✅ Engine initialized on first tick at price={st.price:.5f}, h={st.h}")
-
-    def _find_extrema_fallback(self) -> None:
-        st = self.state
-        if st.h > 0:
-            return
-        lookback = min(20, len(self.ohlcv_history))
-        if lookback < 3:
-            return
-        max_price = Decimal('0.0')
-        min_price = Decimal('999999999.0')
-        max_idx = 0
-        min_idx = 0
-        for i in range(1, lookback + 1):
-            if i > len(self.ohlcv_history):
-                break
-            bar = self.ohlcv_history[-i]
-            high = Decimal(str(bar['high']))
-            low = Decimal(str(bar['low']))
-            if high > max_price:
-                max_price = high
-                max_idx = i
-            if low < min_price:
-                min_price = low
-                min_idx = i
-        if max_idx > 0:
-            st.h = max_idx + st.y
-            logger.info(f"📌 Fallback h set to {st.h} (max_price={max_price}, min_price={min_price})")
+        logger.info(f"✅ Engine initialized on first tick at price={st.price:.5f}")
 
     def _on_tick(self, price_data: PriceData) -> None:
         st = self.state
@@ -3048,7 +3054,7 @@ class AEEA_Engine:
             self._tick_log_counter = 0
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
-            logger.info(f"⚡ Tick #{st.tick}: Price={st.price:.5f}, Signal={st.signal:.5f}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, h={st.h}")
+            logger.info(f"⚡ Tick #{st.tick}: Price={st.price:.5f}, Signal={st.signal:.5f}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}")
         st.price = price_data.bid
         st.Price = price_data.close
         if len(self.ohlcv_history) >= 2:
@@ -3069,8 +3075,6 @@ class AEEA_Engine:
         self._last_price_for_quat = st.price
         if not st.FG:
             self._force_initialization()
-        if st.h <= 0:
-            self._find_extrema_fallback()
         if not st.FG:
             logger.warning(f"⏳ Engine not yet initialized (FG=false) on tick #{st.tick}")
             return
@@ -3085,36 +3089,14 @@ class AEEA_Engine:
             self._on_bar()
             self._O(st.iO, st.O, st.J, "C")
             self._O(st.io, st.o, st.iJ, "c")
-            if st.J == st.y + 1 and st.J != 2:
-                self._on_stand()
-                self._J()
-                self._O(st.iO, st.O, st.J, "C")
-                self._O(st.io, st.o, st.iJ, "c")
-                if st.iO != 2:
-                    if st.J >= st.iO:
-                        j = MIN_PERIOD
-                        st.O = j
-                        idx_j = j - (st.y + 1)
-                        if 0 <= idx_j < len(st.Regime):
-                            if is_now != st.t:
-                                if self._on_fire(j, "Stable", "tRange"):
-                                    self._F(j, st.iH, st.iL)
-                                    st.Regime[idx_j] = "tRange"
-                            else:
-                                st.Regime[idx_j] = "sRange"
-                    else:
-                        j = MIN_PERIOD + 1
-                        st.O = j
-                        idx_j = j - (st.y + 1)
-                        if 0 <= idx_j < len(st.Regime):
-                            if is_now != st.t:
-                                if self._on_fire(j, "Stable", "tRange"):
-                                    self._F(j, st.iH, st.iL)
-                                    st.Regime[idx_j] = "tRange"
-                            else:
-                                st.Regime[idx_j] = "sRange"
-                else:
-                    j = 2
+        if st.J == st.y + 1 and st.J != 2:
+            self._on_stand()
+            self._J()
+            self._O(st.iO, st.O, st.J, "C")
+            self._O(st.io, st.o, st.iJ, "c")
+            if st.iO != 2:
+                if st.J >= st.iO:
+                    j = MIN_PERIOD
                     st.O = j
                     idx_j = j - (st.y + 1)
                     if 0 <= idx_j < len(st.Regime):
@@ -3122,48 +3104,12 @@ class AEEA_Engine:
                             if self._on_fire(j, "Stable", "tRange"):
                                 self._F(j, st.iH, st.iL)
                                 st.Regime[idx_j] = "tRange"
+                            else:
+                                st.Regime[idx_j] = "sRange"
                         else:
                             st.Regime[idx_j] = "sRange"
-                if st.io != 2:
-                    if st.iJ >= st.io:
-                        j = MIN_PERIOD
-                        st.o = j
-                    else:
-                        j = MIN_PERIOD + 1
-                        st.o = j
                 else:
-                    j = 2
-                    st.o = j
-            if st.J == X_PERIOD - 1:
-                self._on_track()
-                self._J()
-                self._O(st.iO, st.O, st.J, "C")
-                self._O(st.io, st.o, st.iJ, "c")
-                if st.iO != 4 * MAX_PERIOD:
-                    if st.J >= st.iO:
-                        j = MAX_PERIOD - 1
-                        st.O = j
-                        idx_j = j - (st.y + 1)
-                        if 0 <= idx_j < len(st.Regime):
-                            if is_now != st.t:
-                                if self._on_fire(j, "Stable", "tRange"):
-                                    self._F(j, st.iH, st.iL)
-                                    st.Regime[idx_j] = "tRange"
-                            else:
-                                st.Regime[idx_j] = "sRange"
-                    else:
-                        j = MAX_PERIOD
-                        st.O = j
-                        idx_j = j - (st.y + 1)
-                        if 0 <= idx_j < len(st.Regime):
-                            if is_now != st.t:
-                                if self._on_fire(j, "Stable", "tRange"):
-                                    self._F(j, st.iH, st.iL)
-                                    st.Regime[idx_j] = "tRange"
-                            else:
-                                st.Regime[idx_j] = "sRange"
-                else:
-                    j = X_PERIOD - 1
+                    j = MIN_PERIOD + 1
                     st.O = j
                     idx_j = j - (st.y + 1)
                     if 0 <= idx_j < len(st.Regime):
@@ -3171,18 +3117,60 @@ class AEEA_Engine:
                             if self._on_fire(j, "Stable", "tRange"):
                                 self._F(j, st.iH, st.iL)
                                 st.Regime[idx_j] = "tRange"
+                            else:
+                                st.Regime[idx_j] = "sRange"
                         else:
                             st.Regime[idx_j] = "sRange"
-                if st.io != 4 * MAX_PERIOD:
-                    if st.iJ >= st.io:
-                        j = MAX_PERIOD - 1
-                        st.o = j
-                    else:
-                        j = MAX_PERIOD
-                        st.o = j
+            else:
+                st.O = 2
+            if st.io != 2:
+                if st.iJ >= st.io:
+                    st.o = MIN_PERIOD
                 else:
-                    j = X_PERIOD - 1
-                    st.o = j
+                    st.o = MIN_PERIOD + 1
+            else:
+                st.o = 2
+        if st.J == X_PERIOD - 1:
+            self._on_track()
+            self._J()
+            self._O(st.iO, st.O, st.J, "C")
+            self._O(st.io, st.o, st.iJ, "c")
+            if st.iO != 4 * MAX_PERIOD:
+                if st.J >= st.iO:
+                    j = MAX_PERIOD - 1
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                            else:
+                                st.Regime[idx_j] = "sRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+                else:
+                    j = MAX_PERIOD
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                            else:
+                                st.Regime[idx_j] = "sRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+            else:
+                st.O = X_PERIOD - 1
+            if st.io != 4 * MAX_PERIOD:
+                if st.iJ >= st.io:
+                    st.o = MAX_PERIOD - 1
+                else:
+                    st.o = MAX_PERIOD
+            else:
+                st.o = X_PERIOD - 1
         st.t = is_now
         if st.Z != X_PERIOD - 1:
             h_idx = st.iZ - (st.y + 1)
@@ -3231,7 +3219,7 @@ class AEEA_Engine:
             self._send_signal_alert()
         if st.ab != st.ba:
             st.ab = st.ba
-            st.tick_tock = False
+        st.tick_tock = False
 
     def update_price_from_feed(self) -> None:
         data = self.feed.get_intraday()
@@ -3240,7 +3228,7 @@ class AEEA_Engine:
             now = datetime.now()
             if self._last_relay_warn is None or (now - self._last_relay_warn).seconds >= 60:
                 self._last_relay_warn = now
-                logger.warning(f"⚠️ No data from relay for {self.feed.active_symbol()} (consecutive={self._consecutive_zero_prices})")
+                logger.warning(f"️ No data from relay for {self.feed.active_symbol()} (consecutive={self._consecutive_zero_prices})")
             return
         bid = data["close"]
         ask = data["close"]
@@ -3365,7 +3353,7 @@ class BridgeState:
                     engine.state.chat_id = chat_id
             except Exception as e:
                 logger.warning(f"register_webapp_session → engine map failed: {e}")
-        logger.info(f"🤝 Web App session registered: user_id={user_id}, username={username}")
+        logger.info(f" Web App session registered: user_id={user_id}, username={username}")
         return True
 
     def add_fvg(self, fvg_type: str, price_str: str, user_id: Optional[int] = None, requested_idx: Optional[int] = None) -> int:
@@ -3526,7 +3514,7 @@ class TunnelManager:
             self.public_url = TELEGRAM_WEBAPP_URL
             self.provider = "explicit"
             BRIDGE_ENGINE_REF["public_url"] = self.public_url
-            logger.info(f"🌐 Using explicit TELEGRAM_WEBAPP_URL: {self.public_url}")
+            logger.info(f" Using explicit TELEGRAM_WEBAPP_URL: {self.public_url}")
             return self.public_url
         order = [self.prefer] + [p for p in ("cloudflared", "ngrok", "serveo") if p != self.prefer]
         for provider in order:
@@ -3650,6 +3638,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "relay_healthy": snap.get("relay_healthy", True),
             })
             return
+
         if path == "/config":
             self._send_json(200, {
                 "public_url": BRIDGE_ENGINE_REF.get("public_url"), "tls": BRIDGE_USE_TLS,
@@ -3659,6 +3648,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "x_period_constant": X_PERIOD, "y_start_constant": Y_START,
             })
             return
+
         if path == "/state":
             snap = BRIDGE_STATE.get_snapshot()
             public = BRIDGE_ENGINE_REF.get("public_url")
@@ -3671,6 +3661,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             snap["relay_url"] = RELAY_URL
             self._send_json(200, snap)
             return
+
         if path == "/miniapp-state":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3719,6 +3710,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             }
             self._send_json(200, payload)
             return
+
         if path == "/ohlcv":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3747,6 +3739,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 })
             self._send_json(200, {"symbol": SYMBOL, "bars": ohlcv_data, "count": len(ohlcv_data)})
             return
+
         if path == "/signals":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3760,9 +3753,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             signals = engine.state.signal_history[-limit:]
             self._send_json(200, {"symbol": SYMBOL, "signals": signals, "count": len(signals)})
             return
+
         if path == "/fvg":
             self._send_json(200, {"fvgs": BRIDGE_STATE.list_fvgs()})
             return
+
         if path == "/probe":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3777,6 +3772,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 pass
             self._send_json(200, probe_data)
             return
+
         if path == "/diagnostics":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3797,6 +3793,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json(500, {"error": "diagnostics_failed", "detail": str(e)})
             return
+
         if path == "/" or path == "/index.html":
             try:
                 base = os.path.dirname(os.path.abspath(__file__))
@@ -3809,6 +3806,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json(500, {"error": "read_index_failed", "detail": str(e)})
             return
+
         self._send_json(404, {"error": "not_found", "path": path})
 
     def do_POST(self) -> None:
@@ -3840,6 +3838,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 logger.error(f"Handshake error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
         if path == "/fvg":
             user_id, username, verified = _extract_auth_headers(self)
             try:
@@ -3871,7 +3870,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 engine = BRIDGE_ENGINE_REF.get("engine")
                 if engine is not None and idx in engine.state.fvg_anchor_map:
                     anchor_info = engine.state.fvg_anchor_map[idx]
-                logger.info(f"📌 FVG committed: type={fvg_type} price={price_label} idx={idx} verified={verified} user={username}")
+                logger.info(f" FVG committed: type={fvg_type} price={price_label} idx={idx} verified={verified} user={username}")
                 self._send_json(201, {"ok": True, "idx": idx, "type": fvg_type, "price": price_label, "verified": verified, "anchor": anchor_info})
             except ValueError as ve:
                 logger.warning(f"FVG rejected: {ve}")
@@ -3880,6 +3879,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 logger.error(f"FVG POST error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
         if path == "/reset":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -3896,6 +3896,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 logger.error(f"/reset error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
         self._send_json(404, {"error": "not_found", "path": path})
 
     def do_DELETE(self) -> None:
@@ -3928,7 +3929,7 @@ class BridgeServer:
         if not BRIDGE_USE_TLS:
             return None
         if not BRIDGE_TLS_CERT or not BRIDGE_TLS_KEY:
-            logger.warning("⚠️ BRIDGE_USE_TLS=1 but cert/key paths missing — falling back to HTTP")
+            logger.warning("️ BRIDGE_USE_TLS=1 but cert/key paths missing — falling back to HTTP")
             return None
         if not (os.path.isfile(BRIDGE_TLS_CERT) and os.path.isfile(BRIDGE_TLS_KEY)):
             logger.warning("⚠️ TLS cert or key file not found — falling back to HTTP")
@@ -3939,7 +3940,7 @@ class BridgeServer:
             logger.info(f"🔒 TLS enabled: cert={BRIDGE_TLS_CERT}")
             return ctx
         except Exception as e:
-            logger.error(f"❌ Failed to load TLS context: {e}")
+            logger.error(f" Failed to load TLS context: {e}")
             return None
 
     def start(self) -> None:
@@ -3987,7 +3988,6 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
     if getattr(engine, "_bridge_attached", False):
         return
     original_on_tick = engine._on_tick
-
     def wrapped_on_tick(price_data: PriceData) -> None:
         original_on_tick(price_data)
         try:
@@ -4068,7 +4068,6 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
             BRIDGE_STATE.publish(snapshot)
         except Exception as e:
             logger.warning(f"Bridge publish failed: {e}")
-
     engine._on_tick = wrapped_on_tick
     engine._bridge_attached = True
     logger.info("🔗 Bridge attached to AEEA_Engine")
@@ -4077,7 +4076,6 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     if getattr(bot, "_bridge_attached", False):
         return
     original_run = bot.run
-
     def wrapped_run(self):
         BRIDGE_ENGINE_REF["engine"] = self.engine
         BRIDGE_ENGINE_REF["bot"] = self
@@ -4089,10 +4087,9 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
             original_run(self)
         finally:
             server.stop()
-
     bot.run = wrapped_run
     bot._bridge_attached = True
-    logger.info("🔗 Bridge attached to AEI_Bot.run()")
+    logger.info(" Bridge attached to AEI_Bot.run()")
 
 # ============================================================================
 # TELEGRAM BOT
@@ -4121,7 +4118,7 @@ class AEI_Bot:
                 st = self.engine.state
                 idx = st.Z - (st.y + 1)
                 regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-                logger.info(f"📊 itr#{iteration} price={st.price} tick={st.tick} FG={st.FG} regime={regime} X_scan={st.X_scan} Y_scan={st.Y_scan} OnTrack={st.on_track_runs} OnStand={st.on_stand_runs} m/n={st.last_kronecker_m}/{st.last_kronecker_n} ind_pass={self.engine._indicator_populate_count} sig_fire={self.engine._imbalance_fire_count} h={st.h}")
+                logger.info(f"📊 itr#{iteration} price={st.price} tick={st.tick} FG={st.FG} regime={regime} X_scan={st.X_scan} Y_scan={st.Y_scan} OnTrack={st.on_track_runs} OnStand={st.on_stand_runs} m/n={st.last_kronecker_m}/{st.last_kronecker_n} ind_pass={self.engine._indicator_populate_count} sig_fire={self.engine._imbalance_fire_count}")
             except Exception:
                 logger.exception(f"❌ Feed iteration #{iteration} failed")
             await asyncio.sleep(UPDATE_INTERVAL)
@@ -4130,13 +4127,13 @@ class AEI_Bot:
     def _build_main_keyboard(self) -> InlineKeyboardMarkup:
         webapp_url = self._resolve_webapp_url()
         rows = [
-            [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("🎯 Signal", callback_data="signal")],
-            [InlineKeyboardButton("📊 Regime", callback_data="regime"), InlineKeyboardButton("🔬 Indicators", callback_data="indicators")],
-            [InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"), InlineKeyboardButton("⏹️ Stop Feed", callback_data="stop_feed")],
-            [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
+            [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton(" Signal", callback_data="signal")],
+            [InlineKeyboardButton("📊 Regime", callback_data="regime"), InlineKeyboardButton(" Indicators", callback_data="indicators")],
+            [InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"), InlineKeyboardButton("️ Stop Feed", callback_data="stop_feed")],
+            [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton(" Reset", callback_data="reset")],
             [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
             [InlineKeyboardButton("🧬 Arc-Length", callback_data="arclen"), InlineKeyboardButton("🌿 DbZ", callback_data="dbz")],
-            [InlineKeyboardButton("🔍 Diagnostics", callback_data="diagnostics")],
+            [InlineKeyboardButton(" Diagnostics", callback_data="diagnostics")],
             [InlineKeyboardButton("📊 Chart", callback_data="chart")],
         ]
         if webapp_url:
@@ -4149,14 +4146,14 @@ class AEI_Bot:
         chat_id = update.effective_chat.id
         self.engine.state.chat_id = chat_id
         self.engine.application = self.application
-        engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
+        engine_status = "✅ Initialized" if self.engine.state.FG else " Waiting for data"
         feed_status = "Active" if self._running else "Inactive"
         arclen_info = self.engine._verify_arc_length_coherence()
         coherent_mark = "✅" if arclen_info["coherent"] else "⚠️"
         welcome = (
             "🔷 *ÆEA Quantum-Financial Topology Bot*\n"
             "Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
-            "Stochastic Geometry of Supply-Demand Imbalance.\n"
+            "Stochastic Geometry of Supply-Demand Imbalance.\n\n"
             "📊 *Available Commands:*\n"
             "`/status` - Current market state & regime\n"
             "`/regime` - Detailed regime classification\n"
@@ -4175,7 +4172,7 @@ class AEI_Bot:
             "`/rebuild_yf` - Force relay reset\n"
             "`/webapp` - Launch Telegram Mini App\n"
             "`/webgui` - Show bridge URL\n"
-            "`/help` - Show this message\n"
+            "`/help` - Show this message\n\n"
             f"*Current Symbol:* `{SYMBOL}`\n"
             f"🔄 *Feed Status:* {feed_status}\n"
             f"🧠 *Engine Status:* {engine_status}\n"
@@ -4191,11 +4188,9 @@ class AEI_Bot:
         if not self.engine.state.FG:
             logger.info("⚠️ Engine not initialized, attempting to force...")
             self.engine._force_initialization()
-            if self.engine.state.h <= 0:
-                self.engine._find_extrema_fallback()
-            if not self.engine.state.FG:
-                await update.message.reply_text("⏳ *Engine not initialized*\nThe engine will initialize on the first price tick after starting the feed.\nPlease use `/start_feed` to start the price feed.\nIf the feed is already running, try `/reset` to reinitialize.", parse_mode="Markdown")
-                return
+        if not self.engine.state.FG:
+            await update.message.reply_text("⏳ *Engine not initialized*\nThe engine will initialize on the first price tick after starting the feed.\nPlease use `/start_feed` to start the price feed.\nIf the feed is already running, try `/reset` to reinitialize.", parse_mode="Markdown")
+            return
         state = self.engine.state
         idx = state.Z - (state.y + 1)
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
@@ -4203,7 +4198,7 @@ class AEI_Bot:
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         info = self.engine._verify_arc_length_coherence()
         coherence_line = "✅ COHERENT" if info["coherent"] else f"⚠️ DEV: {info['deviation_float']:.6f}"
-        feed_mark = "✅" if self._running else "⏹️"
+        feed_mark = "✅" if self._running else ""
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
         m_local = state.last_kronecker_m if state.last_kronecker_m else 0
         n_local = state.last_kronecker_n if state.last_kronecker_n else 0
@@ -4222,24 +4217,24 @@ class AEI_Bot:
             f"📈 *Symbol:* {SYMBOL}\n"
             f"💰 *Price:* {price_display}\n"
             f"📊 *Regime:* {regime}\n"
-            f"🧠 *Coherence:* {coherence_line}\n"
+            f"🔄 *Coherence:* {coherence_line}\n"
             f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
             f"🎯 *Signal Level:* {state.signal:.5f}\n"
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🔄 *Tick:* {state.tick}\n"
-            f"🧠 *Engine State:* {init_mark}\n"
+            f" *Engine State:* {init_mark}\n"
             f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
             f"📡 *Signal Fires:* {self.engine._imbalance_fire_count}\n"
             f"📡 *Feed Active:* {feed_mark}\n"
             f"🔀 *KC:* {state.KC}  |  *Prime:* {state.prime}  |  *Dime:* {state.dime}\n"
-            f"🔀 *Invert:* {state.invert}  |  *Mem:* {state.mem}  |  *Tag:* {state.tag}\n"
+            f" *Invert:* {state.invert}  |  *Mem:* {state.mem}  |  *Tag:* {state.tag}\n"
             f"📊 *Orders:* {order_str}\n"
             f"🛑 *Trailing Stop:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
-            f"🎯 *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
+            f" *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
             f"🔍 *OnTrack Runs:* {state.on_track_runs}  |  *OnStand Runs:* {state.on_stand_runs}\n"
-            f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}\n"
+            f" *Last Kronecker Bar:* {self.engine._last_kronecker_bar}\n"
             f"🔢 *X_scan:* {state.X_scan}  |  *Y_scan:* {state.Y_scan}  |  *X_PERIOD:* {X_PERIOD}"
         )
         reply_markup = self._build_main_keyboard()
@@ -4256,14 +4251,14 @@ class AEI_Bot:
         response = (
             "🧮 *EXACT ARC-LENGTH STATE*\n"
             f"🧮 *s² (ℚ-exact)* = `{info['arc_sq']}`\n"
-            f"🧮 *r² (ℚ-exact)* = `{info['radius_sq']}`\n"
+            f"🧮 *r² (-exact)* = `{info['radius_sq']}`\n"
             f"🧮 *Δ = s² − r²* = `{info['deviation']}`\n"
-            f"🧮 *Δ (float)* = {info['deviation_float']:.10e}\n"
+            f" *Δ (float)* = {info['deviation_float']:.10e}\n"
             f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
             f"   • 0 = coherent (no action)\n"
             f"   • 1 = critical-line projection (Re[Ψ] > 0)\n"
             f"   • 2 = Natalia fibration (Re[Ψ] ≤ 0)\n"
-            f"🌀 *Re[Ψ]* = `{info['re_psi']}`\n"
+            f"🌀 *Re[]* = `{info['re_psi']}`\n"
             f"🌀 *Current Φ* = `{qstr}`\n"
             f"🔷 *FVG anchors:* {len(state.fvg_anchor_map)}"
         )
@@ -4282,8 +4277,8 @@ class AEI_Bot:
             f"🌿 *Current Branch:* {info['dbz_branch']} — {branch_names.get(info['dbz_branch'], 'UNKNOWN')}\n"
             f"🌀 *ε (fibration parameter):* `{eps}`\n"
             f"💠 *ε as float:* {eps.to_float():.10f}\n"
-            f"🌀 *Re[Ψ] =* `{info['re_psi']}`\n"
-            f"🌀 *Δ (deviation) =* `{info['deviation']}`\n"
+            f"🌀 *Re[] =* `{info['re_psi']}`\n"
+            f"🌀 *Δ (deviation) =* `{info['deviation']}`\n\n"
             "*Branch semantics:*\n"
             "• Re[Ψ] > 0 → project to critical line Re(s)=½\n"
             "• Re[Ψ] ≤ 0 → apply Natalia fibration ε perturbation\n"
@@ -4302,13 +4297,13 @@ class AEI_Bot:
             f"🧮 *Indicator Populates:* {status.get('indicator_populate_count')}\n"
             f"📡 *Signal Fires:* {status.get('imbalance_fire_count')}\n"
             f"⚖️ *Local m / n:* {status.get('m_count')} / {status.get('n_count')}\n"
-            f"⚖️ *m / n (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
+            f"️ *m / n (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
             f"🧮 *Arc s² =* `{status.get('arc_sq')}`\n"
-            f"🧮 *Rad r² =* `{status.get('radius_sq')}`\n"
+            f" *Rad r² =* `{status.get('radius_sq')}`\n"
             f"🧮 *Δ =* `{status.get('deviation')}`\n"
-            f"🌀 *Re[Ψ] =* `{status.get('re_psi')}`\n"
+            f" *Re[Ψ] =* `{status.get('re_psi')}`\n"
             f"🎯 *Signal:* {status.get('signal'):.5f}\n"
-            f"📊 *Regime:* {status.get('regime')}\n"
+            f" *Regime:* {status.get('regime')}\n"
             f"🔀 *KC:* {status.get('KC')}  |  *Prime:* {status.get('prime')}  |  *Dime:* {status.get('dime')}\n"
             f"🔀 *Invert:* {status.get('invert')}  |  *Mem:* {status.get('mem')}  |  *Tag:* {status.get('tag')}\n"
             f"📈 *Trailing Stop Active:* {status.get('trailing_stop_active')}\n"
@@ -4317,7 +4312,7 @@ class AEI_Bot:
             f"📍 *Trailing Entry:* {status.get('trailing_stop_entry')}  |  *Side:* {status.get('trailing_stop_side')}\n"
             f"📊 *Has Long:* {status.get('has_open_long')}  |  *Has Short:* {status.get('has_open_short')}\n"
             f"📊 *lOrder_id:* {status.get('lOrder_id')}  |  *kOrder_id:* {status.get('kOrder_id')}\n"
-            f"🔍 *OnTrack Runs:* {status.get('on_track_runs')}  |  *OnStand Runs:* {status.get('on_stand_runs')}\n"
+            f" *OnTrack Runs:* {status.get('on_track_runs')}  |  *OnStand Runs:* {status.get('on_stand_runs')}\n"
             f"🎯 *Last Kronecker Bar:* {status.get('last_kronecker_bar')}\n"
             f"🔢 *Last Kronecker m/n/h:* {status.get('last_kronecker_m')}/{status.get('last_kronecker_n')}/{status.get('last_kronecker_h')}\n"
             f"🔢 *X_PERIOD (const):* {X_PERIOD}  |  *Y_START (const):* {Y_START}"
@@ -4330,11 +4325,9 @@ class AEI_Bot:
     async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
             self.engine._force_initialization()
-            if self.engine.state.h <= 0:
-                self.engine._find_extrema_fallback()
-            if not self.engine.state.FG:
-                await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
-                return
+        if not self.engine.state.FG:
+            await update.message.reply_text(" *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            return
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
@@ -4347,7 +4340,7 @@ class AEI_Bot:
         n_local = state.last_kronecker_n if state.last_kronecker_n else 0
         imbalance_status = "✅ TRIGGER" if (m_local >= 12 or n_local >= 12) else "⏳ WAITING"
         response = (
-            "📊 *REGIME CLASSIFICATION*\n"
+            " *REGIME CLASSIFICATION*\n"
             f"🔹 *Current Regime:* {current}\n"
             f"🔹 *Premium:* {premium:.5f}\n"
             f"🔸 *Discount:* {discount:.5f}\n"
@@ -4355,7 +4348,7 @@ class AEI_Bot:
             f"📉 *LL:* {ll:.5f}\n"
             f"🟢 *Local m:* {m_local}\n"
             f"🔴 *Local n:* {n_local}\n"
-            f"⚖️ *Imbalance Condition:* {imbalance_status}"
+            f" *Imbalance Condition:* {imbalance_status}"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -4366,17 +4359,15 @@ class AEI_Bot:
     async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
             self.engine._force_initialization()
-            if self.engine.state.h <= 0:
-                self.engine._find_extrema_fallback()
-            if not self.engine.state.FG:
-                await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
-                return
+        if not self.engine.state.FG:
+            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            return
         state = self.engine.state
         if state.signal == Decimal('0.0'):
             direction = "⚪ NEUTRAL"
             confidence = "N/A"
         elif state.price > state.signal:
-            direction = "📈 BUY"
+            direction = " BUY"
             confidence = f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
         else:
             direction = "🔴 SELL"
@@ -4390,7 +4381,7 @@ class AEI_Bot:
         info = self.engine._verify_arc_length_coherence()
         condition_mark = "✅ MET" if condition_met else "❌ NOT MET"
         response = (
-            "🎯 *TRADING SIGNAL*\n"
+            " *TRADING SIGNAL*\n"
             f"📊 *Direction:* {direction}\n"
             f"📈 *Confidence:* {confidence}\n"
             f"🎯 *Signal Level:* {state.signal:.5f}\n"
@@ -4402,7 +4393,7 @@ class AEI_Bot:
             f"🔀 *KC State:* {state.KC}\n"
             f"🔢 *Prime:* {state.prime}\n"
             f"🔢 *Dime:* {state.dime}\n"
-            f"🔄 *Tick Count:* {state.tick}\n"
+            f" *Tick Count:* {state.tick}\n"
             f"📈 *Trailing Stop:* {'Active' if state.trailing_stop_active else 'Inactive'}\n"
             f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}"
         )
@@ -4415,11 +4406,9 @@ class AEI_Bot:
     async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.engine.state.FG:
             self.engine._force_initialization()
-            if self.engine.state.h <= 0:
-                self.engine._find_extrema_fallback()
-            if not self.engine.state.FG:
-                await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
-                return
+        if not self.engine.state.FG:
+            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            return
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
@@ -4427,7 +4416,7 @@ class AEI_Bot:
             await update.message.reply_text("❌ Insufficient data for indicator projection.")
             return
         names = ["ADX", "Stochastic", "RVI", "AC", "Force", "OBV", "AD", "MFI", "Momentum", "DeM", "WPR", "CCI", "RSI"]
-        indicator_str = "📊 *13D HILBERT SPACE PROJECTION*\n"
+        indicator_str = "📊 *13D HILBERT SPACE PROJECTION*\n\n"
         for i, name in enumerate(names):
             val = state.iA[i][idx] if idx < len(state.iA[i]) else Decimal('50.0')
             val_int = int(float(val))
@@ -4452,7 +4441,7 @@ class AEI_Bot:
         bridge_fvgs = BRIDGE_STATE.list_fvgs()
         bridge_str = ""
         if bridge_fvgs:
-            bridge_str = "\n*Web App FVGs:*\n"
+            bridge_str = "\n *Web App FVGs:*\n"
             for f in bridge_fvgs[-8:]:
                 mark = "▲" if f["type"] == "top" else "▼"
                 who = f" (user {f['user_id']})" if f.get("user_id") else ""
@@ -4464,8 +4453,8 @@ class AEI_Bot:
         response = (
             "📐 *FAIR VALUE GAP TRACKING*\n"
             f"📊 *FVG Count:* {state.FVG + 1}\n"
-            f"💰 *Current Price:* {state.price:.5f}\n"
-            f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n"
+            f" *Current Price:* {state.price:.5f}\n"
+            f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n\n"
             "*Topological Anchors:*\n"
             f"  🔷 *Premium:* {premium_val:.5f}\n"
             f"  🔶 *Discount:* {discount_val:.5f}\n"
@@ -4482,17 +4471,17 @@ class AEI_Bot:
         signal_summary = ""
         if recent_signals:
             for sig in recent_signals[-5:]:
-                arrow = "📈" if sig["type"] == "BUY" else "🔴"
+                arrow = "" if sig["type"] == "BUY" else "🔴"
                 signal_summary += f"{arrow} {sig['type']} @ {sig['price']:.2f} ({sig['regime']})\n"
         else:
             signal_summary = "No signals yet.\n"
         webapp_url = self._resolve_webapp_url()
         response = (
-            "📊 *RECENT SIGNALS*\n"
+            "📊 *RECENT SIGNALS*\n\n"
             f"{signal_summary}\n"
             f"📈 *Symbol:* {SYMBOL}\n"
-            f"🎯 *Total Signals Recorded:* {len(state.signal_history)}\n"
-            "Open the ÆEA Mini App for the full interactive candlestick chart "
+            f" *Total Signals Recorded:* {len(state.signal_history)}\n\n"
+            "Open the EA Mini App for the full interactive candlestick chart "
             "with FVG drawings and signal overlays."
         )
         reply_markup = self._build_main_keyboard()
@@ -4508,7 +4497,7 @@ class AEI_Bot:
         reset_msg = (
             "🔄 *TOPOLOGICAL BRANCH RESET*\n"
             "The Hilbert space projection has been re-anchored to the current\n"
-            "topological branch with historical preservation.\n"
+            "topological branch with historical preservation.\n\n"
             "🧠 *State Reset:*\n"
             "• All 13 indicator arrays reset\n"
             "• Regime classification seeded to 'sRange'\n"
@@ -4519,8 +4508,8 @@ class AEI_Bot:
             "• FVG anchor map cleared\n"
             "• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
-            f"• 🔍 OnTrack runs preserved: {prev_on_track}\n"
-            f"• 📉 OnStand runs preserved: {prev_on_stand}\n"
+            f"•  OnTrack runs preserved: {prev_on_track}\n"
+            f"• 📉 OnStand runs preserved: {prev_on_stand}\n\n"
             "📊 *Ready for new regime classification...*"
         )
         if update.callback_query:
@@ -4545,15 +4534,11 @@ class AEI_Bot:
             else:
                 logger.info("⏳ No historical data from relay. Engine will initialize organically.")
         except Exception as e:
-            logger.warning(f"⚠️ Historical data fetch failed: {e}")
+            logger.warning(f"️ Historical data fetch failed: {e}")
         try:
             self.engine.update_price_from_feed()
         except Exception:
             logger.exception("update_price_from_feed crashed during start_feed")
-        if not self.engine.state.FG:
-            self.engine._force_initialization()
-        if self.engine.state.h <= 0:
-            self.engine._find_extrema_fallback()
         if self._price_task is None or self._price_task.done():
             self._price_task = asyncio.create_task(self.price_feed_loop())
         hist_count = len(self.engine.ohlcv_history)
@@ -4565,7 +4550,6 @@ class AEI_Bot:
             f"📊 *Historical Data:* {hist_count} bars loaded\n"
             f"🧠 *Initialization Mode:* {init_mode}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
-            f"📌 *Extrema Anchor h:* {self.engine.state.h}\n"
             f"🔮 *Status:* Monitoring for signals..."
         )
         if update.callback_query:
@@ -4590,7 +4574,7 @@ class AEI_Bot:
             "🔬 *RELAY PROBE*", "",
             f"*Status:* {status}",
             f"*Relay URL:* `{RELAY_URL or 'UNSET'}`",
-            f"*Relay Gated:* {'🔒 yes' if RELAY_KEY else '🔓 no'}",
+            f"*Relay Gated:* {' yes' if RELAY_KEY else '🔓 no'}",
             f"*Primary symbol:* `{info.get('primary_symbol')}`",
             f"*Active symbol:* `{info.get('active_symbol')}`",
             f"*Chain index:* {info.get('chain_index')}",
@@ -4629,7 +4613,7 @@ class AEI_Bot:
             await update.message.reply_text(
                 f"📈 *Current Symbol:* `{SYMBOL}`\n"
                 "Use `/symbol <PAIR>` to change.\n"
-                "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n"
+                "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n\n"
                 f"*Supported Symbols:*\n{supported}\n(and {len(SYMBOL_MAP) - 10} more)",
                 parse_mode="Markdown",
             )
@@ -4657,20 +4641,18 @@ class AEI_Bot:
                 if historical:
                     self.engine.ohlcv_history = historical
                     self.engine._populate_indicator_matrix()
-                self.engine._force_initialization()
-                if self.engine.state.h <= 0:
-                    self.engine._find_extrema_fallback()
+                    self.engine._force_initialization()
                 init_status = "✅ Initialized" if self.engine.state.FG else "⏳ Initializing..."
                 await update.message.reply_text(
                     f"✅ *Symbol changed*\n"
-                    f"📈 *New Symbol:* `{yahoo_symbol}`\n"
+                    f" *New Symbol:* `{yahoo_symbol}`\n"
                     f"💰 *Current Price:* {bid}\n"
-                    f"🧠 *Engine State:* {init_status}\n"
+                    f" *Engine State:* {init_status}\n"
                     f"🔍 *OnTrack Runs:* {prev_on_track}  |  *OnStand Runs:* {prev_on_stand}",
                     parse_mode="Markdown",
                 )
             else:
-                await update.message.reply_text(f"❌ Invalid symbol or no data: {yahoo_symbol}")
+                await update.message.reply_text(f" Invalid symbol or no data: {yahoo_symbol}")
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
@@ -4678,7 +4660,7 @@ class AEI_Bot:
         info = self.engine.feed.get_info()
         response = (
             "📊 *TICKER INFORMATION*\n"
-            f"📈 *Symbol:* {SYMBOL}\n"
+            f" *Symbol:* {SYMBOL}\n"
             f"📛 *Name:* {info.get('name', 'Unknown')}\n"
             f"💵 *Currency:* {info.get('currency', 'USD')}\n"
         )
@@ -4701,14 +4683,14 @@ class AEI_Bot:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
         await update.message.reply_text(
             "🌐 *ÆEA Telegram Mini App*\n"
-            "Tap the button below to launch the full Codex Symbolica visualization.\n"
+            "Tap the button below to launch the full Codex Symbolica visualization.\n\n"
             "*Features inside the Mini App:*\n"
             "  ▲ Draw premium FVG\n"
             "  ▼ Draw discount FVG\n"
             "  ✖ Delete FVG\n"
-            "  🔄 Live state polling every 2s\n"
+            "   Live state polling every 2s\n"
             "  🧬 Engine-authoritative coherence panel\n"
-            "  🔀 KC / Prime / Dime visible in HUD\n"
+            "   KC / Prime / Dime visible in HUD\n"
             "  🔍 OnTrack / OnStand counters in engine panel\n"
             "  📈 Trailing stop state mirrored from engine T()\n"
             "  📊 Candlestick chart with signal overlays",
@@ -4776,7 +4758,7 @@ class AEI_Bot:
     async def _post_init(self, application) -> None:
         url = self._resolve_webapp_url()
         if not url:
-            logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
+            logger.info(" MenuButtonWebApp deferred — no public URL yet")
             return
         try:
             await application.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="ÆEA Mini App", web_app=WebAppInfo(url=url)))
@@ -4818,12 +4800,12 @@ class AEI_Bot:
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("⚡ Telegram Mini App enabled.")
         logger.info("🛑 Trailing stop: real Ask−Bid spread + symbol-adaptive point size.")
-        logger.info("🎯 Kronecker gate: LOCAL m/n at h-bar with fallback extrema anchor.")
+        logger.info("🎯 Kronecker gate: LOCAL m/n at h-bar.")
         logger.info("🔄 O() regime mutation restored.")
         logger.info("📊 OnBar per-j HH/LL anchoring.")
-        logger.info("🔬 OnTrack/OnStand MQL4 loop bounds restored (x-1 to 4*max).")
+        logger.info(" OnTrack/OnStand MQL4 loop bounds restored (x-1 to 4*max).")
         logger.info("🔒 Relay shared-secret gate available.")
-        logger.info("📊 Chart endpoint & signal history tracking enabled.")
+        logger.info(" Chart endpoint & signal history tracking enabled.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
