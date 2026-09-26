@@ -1164,7 +1164,7 @@ class AEEA_Engine:
         saved_webapp_uid = st.webapp_user_id
         saved_webapp_uname = st.webapp_username
         saved_webapp_verified = st.webapp_verified
-
+    
         st.KC = st.invert
         size = X_PERIOD - Y_START
         for i in range(13):
@@ -1233,7 +1233,7 @@ class AEEA_Engine:
         st.bottomLine = "   "
         st.bL = "   "
         st.count = 0
-
+    
         st.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
         st.quat_history = [st.q_field.clone()]
         st.time_fraction = Fraction(0, 1)
@@ -1244,9 +1244,10 @@ class AEEA_Engine:
         st.dbz_branch = 0
         st.arc_coherent = True
         st.fvg_anchor_map = {}
-
+    
         self._eps = Fraction(1, 100)
         self._s_acc_exact = Fraction(0, 1)
+        self._indicator_populate_count = 0
         self.ohlcv_history = saved_ohlcv
         st.price = saved_price
         st.Price = saved_Price
@@ -3048,8 +3049,8 @@ class AEEA_Engine:
                 continue
             self._normalize(j)
             self._unify(j)
-            self._indicator_populate_count += 1
-            if self._indicator_populate_count % 20 == 0:
+            self._indicator_populate_count += 13
+            if self._indicator_populate_count % 260 == 0:
                 sample = [str(st.iA[i][0]) for i in range(13)]
                 logger.info(f"📊 Indicator matrix populated (pass #{self._indicator_populate_count}) | col0={sample}")
 
