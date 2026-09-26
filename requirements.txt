@@ -1,6 +1,6 @@
 # ============================================================================
 # ÆEA TELEGRAM BOT — PYTHON DEPENDENCIES
-# Version: 2.4.0 (Signal Pipeline & Chart Parity)
+# Version: 2.4.1 (Signal Pipeline & Chart Parity — Constraint-Locked)
 # Platform: Heroku / Termux / any POSIX-compatible Python 3.10+ environment
 # Author: Natalia Tanyatia
 # ============================================================================
@@ -31,84 +31,49 @@ httpx==0.27.2
 # Pinned to match python-telegram-bot 21.x compatibility matrix.
 
 # ----------------------------------------------------------------------------
-# EXACT SYMBOLIC ARITHMETIC (FALLBACK)
+# EXACT SYMBOLIC ARITHMETIC
 # ----------------------------------------------------------------------------
 # The engine ships with a self-contained Fraction wrapper built on
-# Python's stdlib `fractions.Fraction` and `decimal.Decimal`, so no external
-# symbolic-math library is required.
+# Python's stdlib `fractions.Fraction` and `decimal.Decimal`. No external
+# symbolic-math library is required for the core ÆEA pipeline.
 #
-# The following are OPTIONAL and only needed if you wish to extend the engine
-# with symbolic integration (e.g., exact zeta evaluation via SymPy):
+# Optional extension — uncomment ONLY if you add symbolic-integration
+# protocols that the stdlib cannot express:
 #
 # sympy>=1.12
-#
-# Uncomment the line above if you require SymPy for additional symbolic
-# protocols. The core ÆEA engine does NOT depend on it.
 
 # ----------------------------------------------------------------------------
-# TUNNELING (OPTIONAL — for public HTTPS Mini App URL)
+# TLS
 # ----------------------------------------------------------------------------
-# The Bridge can spawn a public tunnel via one of the following executables.
-# These are SYSTEM BINARIES, not pip packages — install via your OS package
-# manager, not pip:
-#
-#   cloudflared  — https://developers.cloudflare.com/cloudflare-one/
-#   ngrok        — https://ngrok.com/download
-#   ssh          — OpenSSH client (for serveo.net)
-#
-# Set BRIDGE_TUNNEL env var to select preference order:
-#   BRIDGE_TUNNEL=cloudflared   (default)
-#   BRIDGE_TUNNEL=ngrok
-#   BRIDGE_TUNNEL=serveo
-#
-# Alternatively, set TELEGRAM_WEBAPP_URL to a pre-provisioned HTTPS URL.
+# Handled by Python's stdlib `ssl` module. No pip package required when
+# BRIDGE_USE_TLS=1 is paired with an externally-provisioned PEM cert/key
+# (e.g., via certbot or the platform's managed certificate store).
 
 # ----------------------------------------------------------------------------
-# TLS (OPTIONAL — for BRIDGE_USE_TLS=1)
+# RELAY CLIENT
 # ----------------------------------------------------------------------------
-# Python's stdlib `ssl` module handles TLS. If you generate a self-signed
-# certificate with OpenSSL (via the bot's /reset or Bridge endpoints), no
-# additional pip package is needed.
-
-# ----------------------------------------------------------------------------
-# RELAY CLIENT (OPTIONAL — for market data)
-# ----------------------------------------------------------------------------
-# The FeedClient uses stdlib `urllib.request`, so no additional pip packages
-# are required for the Cloudflare Worker Relay integration.
+# FeedClient uses stdlib `urllib.request`. No pip package required for the
+# Cloudflare Worker Relay integration.
 #
-# If you wish to replace the relay with a direct upstream fetch, install:
+# Direct-upstream fallback (NOT required for the Worker deployment):
 #
-#   yfinance>=0.2.40     (direct Yahoo Finance access)
-#   requests>=2.32.0     (synchronous HTTP client)
-#
-# These are NOT required for the Cloudflare Worker deployment.
+# yfinance>=0.2.40
+# requests>=2.32.0
 
 # ----------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------
 # Python's stdlib `logging` module handles all log output. No additional
-# package needed. On Heroku, logs are captured from stdout/stderr by the
-# platform automatically.
+# package needed. On Heroku, logs are captured from stdout/stderr.
 
 # ----------------------------------------------------------------------------
-# HEROKU RUNTIME
+# RUNTIME COMPATIBILITY
 # ----------------------------------------------------------------------------
-# Heroku auto-detects Python via this `requirements.txt` and provides
-# `python-3.11.x` by default. To pin a specific version, create a
-# `runtime.txt` file containing:
+# Minimum: Python 3.10
+# Recommended: Python 3.11 or 3.12
+# Tested: Python 3.11.9 on Heroku-22; Python 3.12.3 on Termux ARM64.
 #
-#   python-3.11.9
-#
-# ----------------------------------------------------------------------------
-# NOTES ON PYTHON VERSION COMPATIBILITY
-# ----------------------------------------------------------------------------
-# Minimum: Python 3.10 (required by python-telegram-bot 21.x for
-#                      pattern-matching and typing constructs).
-# Recommended: Python 3.11 or 3.12.
-# Tested: Python 3.11.9 on Heroku-22 stack; Python 3.12.3 on Termux ARM64.
-#
-# The engine uses no third-party numeric, symbolic, or scientific libraries.
-# All arithmetic is performed with Python's exact `fractions.Fraction` and
-# `decimal.Decimal` from the standard library, ensuring zero floating-point
-# entropy in the state machine — in accordance with the Arc-Length Axiom.
+# All arithmetic in the engine uses exact `fractions.Fraction` and
+# `decimal.Decimal` from the standard library — zero floating-point entropy
+# in the state machine, in accordance with the Arc-Length Axiom (s = r).
 # ============================================================================

@@ -6,7 +6,7 @@ Faithful Unabridged Port of æea.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 2.4.0 (Signal Pipeline & Chart Parity — Constraint-Locked)
+Version: 2.4.1 (Signal Pipeline & Chart Parity — Constraint-Locked)
 """
 import asyncio
 import hashlib
@@ -317,9 +317,9 @@ RELAY_TIMEOUT: int = int(os.getenv("RELAY_TIMEOUT", "10"))
 RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
 
 CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
-SYMBOL: str = "BTC-USD"
+SYMBOL: str = os.getenv("SYMBOL", "BTC-USD").strip() or "BTC-USD"
 INTERVAL: str = "1m"
-UPDATE_INTERVAL: int = 30
+UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
 
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
@@ -951,7 +951,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v2.4.0",
+                    "User-Agent": "AEI-Bridge/v2.4.1",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1159,7 +1159,11 @@ class AEEA_Engine:
         saved_tick = st.tick
         saved_on_track = st.on_track_runs
         saved_on_stand = st.on_stand_runs
-        saved_signal_count = len(st.signal_history)
+        saved_signal_history = list(st.signal_history)
+        saved_chat_id = st.chat_id
+        saved_webapp_uid = st.webapp_user_id
+        saved_webapp_uname = st.webapp_username
+        saved_webapp_verified = st.webapp_verified
 
         st.KC = st.invert
         size = X_PERIOD - Y_START
@@ -1228,6 +1232,7 @@ class AEEA_Engine:
         st.BL = []
         st.bottomLine = "   "
         st.bL = "   "
+        st.count = 0
 
         st.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
         st.quat_history = [st.q_field.clone()]
@@ -1250,7 +1255,12 @@ class AEEA_Engine:
         st.tick = saved_tick
         st.on_track_runs = saved_on_track
         st.on_stand_runs = saved_on_stand
-        logger.info(f"🔄 OnReInit() completed — Tick preserved: {st.tick}, Signals preserved: {saved_signal_count}")
+        st.signal_history = saved_signal_history
+        st.chat_id = saved_chat_id
+        st.webapp_user_id = saved_webapp_uid
+        st.webapp_username = saved_webapp_uname
+        st.webapp_verified = saved_webapp_verified
+        logger.info(f"🔄 OnReInit() completed — Tick preserved: {st.tick}, Signals preserved: {len(saved_signal_history)}")
 
     def _unify(self, j: int) -> Tuple[Decimal, Decimal]:
         st = self.state
@@ -1638,10 +1648,12 @@ class AEEA_Engine:
             if st.Price > hh_val:
                 if iA_val > f_plus_gf or cA_val < kA_val:
                     m += 1
-            elif st.price > hh_val:
+                continue
+            if st.price > hh_val:
                 if iA_val > f_plus_gf or iA_val < kA_val:
                     m += 1
-            elif iA_val > f_plus_gf:
+                continue
+            if iA_val > f_plus_gf:
                 m += 1
         adx_val = st.iA[0][idx_i]
         if adx_val > f_plus_gf or adx_val < g_minus_gf:
@@ -1675,10 +1687,12 @@ class AEEA_Engine:
             if st.Price < ll_val:
                 if iA_val < g_minus_gf or cA_val > lA_val:
                     n += 1
-            elif st.price < ll_val:
+                continue
+            if st.price < ll_val:
                 if iA_val < g_minus_gf or iA_val > lA_val:
                     n += 1
-            elif iA_val < g_minus_gf:
+                continue
+            if iA_val < g_minus_gf:
                 n += 1
         adx_val = st.iA[0][idx_i]
         if adx_val > f_plus_gf or adx_val < g_minus_gf:
@@ -1795,15 +1809,19 @@ class AEEA_Engine:
             return
         regime = st.Regime[regime_idx]
         if which == "C":
-            target = st.Cc
+            target = st.C
+            ref = st.Cc
         elif which == "c":
-            target = st.cC
+            target = st.c
+            ref = st.cC
         else:
             return
         if (inp < inp1) and (regime == "sRange" or regime == "tRange"):
-            new_val = target
+            new_val = ref
+        elif regime != "sRange" and regime != "tRange":
+            new_val = not ref
         else:
-            new_val = not target
+            new_val = not ref
         if which == "C":
             st.C = new_val
         else:
@@ -2509,16 +2527,15 @@ class AEEA_Engine:
                 st.dime = 0
                 st.mem = 0
             return True
-        elif st.price < st.D and st.D != Decimal('0.0'):
+        if st.price < st.D and st.D != Decimal('0.0'):
             if st.signature and inp != -1:
                 st.dime = 1
                 st.mem = 1
             return True
-        else:
-            if st.signature and inp != -1:
-                st.dime = 1
-                st.mem = 1
-            return False
+        if st.signature and inp != -1:
+            st.dime = 1
+            st.mem = 1
+        return False
 
     def _A(self, price: Decimal) -> None:
         st = self.state
@@ -2615,7 +2632,7 @@ class AEEA_Engine:
         idx = st.Z - (st.y + 1)
         if 0 <= idx < len(st.Regime):
             regime = st.Regime[idx]
-            if regime in ("tStable", "tCoherent", "sStable", "sCoherent", "Stable"):
+            if regime in ("tStable", "tCoherent", "Stable"):
                 return
         if st.price <= Decimal('0.0'):
             return
@@ -2738,7 +2755,7 @@ class AEEA_Engine:
             if target_price <= entry_price:
                 return False
             return projected_pnl_points > (friction_points + safety_buffer)
-        elif side == "SELL":
+        if side == "SELL":
             if target_price >= entry_price:
                 return False
             return projected_pnl_points > (friction_points + safety_buffer)
@@ -2970,18 +2987,17 @@ class AEEA_Engine:
                 if self._eps.abs().to_float() < 1e-6:
                     self._eps = Fraction(1, 100)
                 return 1
-            else:
-                delta = (
-                    Fraction.sin_rational(
-                        self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8
-                    ) * Fraction(8, 10000)
-                )
-                self._eps = self._eps + delta
-                if self._eps.to_float() > 0.05:
-                    self._eps = Fraction(5, 100)
-                if self._eps.to_float() < 0.001:
-                    self._eps = Fraction(1, 1000)
-                return 2
+            delta = (
+                Fraction.sin_rational(
+                    self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8
+                ) * Fraction(8, 10000)
+            )
+            self._eps = self._eps + delta
+            if self._eps.to_float() > 0.05:
+                self._eps = Fraction(5, 100)
+            if self._eps.to_float() < 0.001:
+                self._eps = Fraction(1, 1000)
+            return 2
         except Exception as e:
             logger.exception(f"_apply_dbz_branch failed: {e}")
             return 0
@@ -3006,8 +3022,7 @@ class AEEA_Engine:
         info = self._verify_arc_length_coherence()
         if info["coherent"]:
             return "✅ COHERENT"
-        else:
-            return f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
+        return f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
 
     def _populate_indicator_matrix(self) -> None:
         st = self.state
@@ -3079,6 +3094,7 @@ class AEEA_Engine:
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
             logger.info(f"⚡ Tick #{st.tick}: Price={st.price:.5f}, Signal={st.signal:.5f}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}")
+
         st.price = price_data.bid
         st.Price = price_data.close
         if len(self.ohlcv_history) >= 2:
@@ -3091,28 +3107,55 @@ class AEEA_Engine:
             st.open = st.price
             st.iH = st.price
             st.iL = st.price
+
         if st.price <= Decimal('0.0'):
             logger.warning(f"⚠️ Tick #{st.tick} with non-positive price. Skipping state machine.")
             return
+
+        is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
+
+        self._maintain_fvg_lines()
+
+        if not st.FG:
+            if not st.signature:
+                st.D = st.price
+                st.E = st.price
+            size = X_PERIOD - st.y
+            if size <= 0:
+                size = X_PERIOD - Y_START
+            if len(st.k) != size:
+                st.k = [False] * size
+                st.l = [False] * size
+                st.HH = [Decimal('0.0')] * size
+                st.LL = [Decimal('0.0')] * size
+                st.Premium = [Decimal('0.0')] * size
+                st.Discount = [Decimal('0.0')] * size
+                st.Regime = ["sRange"] * size
+            iH = self.ohlcv_history[-1]["high"] if self.ohlcv_history else st.price
+            iL = self.ohlcv_history[-1]["low"] if self.ohlcv_history else st.price
+            for j in range(st.y + 1, X_PERIOD):
+                self._F(j, iH, iL)
+            st.FG = True
+            st._initialized = True
+            logger.info(f"✅ Engine initialized (FG=true) at price={st.price:.5f}")
+
         prev_price = self._last_price_for_quat
         self._step_quaternion_field(st.price, prev_price)
         self._last_price_for_quat = st.price
-        if not st.FG:
-            self._force_initialization()
-        if not st.FG:
-            logger.warning(f"⏳ Engine not yet initialized (FG=false) on tick #{st.tick}")
-            return
+
         self._execute_trailing_stop()
+
         self._on_point()
         self._O(st.iO, st.O, st.J, "C")
         self._O(st.io, st.o, st.iJ, "c")
         self._on_call()
         self._J()
-        is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
+
         if is_now != st.t:
             self._on_bar()
             self._O(st.iO, st.O, st.J, "C")
             self._O(st.io, st.o, st.iJ, "c")
+
         if st.J == st.y + 1 and st.J != 2:
             self._on_stand()
             self._J()
@@ -3154,6 +3197,7 @@ class AEEA_Engine:
                     st.o = MIN_PERIOD + 1
             else:
                 st.o = 2
+
         if st.J == X_PERIOD - 1:
             self._on_track()
             self._J()
@@ -3195,7 +3239,9 @@ class AEEA_Engine:
                     st.o = MAX_PERIOD
             else:
                 st.o = X_PERIOD - 1
+
         st.t = is_now
+
         if st.Z != X_PERIOD - 1:
             h_idx = st.iZ - (st.y + 1)
             if st.Z != st.y + 1 and 0 <= h_idx < len(st.k) and st.k[h_idx]:
@@ -3216,6 +3262,7 @@ class AEEA_Engine:
                         if (0 <= h_idx < len(st.k) and st.k[h_idx] and st.O != st.y + 1 and st.O != X_PERIOD - 1):
                             st.h = st.iO
                             self._on_goe()
+
         if st.W != X_PERIOD - 1:
             h_idx = st.iW - (st.y + 1)
             if st.W != st.y + 1 and 0 <= h_idx < len(st.l) and st.l[h_idx]:
@@ -3236,14 +3283,40 @@ class AEEA_Engine:
                         if (0 <= h_idx < len(st.l) and st.l[h_idx] and st.O != st.y + 1 and st.O != X_PERIOD - 1):
                             st.h = st.iO
                             self._on_toe()
+
         if st.GF:
             self.OnReInit()
             st.GF = False
+
         if st.signature and st.chat_id:
             self._send_signal_alert()
+
         if st.ab != st.ba:
             st.ab = st.ba
         st.tick_tock = False
+
+    def _maintain_fvg_lines(self) -> None:
+        st = self.state
+        if st.FVG < 0:
+            return
+        price = st.price
+        i = 0
+        while i < len(st.BL):
+            price_line = st.BL[i]
+            if price_line <= Decimal('0.0'):
+                i += 1
+                continue
+            if (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
+                logger.info(f"🔵 FVG maintenance: remove blue @ {price_line:.5f}")
+                st.BL.pop(i)
+                st.FVG -= 1
+                continue
+            if (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
+                logger.info(f"🔴 FVG maintenance: remove red @ {price_line:.5f}")
+                st.BL.pop(i)
+                st.FVG -= 1
+                continue
+            i += 1
 
     def update_price_from_feed(self) -> None:
         data = self.feed.get_intraday()
@@ -3589,7 +3662,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/2.4"
+    server_version = "AEI-Bridge/2.4.1"
 
     def log_message(self, fmt, *args):
         return
@@ -3652,7 +3725,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "last_price_update": last,
+                "ok": not stale, "service": "aei-bridge", "version": "4.15",
+                "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": snap.get("engine_initialized", False),
                 "coherent": snap.get("coherent", False),
@@ -3703,6 +3777,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 })
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+            fvg_anchors = []
+            for idx_i, p in enumerate(st.Premium):
+                if p > Decimal('0.0'):
+                    fvg_anchors.append({"idx": idx_i, "type": "top", "price": str(p)})
+            for idx_i, p in enumerate(st.Discount):
+                if p > Decimal('0.0'):
+                    fvg_anchors.append({"idx": idx_i, "type": "bottom", "price": str(p)})
+            for bridge_idx, rec in BRIDGE_STATE._fvgs.items():
+                fvg_anchors.append({
+                    "idx": bridge_idx,
+                    "type": "top" if rec["type"] == "top" else "bottom",
+                    "price": rec["price"],
+                })
             payload = {
                 "symbol": SYMBOL,
                 "price": str(st.price),
@@ -3725,13 +3812,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "relay_healthy": (engine.feed._failure_count < 3),
                 "X_PERIOD": X_PERIOD,
                 "Y_START": Y_START,
-                "fvg_anchors": [
-                    {"idx": idx_i, "type": "top", "price": str(p)}
-                    for idx_i, p in enumerate(st.Premium) if p > Decimal('0.0')
-                ] + [
-                    {"idx": idx_i, "type": "bottom", "price": str(p)}
-                    for idx_i, p in enumerate(st.Discount) if p > Decimal('0.0')
-                ],
+                "fvg_anchors": fvg_anchors,
                 "recent_signals": st.signal_history[-20:],
                 "ohlcv_count": len(engine.ohlcv_history),
                 "signal_count": len(st.signal_history),
@@ -3758,10 +3839,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 ts = bar["timestamp"]
                 if isinstance(ts, datetime):
                     ts_str = ts.isoformat()
-                    last_ts = ts_str
                 else:
                     ts_str = str(ts)
-                    last_ts = ts_str
+                last_ts = ts_str
                 ohlcv_data.append({
                     "timestamp": ts_str,
                     "open": float(bar["open"]),
@@ -4867,8 +4947,8 @@ class AEI_Bot:
         logger.info("🌿 DbZ branching: Re[Ψ] quaternion component (parallel symbolic layer).")
         logger.info("🧬 Leech lattice anchor: parallel symbolic layer.")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
-        logger.info("📡 Bar-close detection uses relay timestamp (v2.4.0 patch).")
-        logger.info("🎯 Signal logging enabled for all imbalance events (v2.4.0 patch).")
+        logger.info("📡 Bar-close detection uses relay timestamp.")
+        logger.info("🎯 Signal logging enabled for all imbalance events.")
         logger.info("⚡ Telegram Mini App enabled.")
         logger.info("🛑 Trailing stop: real Ask−Bid spread + symbol-adaptive point size.")
         logger.info("🎯 Kronecker gate: LOCAL m/n at h-bar.")
@@ -4877,8 +4957,8 @@ class AEI_Bot:
         logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (x-1 to 4*max).")
         logger.info("🔒 Relay shared-secret gate available.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
-        logger.info("🔄 Chart auto-refresh every 30s (v2.4.0 patch).")
-        logger.info("🔗 Symbol change detection via /miniapp-state polling (v2.4.0 patch).")
+        logger.info("🔄 Chart auto-refresh every 30s.")
+        logger.info("🔗 Symbol change detection via /miniapp-state polling.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
