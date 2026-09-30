@@ -6,7 +6,7 @@ Faithful Unabridged Port of æea.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 2.4.1 (Signal Pipeline & Chart Parity — Constraint-Locked)
+Version: 3.0.0 (Constraint-Locked FF-Parity Edition)
 """
 import asyncio
 import hashlib
@@ -34,8 +34,6 @@ from decimal import Decimal, getcontext
 
 getcontext().prec = 50
 
-REGIME_R_SQRT_ITERATIONS = 8
-REGIME_R_SQRT_SCALE = 10 ** 12
 ARC_COHERENCE_TOLERANCE = 1e-6
 
 # ============================================================================
@@ -204,56 +202,7 @@ class Fraction:
     def __repr__(self):
         return f"Fraction({self._f.numerator}/{self._f.denominator})"
 
-    @staticmethod
-    def cos_rational(x: 'Fraction', terms: int = 12) -> 'Fraction':
-        TWO_PI = Fraction(710, 113)
-        xr = x
-        xf = xr.to_float()
-        if xf > math.pi or xf < -math.pi:
-            shifted = xr + TWO_PI / Fraction(2, 1)
-            q = (shifted._f.numerator * TWO_PI._f.denominator) // (shifted._f.denominator * TWO_PI._f.numerator)
-            remainder_num = shifted._f.numerator * TWO_PI._f.denominator - q * TWO_PI._f.numerator * shifted._f.denominator
-            reduced = Fraction(remainder_num, shifted._f.denominator * TWO_PI._f.denominator)
-            xr = reduced - TWO_PI / Fraction(2, 1)
-        x2 = xr * xr
-        total = Fraction(1, 1)
-        term = Fraction(1, 1)
-        for k in range(1, terms + 1):
-            denom = (2 * k - 1) * (2 * k)
-            term = -term * x2 / Fraction(denom, 1)
-            total = total + term
-        return total
-
-    @staticmethod
-    def sin_rational(x: 'Fraction', terms: int = 12) -> 'Fraction':
-        TWO_PI = Fraction(710, 113)
-        xr = x
-        xf = xr.to_float()
-        if xf > math.pi or xf < -math.pi:
-            shifted = xr + TWO_PI / Fraction(2, 1)
-            q = (shifted._f.numerator * TWO_PI._f.denominator) // (shifted._f.denominator * TWO_PI._f.numerator)
-            remainder_num = shifted._f.numerator * TWO_PI._f.denominator - q * TWO_PI._f.numerator * shifted._f.denominator
-            reduced = Fraction(remainder_num, shifted._f.denominator * TWO_PI._f.denominator)
-            xr = reduced - TWO_PI / Fraction(2, 1)
-        x2 = xr * xr
-        total = xr
-        term = xr
-        for k in range(1, terms + 1):
-            denom = (2 * k) * (2 * k + 1)
-            term = -term * x2 / Fraction(denom, 1)
-            total = total + term
-        return total
-
-    @staticmethod
-    def exp_rational(x: 'Fraction') -> 'Fraction':
-        x2_12 = x * x / Fraction(12, 1)
-        num = Fraction(1, 1) + x / Fraction(2, 1) + x2_12
-        den = Fraction(1, 1) - x / Fraction(2, 1) + x2_12
-        if den.is_zero():
-            return Fraction(1, 1)
-        return num / den
-
-    def sqrt(self, iterations: int = REGIME_R_SQRT_ITERATIONS) -> 'Fraction':
+    def sqrt(self, iterations: int = 8) -> 'Fraction':
         if self._f.numerator < 0:
             raise ValueError("sqrt of negative fraction")
         if self._f.numerator == 0:
@@ -264,16 +213,12 @@ class Fraction:
         ds = math.isqrt(d)
         if ns * ns == n and ds * ds == d:
             return Fraction(ns, ds)
-        x0 = max(1, math.isqrt(int(self.to_float() * REGIME_R_SQRT_SCALE)))
-        x = Fraction(x0, math.isqrt(REGIME_R_SQRT_SCALE))
+        x0 = max(1, math.isqrt(int(self.to_float() * 10 ** 12)))
+        x = Fraction(x0, math.isqrt(10 ** 12))
         two = Fraction(2, 1)
         for _ in range(iterations):
             x = (x + self / x) / two
         return x
-
-Fraction.cos_exact = staticmethod(Fraction.cos_rational)
-Fraction.sin_exact = staticmethod(Fraction.sin_rational)
-Fraction.exp_pade = staticmethod(Fraction.exp_rational)
 
 # ============================================================================
 # CONSTANTS & CONFIGURATION — MQL4 PARITY
@@ -296,10 +241,6 @@ GF_TOLERANCE: Fraction = Fraction(40, 15)
 F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD.num()) / Decimal(F_THRESHOLD.den())
 G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD.num()) / Decimal(G_THRESHOLD.den())
 GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE.num()) / Decimal(GF_TOLERANCE.den())
-
-PHI_SYMBOLIC = "(1 + sqrt(5)) / 2"
-PI_SYMBOLIC = "PI"
-ARC_LENGTH_AXIOM = "s=r"
 
 TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
 BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
@@ -534,16 +475,6 @@ class AEI_CoreState:
     webapp_verified: bool = False
     webapp_last_seen: Optional[datetime] = None
 
-    q_field: Any = None
-    quat_history: List[Any] = field(default_factory=list)
-    time_fraction: Fraction = field(default_factory=lambda: Fraction(0, 1))
-    s_squared_exact: Fraction = field(default_factory=lambda: Fraction(0, 1))
-    r_squared_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
-    deviation_exact: Fraction = field(default_factory=lambda: Fraction(0, 1))
-    re_psi_exact: Fraction = field(default_factory=lambda: Fraction(1, 1))
-    dbz_branch: int = 0
-    arc_coherent: bool = True
-
     trailing_stop_active: bool = False
     trailing_stop_price: Decimal = Decimal('0.0')
     trailing_take_profit: Decimal = Decimal('0.0')
@@ -676,183 +607,6 @@ def _symbol_digits(symbol: str) -> int:
     return 2
 
 # ============================================================================
-# SYMBOLIC QUATERNION
-# ============================================================================
-class Quat:
-    __slots__ = ('a', 'b', 'c', 'd')
-
-    def __init__(self, a=0, b=0, c=0, d=0):
-        self.a = a if isinstance(a, Fraction) else Fraction(a)
-        self.b = b if isinstance(b, Fraction) else Fraction(b)
-        self.c = c if isinstance(c, Fraction) else Fraction(c)
-        self.d = d if isinstance(d, Fraction) else Fraction(d)
-
-    def norm_sq(self) -> Fraction:
-        return self.a * self.a + self.b * self.b + self.c * self.c + self.d * self.d
-
-    def norm(self) -> Fraction:
-        return self.norm_sq().sqrt()
-
-    def normalize(self) -> 'Quat':
-        ns = self.norm_sq()
-        if ns.is_zero():
-            return Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
-        n = ns.sqrt()
-        inv = Fraction(1, 1) / n
-        return Quat(self.a * inv, self.b * inv, self.c * inv, self.d * inv)
-
-    def conjugate(self) -> 'Quat':
-        return Quat(self.a, self.b.neg(), self.c.neg(), self.d.neg())
-
-    def __add__(self, other):
-        o = other if isinstance(other, Quat) else Quat(other)
-        return Quat(self.a + o.a, self.b + o.b, self.c + o.c, self.d + o.d)
-
-    def __sub__(self, other):
-        o = other if isinstance(other, Quat) else Quat(other)
-        return Quat(self.a - o.a, self.b - o.b, self.c - o.c, self.d - o.d)
-
-    def __mul__(self, other):
-        if isinstance(other, (Fraction, int, float)):
-            f = other if isinstance(other, Fraction) else Fraction(other)
-            return Quat(self.a * f, self.b * f, self.c * f, self.d * f)
-        o = other if isinstance(other, Quat) else Quat(other)
-        a = self.a * o.a - self.b * o.b - self.c * o.c - self.d * o.d
-        b = self.a * o.b + self.b * o.a + self.c * o.d - self.d * o.c
-        c = self.a * o.c - self.b * o.d + self.c * o.a + self.d * o.b
-        d = self.a * o.d + self.b * o.c - self.c * o.b + self.d * o.a
-        return Quat(a, b, c, d)
-
-    def __rmul__(self, other):
-        f = other if isinstance(other, Fraction) else Fraction(other)
-        return Quat(self.a * f, self.b * f, self.c * f, self.d * f)
-
-    def commutator(self, other) -> 'Quat':
-        return self * other - other * self
-
-    def project_to_s2(self) -> Dict[str, float]:
-        two = Fraction(2, 1)
-        x = two * (self.b * self.d + self.a * self.c)
-        y = two * (self.c * self.d - self.a * self.b)
-        z = self.a * self.a + self.d * self.d - self.b * self.b - self.c * self.c
-        denom = self.norm_sq()
-        if denom.is_zero():
-            return {"x": 0.0, "y": 0.0, "z": 1.0}
-        inv = Fraction(1, 1) / denom
-        return {
-            "x": (x * inv).to_float(),
-            "y": (y * inv).to_float(),
-            "z": (z * inv).to_float(),
-        }
-
-    def apply_natalia_fibration(self, s: Fraction, eps: Fraction, time_f: Fraction) -> 'Quat':
-        pA = Fraction(0, 1)
-        pB = Fraction(0, 1)
-        pC = Fraction(0, 1)
-        pD = Fraction(0, 1)
-        e = eps
-        threshold = Fraction(1, 1000000000)
-        for k in range(1, 13):
-            kf = Fraction(k, 1)
-            spow = kf * s
-            sinv = Fraction.sin_rational(spow + Fraction(1, 2), 8)
-            cosv = Fraction(1, 1) + Fraction(1, 10) * Fraction.cos_rational(spow * Fraction(7, 10), 8)
-            nf = spow * sinv * cosv
-            ph = Fraction.sin_rational(time_f * Fraction(2, 10) * kf + kf, 8)
-            contribution = e * nf
-            pA = pA + contribution * ph
-            pB = pB + contribution * Fraction.cos_rational(time_f * Fraction(3, 10) * kf + Fraction(1, 1), 8)
-            pC = pC + contribution * Fraction.sin_rational(time_f * Fraction(25, 100) * kf + Fraction(2, 1), 8)
-            pD = pD + contribution * Fraction.cos_rational(time_f * Fraction(35, 100) * kf + Fraction(3, 1), 8)
-            e = e * eps
-            if e.abs().to_float() < threshold.to_float():
-                break
-        return Quat(
-            self.a + pA * Fraction(15, 100),
-            self.b + pB * Fraction(10, 100),
-            self.c + pC * Fraction(12, 100),
-            self.d + pD * Fraction(8, 100),
-        )
-
-    def clone(self) -> 'Quat':
-        return Quat(self.a, self.b, self.c, self.d)
-
-# ============================================================================
-# LEECH LATTICE Λ₂₄ ANCHOR
-# ============================================================================
-class LeechLatticeAnchor:
-    _SEED_COORDS = 24
-
-    @staticmethod
-    def _golay_even_support(seed: int) -> List[int]:
-        bits = []
-        for i in range(12):
-            bits.append((seed >> i) & 1)
-        if sum(bits) % 2 == 1:
-            bits[11] ^= 1
-        return bits
-
-    @staticmethod
-    def project_price_to_leech(price_fraction: Fraction, seed: int = 0) -> List[Fraction]:
-        num = price_fraction.num()
-        den = price_fraction.den()
-        h = ((num & 0xFFFFFFFFFFFF) * 1000003 ^
-             (den & 0xFFFFFFFFFFFF) * 1000033 ^
-             (seed & 0xFFFFFFFFFFFF) * 1000037) & 0xFFFFFFFFFFFF
-        coords = [0] * LeechLatticeAnchor._SEED_COORDS
-        group_sum = 0
-        for g in range(4):
-            chunk = (h >> (g * 12)) & 0xFFF
-            bits = LeechLatticeAnchor._golay_even_support(chunk)
-            for b in range(6):
-                idx = g * 6 + b
-                coords[idx] = 1 if bits[b] else 0
-                group_sum += coords[idx]
-        correction = (-group_sum) % 8
-        if correction:
-            for i in range(LeechLatticeAnchor._SEED_COORDS):
-                if correction == 0:
-                    break
-                if coords[i] == 0:
-                    coords[i] = 1
-                    correction -= 1
-        if correction:
-            coords[0] += correction
-        parity = coords[0] & 1
-        for c in coords:
-            assert (c & 1) == parity, "Λ₂₄: parity mismatch"
-        assert (sum(coords) % 8) == 0, "Λ₂₄: mod-8 congruence violated"
-        return [Fraction(c, 1) for c in coords]
-
-    @staticmethod
-    def vector_hash(vec: List[Fraction]) -> str:
-        s = "|".join(str(v) for v in vec)
-        return hashlib.sha256(s.encode()).hexdigest()[:16]
-
-    @staticmethod
-    def norm_squared(vec: List[Fraction]) -> Fraction:
-        total = Fraction(0, 1)
-        for v in vec:
-            total = total + v * v
-        return total
-
-    @staticmethod
-    def is_lattice_point(vec: List[Fraction]) -> bool:
-        if len(vec) != 24:
-            return False
-        ints = []
-        for v in vec:
-            if v.den() != 1:
-                return False
-            ints.append(v.num())
-        parity = ints[0] & 1
-        if any((c & 1) != parity for c in ints):
-            return False
-        if (sum(ints) % 8) != 0:
-            return False
-        return True
-
-# ============================================================================
 # TELEGRAM WEB APP AUTHENTICATION
 # ============================================================================
 def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> Optional[Dict[str, Any]]:
@@ -951,7 +705,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v2.4.1",
+                    "User-Agent": "AEI-Bridge/v3.0.0",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1118,23 +872,13 @@ class AEEA_Engine:
         self._last_signal_time: Optional[datetime] = None
         self._signal_cooldown: int = 60
         self._initialization_attempted: bool = False
-        self._arc_length_verified: bool = False
         self._tick_log_counter: int = 0
         self._price_update_counter: int = 0
         self._bridge_publish_callback = None
         self._last_relay_warn: Optional[datetime] = None
         self._consecutive_zero_prices: int = 0
-
-        self.state.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
-        self.state.quat_history = [self.state.q_field.clone()]
-        self.state.time_fraction = Fraction(0, 1)
-        self._eps = Fraction(1, 100)
-        self._s_acc_exact: Fraction = Fraction(0, 1)
-        self._quat_tick_count: int = 0
         self._indicator_populate_count: int = 0
         self._imbalance_fire_count: int = 0
-        self._last_price_for_quat: Optional[Decimal] = None
-
         self._active_trailing_stop: Decimal = Decimal('0.0')
         self._active_trailing_tp: Decimal = Decimal('0.0')
         self._last_kronecker_bar: int = -1
@@ -1164,7 +908,7 @@ class AEEA_Engine:
         saved_webapp_uid = st.webapp_user_id
         saved_webapp_uname = st.webapp_username
         saved_webapp_verified = st.webapp_verified
-    
+
         st.KC = st.invert
         size = X_PERIOD - Y_START
         for i in range(13):
@@ -1233,21 +977,7 @@ class AEEA_Engine:
         st.bottomLine = "   "
         st.bL = "   "
         st.count = 0
-    
-        st.q_field = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
-        st.quat_history = [st.q_field.clone()]
-        st.time_fraction = Fraction(0, 1)
-        st.s_squared_exact = Fraction(0, 1)
-        st.r_squared_exact = Fraction(1, 1)
-        st.deviation_exact = Fraction(0, 1)
-        st.re_psi_exact = Fraction(1, 1)
-        st.dbz_branch = 0
-        st.arc_coherent = True
         st.fvg_anchor_map = {}
-    
-        self._eps = Fraction(1, 100)
-        self._s_acc_exact = Fraction(0, 1)
-        self._indicator_populate_count = 0
         self.ohlcv_history = saved_ohlcv
         st.price = saved_price
         st.Price = saved_Price
@@ -1810,10 +1540,8 @@ class AEEA_Engine:
             return
         regime = st.Regime[regime_idx]
         if which == "C":
-            target = st.C
             ref = st.Cc
         elif which == "c":
-            target = st.c
             ref = st.cC
         else:
             return
@@ -2363,12 +2091,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
+                    logger.info(f"🟥 Sign. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
+                    logger.info(f"🟥 Sig. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
                     st.prime = 1
@@ -2376,12 +2106,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
+                    logger.info(f"🟥 Sig. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
+                    logger.info(f"🟥 Sign. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
                 if (not st.C) or (not st.c):
@@ -2390,12 +2122,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
+                    logger.info(f"🟥 Sign. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
+                    logger.info(f"🟥 Sig. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
                     st.prime = 1
@@ -2403,12 +2137,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
+                    logger.info(f"🟥 Sig. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
+                    logger.info(f"🟥 Sign. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             self._KC()
 
     def _on_toe(self) -> None:
@@ -2423,12 +2159,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
+                    logger.info(f"🟩 Sig. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
+                    logger.info(f"🟩 Sign. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
                     st.prime = 0
@@ -2436,12 +2174,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
+                    logger.info(f"🟩 Sign. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
+                    logger.info(f"🟩 Sig. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
                 if (not st.C) or (not st.c):
@@ -2450,12 +2190,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
+                    logger.info(f"🟩 Sig. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
+                    logger.info(f"🟩 Sign. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
                     st.prime = 0
@@ -2463,12 +2205,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
+                    logger.info(f"🟩 Sign. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
+                    logger.info(f"🟩 Sig. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             self._KC()
 
     def _signal(self) -> None:
@@ -2480,7 +2224,6 @@ class AEEA_Engine:
         st.toll = 0
         st.tally = " "
         st.signal = st.price
-        st.signature = True
 
         h_idx = st.h - (st.y + 1)
         m_local = self._M(st.h) if 0 <= h_idx < len(st.k) else 0
@@ -2510,7 +2253,6 @@ class AEEA_Engine:
             "regime": regime,
             "m_count": int(m_local),
             "n_count": int(n_local),
-            "dbz_branch": int(st.dbz_branch),
             "tick": int(st.tick),
             "h_bar": int(st.h),
         }
@@ -2526,17 +2268,11 @@ class AEEA_Engine:
         if st.price > st.E and st.E != Decimal('0.0'):
             if st.signature and inp != -1:
                 st.dime = 0
-                st.mem = 0
             return True
-        if st.price < st.D and st.D != Decimal('0.0'):
+        else:
             if st.signature and inp != -1:
                 st.dime = 1
-                st.mem = 1
-            return True
-        if st.signature and inp != -1:
-            st.dime = 1
-            st.mem = 1
-        return False
+            return False
 
     def _A(self, price: Decimal) -> None:
         st = self.state
@@ -2578,6 +2314,7 @@ class AEEA_Engine:
 
     def _P(self, price: Decimal) -> None:
         st = self.state
+        self._S()
         target = self._get_next_topological_target("BUY", price)
         if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "BUY"):
             if st.Buy != -1 and (st.A or not st.B) and (st.u or not st.v):
@@ -2588,25 +2325,54 @@ class AEEA_Engine:
                     st.trailing_stop_side = "LONG"
                     st.Buy += 1
                     logger.info(f"🟢 P(): BUY executed at {price:.5f}, target={target:.5f}")
-            else:
-                self._A(price)
-                logger.info("⚠️ P(): BUY rejected — projected PnL <= spread friction")
+        else:
+            self._A(price)
+            logger.info("⚠️ P(): BUY rejected — projected PnL <= spread friction")
 
-    def _Q(self, price: Decimal) -> None:
-        st = self.state
         target = self._get_next_topological_target("SELL", price)
         if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "SELL"):
             if st.Sell != -1 and (not st.A or st.B) and (not st.u or st.v):
                 if not st.C:
+                    st.lOrder_id = 1
+                    st.has_open_short = True
+                    st.trailing_stop_entry = price
+                    st.trailing_stop_side = "SHORT"
+                    st.Sell += 1
+                    logger.info(f"🔴 P(): SELL executed at {price:.5f}, target={target:.5f}")
+        else:
+            self._B(price)
+            logger.info("⚠️ P(): SELL rejected — projected PnL <= spread friction")
+
+    def _Q(self, price: Decimal) -> None:
+        st = self.state
+        self._S()
+        target = self._get_next_topological_target("SELL", price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "SELL"):
+            if st.Sell != -1 and (not st.A or st.B) and (not st.u or st.v):
+                if st.C:
                     st.kOrder_id = 1
                     st.has_open_short = True
                     st.trailing_stop_entry = price
                     st.trailing_stop_side = "SHORT"
                     st.Sell += 1
                     logger.info(f"🔴 Q(): SELL executed at {price:.5f}, target={target:.5f}")
-            else:
-                self._B(price)
-                logger.info("⚠️ Q(): SELL rejected — projected PnL <= spread friction")
+        else:
+            self._B(price)
+            logger.info("⚠️ Q(): SELL rejected — projected PnL <= spread friction")
+
+        target = self._get_next_topological_target("BUY", price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "BUY"):
+            if st.Buy != -1 and (st.A or not st.B) and (st.u or not st.v):
+                if not st.C:
+                    st.kOrder_id = 1
+                    st.has_open_long = True
+                    st.trailing_stop_entry = price
+                    st.trailing_stop_side = "LONG"
+                    st.Buy += 1
+                    logger.info(f"🟢 Q(): BUY executed at {price:.5f}, target={target:.5f}")
+        else:
+            self._A(price)
+            logger.info("⚠️ Q(): BUY rejected — projected PnL <= spread friction")
 
     def _S(self) -> None:
         st = self.state
@@ -2630,9 +2396,9 @@ class AEEA_Engine:
                 st.trailing_stop_entry = Decimal('0.0')
                 st.trailing_stop_side = ""
             return
-        idx = st.Z - (st.y + 1)
-        if 0 <= idx < len(st.Regime):
-            regime = st.Regime[idx]
+        regime_idx = st.y + 1
+        if 0 <= regime_idx < len(st.Regime):
+            regime = st.Regime[regime_idx]
             if regime in ("tStable", "tCoherent", "Stable"):
                 return
         if st.price <= Decimal('0.0'):
@@ -2810,11 +2576,6 @@ class AEEA_Engine:
         condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-        info = self._verify_arc_length_coherence()
-        if info["coherent"]:
-            coherence_str = "✅ COHERENT"
-        else:
-            coherence_str = f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
         msg = (
             f"🎯 *ÆEA SIGNAL ALERT*\n"
             f"📊 *Direction:* {direction}\n"
@@ -2824,7 +2585,6 @@ class AEEA_Engine:
             f"⚖️ *Imbalance @ h={st.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"✅ *δ(m-n-2)=1 (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
-            f"🧠 *Arc-Length Coherence:* {coherence_str}\n"
             f"🔄 *Tick Count:* {st.tick}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -2843,7 +2603,6 @@ class AEEA_Engine:
         m_local = self._M(st.h) if st.h > 0 else 0
         n_local = self._N(st.h) if st.h > 0 else 0
         condition_met = (m_local >= 12) or (n_local >= 12)
-        info = self._verify_arc_length_coherence()
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else "Unknown"
         return {
@@ -2863,17 +2622,10 @@ class AEEA_Engine:
             "h_bar": int(st.h),
             "condition_met": condition_met,
             "regime": regime,
-            "coherence": self._check_coherence(),
             "symbol": SYMBOL,
             "tick": st.tick,
             "timestamp": datetime.now().isoformat(),
             "engine_initialized": st.FG,
-            "dbz_branch": info["dbz_branch"],
-            "arc_sq": info["arc_sq"],
-            "radius_sq": info["radius_sq"],
-            "deviation": info["deviation"],
-            "re_psi": info["re_psi"],
-            "quat_tick_count": int(self._quat_tick_count),
             "indicator_populate_count": int(self._indicator_populate_count),
             "imbalance_fire_count": int(self._imbalance_fire_count),
             "trailing_stop_active": st.trailing_stop_active,
@@ -2893,11 +2645,6 @@ class AEEA_Engine:
             "last_kronecker_h": int(st.last_kronecker_h),
             "X_scan": int(st.X_scan),
             "Y_scan": int(st.Y_scan),
-            "q_field": {"a": str(st.q_field.a), "b": str(st.q_field.b), "c": str(st.q_field.c), "d": str(st.q_field.d)} if st.q_field else None,
-            "s_squared_exact": str(st.s_squared_exact),
-            "r_squared_exact": str(st.r_squared_exact),
-            "deviation_exact": str(st.deviation_exact),
-            "re_psi_exact": str(st.re_psi_exact),
             "signal_count": len(st.signal_history),
             "last_signal_at": st.last_signal_at,
             "bar_close_count": int(st.bar_close_count),
@@ -2925,105 +2672,6 @@ class AEEA_Engine:
         elif side == "SHORT":
             self.state.has_open_short = False
             self.state.kOrder_id = -1
-
-    def _step_quaternion_field(self, price: Decimal, prev_price: Optional[Decimal]) -> None:
-        st = self.state
-        st.time_fraction = st.time_fraction + Fraction(1, 100)
-        self._quat_tick_count += 1
-        price_frac = Fraction.from_decimal_string(str(price))
-        prev_price_frac = (
-            Fraction.from_decimal_string(str(prev_price))
-            if prev_price is not None and prev_price > 0
-            else price_frac
-        )
-        delta_price = (price_frac - prev_price_frac).abs()
-        price_magnitude = prev_price_frac if not prev_price_frac.is_zero() else Fraction(1)
-        normalized_delta = delta_price / price_magnitude
-        s_param_time = st.time_fraction * Fraction(4, 10)
-        s_param = s_param_time + normalized_delta
-        theta_base = s_param * Fraction(7, 10)
-        theta_perturb = Fraction.sin_rational(s_param * Fraction(3, 10), 8) * Fraction(2, 10)
-        theta = theta_base + theta_perturb
-        phi_base = s_param * Fraction(3, 10) + Fraction(5, 10)
-        phi_perturb = Fraction.cos_rational(s_param * Fraction(5, 10), 8) * Fraction(1, 10)
-        phi = phi_base + phi_perturb
-        half_theta = theta / Fraction(2, 1)
-        half_phi = phi / Fraction(2, 1)
-        q0 = Fraction.cos_rational(half_theta, 8) * Fraction.cos_rational(half_phi, 8)
-        q1 = Fraction.sin_rational(half_theta, 8) * Fraction.cos_rational(half_phi, 8)
-        q2 = Fraction.cos_rational(half_theta, 8) * Fraction.sin_rational(half_phi, 8)
-        q3 = Fraction.sin_rational(half_theta, 8) * Fraction.sin_rational(half_phi, 8)
-        base = Quat(q0, q1, q2, q3)
-        q_new = base.apply_natalia_fibration(s_param, self._eps, st.time_fraction).normalize()
-        if q_new.norm_sq().is_zero():
-            q_new = Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))
-        prev_q = st.quat_history[-1]
-        dq = q_new - prev_q
-        dq_norm = dq.norm()
-        self._s_acc_exact = self._s_acc_exact + dq_norm
-        st.quat_history.append(q_new.clone())
-        if len(st.quat_history) > 2000:
-            tail = st.quat_history[-1500:]
-            st.quat_history = [Quat(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1), Fraction(0, 1))] + tail
-        st.s_squared_exact = self._s_acc_exact * self._s_acc_exact
-        st.r_squared_exact = q_new.norm_sq()
-        st.deviation_exact = st.s_squared_exact - st.r_squared_exact
-        st.re_psi_exact = q_new.a
-        st.q_field = q_new
-        st.dbz_branch = self._apply_dbz_branch(st.deviation_exact, st.re_psi_exact)
-        dev_float = st.deviation_exact.to_float()
-        st.arc_coherent = (abs(dev_float) < ARC_COHERENCE_TOLERANCE)
-        if self._quat_tick_count % 100 == 0:
-            logger.info(f"🌀 Quat tick #{self._quat_tick_count} | s²={st.s_squared_exact} r²={st.r_squared_exact} Δ={st.deviation_exact} Re[Ψ]={st.re_psi_exact} dbz={st.dbz_branch} coherent={st.arc_coherent}")
-
-    def _apply_dbz_branch(self, dev: Fraction, re_psi: Fraction) -> int:
-        try:
-            if dev.abs().to_float() < ARC_COHERENCE_TOLERANCE:
-                target = Fraction(1, 100)
-                diff = target - self._eps
-                self._eps = self._eps + diff * Fraction(2, 1000)
-                return 0
-            if re_psi.sign() > 0:
-                self._eps = self._eps * Fraction(97, 100)
-                if self._eps.abs().to_float() < 1e-6:
-                    self._eps = Fraction(1, 100)
-                return 1
-            delta = (
-                Fraction.sin_rational(
-                    self.state.time_fraction * Fraction(5, 10) + Fraction(1, 1), 8
-                ) * Fraction(8, 10000)
-            )
-            self._eps = self._eps + delta
-            if self._eps.to_float() > 0.05:
-                self._eps = Fraction(5, 100)
-            if self._eps.to_float() < 0.001:
-                self._eps = Fraction(1, 1000)
-            return 2
-        except Exception as e:
-            logger.exception(f"_apply_dbz_branch failed: {e}")
-            return 0
-
-    def _verify_arc_length_coherence(self) -> Dict[str, Any]:
-        st = self.state
-        dev_float = st.deviation_exact.to_float()
-        coherent = abs(dev_float) < ARC_COHERENCE_TOLERANCE
-        return {
-            "coherent": bool(coherent),
-            "arc_sq": str(st.s_squared_exact),
-            "radius_sq": str(st.r_squared_exact),
-            "deviation": str(st.deviation_exact),
-            "deviation_float": dev_float,
-            "dbz_branch": int(st.dbz_branch),
-            "re_psi": str(st.re_psi_exact),
-            "initialized": bool(st._initialized),
-            "quat_tick_count": int(self._quat_tick_count),
-        }
-
-    def _check_coherence(self) -> str:
-        info = self._verify_arc_length_coherence()
-        if info["coherent"]:
-            return "✅ COHERENT"
-        return f"⚠️ DEVIATION: {info['deviation_float']:.6f}"
 
     def _populate_indicator_matrix(self) -> None:
         st = self.state
@@ -3139,10 +2787,6 @@ class AEEA_Engine:
             st.FG = True
             st._initialized = True
             logger.info(f"✅ Engine initialized (FG=true) at price={st.price:.5f}")
-
-        prev_price = self._last_price_for_quat
-        self._step_quaternion_field(st.price, prev_price)
-        self._last_price_for_quat = st.price
 
         self._execute_trailing_stop()
 
@@ -3391,6 +3035,7 @@ class AEEA_Engine:
 
         self._on_tick(price_data)
 
+
 # ============================================================================
 # BRIDGE STATE
 # ============================================================================
@@ -3400,12 +3045,11 @@ class BridgeState:
         self._snapshot: Dict[str, Any] = {
             "symbol": SYMBOL, "price": "0.0", "ask": "0.0", "bid": "0.0",
             "signal": "0.0", "regime": "Unknown", "tick": 0,
-            "m_count": 0, "n_count": 0, "coherent": False,
-            "arc_sq": "0", "radius_sq": "0", "deviation": "0",
+            "m_count": 0, "n_count": 0,
             "timestamp": datetime.now().isoformat(), "endpoint": None,
             "webapp_user_id": None, "webapp_username": None,
             "last_price_update": None, "engine_initialized": False,
-            "consecutive_zero_prices": 0, "dbz_branch": 0, "re_psi": "0",
+            "consecutive_zero_prices": 0,
             "relay_url": RELAY_URL, "relay_healthy": True,
             "indicator_populate_count": 0, "imbalance_fire_count": 0,
             "trailing_stop_active": False, "trailing_stop_price": "0.0",
@@ -3417,10 +3061,7 @@ class BridgeState:
             "on_track_runs": 0, "on_stand_runs": 0,
             "last_kronecker_bar": -1, "last_kronecker_m": 0,
             "last_kronecker_n": 0, "last_kronecker_h": -1,
-            "X_scan": Y_START, "Y_scan": Y_START, "quat_tick_count": 0,
-            "q_field": None, "s_squared_exact": "0", "r_squared_exact": "1",
-            "deviation_exact": "0", "re_psi_exact": "1",
-            "quat_history_sample": [],
+            "X_scan": Y_START, "Y_scan": Y_START,
             "market_m": 0, "market_n": 0, "market_imbalance": -2, "market_regime": "NEUTRAL",
             "ohlcv_count": 0, "signal_count": 0, "last_signal_at": None,
             "bar_close_count": 0,
@@ -3520,6 +3161,7 @@ class BridgeState:
 
 BRIDGE_STATE = BridgeState()
 BRIDGE_ENGINE_REF: Dict[str, Any] = {"engine": None, "bot": None, "public_url": None}
+
 
 # ============================================================================
 # TUNNEL MANAGER
@@ -3659,11 +3301,12 @@ class TunnelManager:
         self.process = None
         logger.info("🌐 Tunnel stopped")
 
+
 # ============================================================================
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/2.4.1"
+    server_version = "AEI-Bridge/3.0.0"
 
     def log_message(self, fmt, *args):
         return
@@ -3726,12 +3369,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.15",
+                "ok": not stale, "service": "aei-bridge", "version": "3.0.0",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": snap.get("engine_initialized", False),
-                "coherent": snap.get("coherent", False),
-                "dbz_branch": snap.get("dbz_branch", 0),
                 "indicator_populate_count": snap.get("indicator_populate_count", 0),
                 "imbalance_fire_count": snap.get("imbalance_fire_count", 0),
                 "ohlcv_count": snap.get("ohlcv_count", 0),
@@ -3770,12 +3411,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send_json(503, {"error": "engine_not_ready"})
                 return
             st = engine.state
-            q = st.q_field
-            quat_history_sample = []
-            for qh in st.quat_history[-64:]:
-                quat_history_sample.append({
-                    "a": str(qh.a), "b": str(qh.b), "c": str(qh.c), "d": str(qh.d)
-                })
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
             fvg_anchors = []
@@ -3791,24 +3426,32 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "type": "top" if rec["type"] == "top" else "bottom",
                     "price": rec["price"],
                 })
+            h_idx = st.h - (st.y + 1)
+            m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
+            n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
+            market_m = int(st.last_kronecker_m)
+            market_n = int(st.last_kronecker_n)
+            market_imbalance = market_m - market_n - 2
+            if market_imbalance > 2:
+                market_regime = "BULLISH"
+            elif market_imbalance < -2:
+                market_regime = "BEARISH"
+            else:
+                market_regime = "NEUTRAL"
             payload = {
                 "symbol": SYMBOL,
                 "price": str(st.price),
                 "regime": regime,
-                "coherence": "COHERENT" if st.arc_coherent else "EVOLVING",
-                "dbz_branch": int(st.dbz_branch),
-                "q_field": {"a": str(q.a), "b": str(q.b), "c": str(q.c), "d": str(q.d)} if q else None,
-                "s_squared_exact": str(st.s_squared_exact),
-                "r_squared_exact": str(st.r_squared_exact),
-                "deviation_exact": str(st.deviation_exact),
-                "re_psi_exact": str(st.re_psi_exact),
-                "quat_history": quat_history_sample,
                 "tick": int(st.tick),
-                "generation": 0,
-                "market_m": int(st.last_kronecker_m),
-                "market_n": int(st.last_kronecker_n),
-                "market_imbalance": int(st.last_kronecker_m) - int(st.last_kronecker_n) - 2,
-                "market_regime": "BULLISH" if (int(st.last_kronecker_m) - int(st.last_kronecker_n) - 2) > 2 else ("BEARISH" if (int(st.last_kronecker_m) - int(st.last_kronecker_n) - 2) < -2 else "NEUTRAL"),
+                "m_count": market_m,
+                "n_count": market_n,
+                "m_at_h": m_at_h,
+                "n_at_h": n_at_h,
+                "h_bar": int(st.h),
+                "market_m": market_m,
+                "market_n": market_n,
+                "market_imbalance": market_imbalance,
+                "market_regime": market_regime,
                 "last_price_update": datetime.now().isoformat(),
                 "relay_healthy": (engine.feed._failure_count < 3),
                 "X_PERIOD": X_PERIOD,
@@ -3894,7 +3537,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return
             probe_data = engine.feed.probe()
             try:
-                probe_data["arc_length"] = engine._verify_arc_length_coherence()
                 probe_data["signal_status"] = engine.get_signal_status()
                 probe_data["relay_healthy"] = (engine.feed._failure_count < 3)
             except Exception:
@@ -3909,8 +3551,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return
             try:
                 diag = engine.get_signal_status()
-                diag["arc_length"] = engine._verify_arc_length_coherence()
-                diag["quat_history_depth"] = len(engine.state.quat_history)
                 diag["ohlcv_history_depth"] = len(engine.ohlcv_history)
                 diag["indicator_sample_col0"] = [str(engine.state.iA[i][0]) for i in range(13)]
                 diag["indicator_sample_col1"] = [str(engine.state.iA[i][1]) for i in range(13)] if len(engine.state.iA[0]) > 1 else []
@@ -4045,6 +3685,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         self._send_json(404, {"error": "not_found", "path": path})
 
+
 # ============================================================================
 # BRIDGE SERVER
 # ============================================================================
@@ -4113,6 +3754,7 @@ class BridgeServer:
             self._thread = None
         logger.info("🌐 ÆEA Mini App Bridge stopped")
 
+
 # ============================================================================
 # BRIDGE ATTACHMENT
 # ============================================================================
@@ -4126,17 +3768,9 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
             st = engine.state
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-            info = engine._verify_arc_length_coherence()
             h_idx = st.h - (st.y + 1)
             m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
             n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-            q = st.q_field
-            q_dict = None
-            if q:
-                q_dict = {"a": str(q.a), "b": str(q.b), "c": str(q.c), "d": str(q.d)}
-            quat_sample = []
-            for qh in st.quat_history[-16:]:
-                quat_sample.append({"a": str(qh.a), "b": str(qh.b), "c": str(qh.c), "d": str(qh.d)})
             market_m = int(st.last_kronecker_m)
             market_n = int(st.last_kronecker_n)
             market_imbalance = market_m - market_n - 2
@@ -4153,10 +3787,6 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "tick": int(st.tick),
                 "m_count": market_m, "n_count": market_n,
                 "m_at_h": int(m_at_h), "n_at_h": int(n_at_h), "h_bar": int(st.h),
-                "coherent": bool(info["coherent"]),
-                "arc_sq": str(info["arc_sq"]), "radius_sq": str(info["radius_sq"]),
-                "deviation": str(info["deviation"]),
-                "dbz_branch": int(info["dbz_branch"]), "re_psi": str(info["re_psi"]),
                 "timestamp": datetime.now().isoformat(),
                 "endpoint": BRIDGE_ENGINE_REF.get("public_url"),
                 "webapp_user_id": st.webapp_user_id, "webapp_username": st.webapp_username,
@@ -4167,7 +3797,6 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "relay_healthy": (engine.feed._failure_count < 3),
                 "indicator_populate_count": int(engine._indicator_populate_count),
                 "imbalance_fire_count": int(engine._imbalance_fire_count),
-                "quat_tick_count": int(engine._quat_tick_count),
                 "trailing_stop_active": bool(st.trailing_stop_active),
                 "trailing_stop_price": str(st.trailing_stop_price),
                 "trailing_take_profit": str(st.trailing_take_profit),
@@ -4186,12 +3815,6 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "last_kronecker_n": int(st.last_kronecker_n),
                 "last_kronecker_h": int(st.last_kronecker_h),
                 "X_scan": int(st.X_scan), "Y_scan": int(st.Y_scan),
-                "q_field": q_dict,
-                "s_squared_exact": str(st.s_squared_exact),
-                "r_squared_exact": str(st.r_squared_exact),
-                "deviation_exact": str(st.deviation_exact),
-                "re_psi_exact": str(st.re_psi_exact),
-                "quat_history_sample": quat_sample,
                 "market_m": market_m,
                 "market_n": market_n,
                 "market_imbalance": market_imbalance,
@@ -4226,6 +3849,7 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
     bot.run = wrapped_run
     bot._bridge_attached = True
     logger.info("🔗 Bridge attached to AEI_Bot.run()")
+
 
 # ============================================================================
 # TELEGRAM BOT
@@ -4268,7 +3892,6 @@ class AEI_Bot:
             [InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"), InlineKeyboardButton("⏹️ Stop Feed", callback_data="stop_feed")],
             [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
             [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
-            [InlineKeyboardButton("🧬 Arc-Length", callback_data="arclen"), InlineKeyboardButton("🌿 DbZ", callback_data="dbz")],
             [InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics")],
             [InlineKeyboardButton("📊 Chart", callback_data="chart")],
         ]
@@ -4284,8 +3907,6 @@ class AEI_Bot:
         self.engine.application = self.application
         engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
         feed_status = "Active" if self._running else "Inactive"
-        arclen_info = self.engine._verify_arc_length_coherence()
-        coherent_mark = "✅" if arclen_info["coherent"] else "⚠️"
         welcome = (
             "🔷 *ÆEA Quantum-Financial Topology Bot*\n"
             "Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
@@ -4297,7 +3918,6 @@ class AEI_Bot:
             "`/indicators` - 13D Hilbert Space projection\n"
             "`/fvg` - Fair Value Gap tracking\n"
             "`/chart` - Recent signals summary\n"
-            "`/arclen` - Arc-length & DbZ state\n"
             "`/diagnostics` - Full engine diagnostic snapshot\n"
             "`/reset` - Reset topological branch\n"
             "`/start_feed` - Start price feed\n"
@@ -4312,7 +3932,6 @@ class AEI_Bot:
             f"*Current Symbol:* `{SYMBOL}`\n"
             f"🔄 *Feed Status:* {feed_status}\n"
             f"🧠 *Engine Status:* {engine_status}\n"
-            f"🌿 *DbZ Branch:* {arclen_info['dbz_branch']}  |  *Coherent:* {coherent_mark}\n"
             f"📊 *Bar Closes:* {self.engine.state.bar_close_count}  |  *Signals:* {len(self.engine.state.signal_history)}\n"
             "💎 Natalia Tanyatia"
         )
@@ -4333,8 +3952,6 @@ class AEI_Bot:
         regime = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
         bid, ask = self.engine.feed.get_current_price()
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
-        info = self.engine._verify_arc_length_coherence()
-        coherence_line = "✅ COHERENT" if info["coherent"] else f"⚠️ DEV: {info['deviation_float']:.6f}"
         feed_mark = "✅" if self._running else "⏹️"
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
         m_local = state.last_kronecker_m if state.last_kronecker_m else 0
@@ -4354,8 +3971,6 @@ class AEI_Bot:
             f"📈 *Symbol:* {SYMBOL}\n"
             f"💰 *Price:* {price_display}\n"
             f"📊 *Regime:* {regime}\n"
-            f"🔄 *Coherence:* {coherence_line}\n"
-            f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
             f"🎯 *Signal Level:* {state.signal:.5f}\n"
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🔄 *Tick:* {state.tick}\n"
@@ -4383,52 +3998,6 @@ class AEI_Bot:
         else:
             await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
-    async def arclen(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        state = self.engine.state
-        info = self.engine._verify_arc_length_coherence()
-        q = state.q_field
-        qstr = f"({q.a}, {q.b}, {q.c}, {q.d})" if q is not None else "—"
-        response = (
-            "🧮 *EXACT ARC-LENGTH STATE*\n"
-            f"🧮 *s² (ℚ-exact)* = `{info['arc_sq']}`\n"
-            f"🧮 *r² (ℚ-exact)* = `{info['radius_sq']}`\n"
-            f"🧮 *Δ = s² − r²* = `{info['deviation']}`\n"
-            f"📊 *Δ (float)* = {info['deviation_float']:.10e}\n"
-            f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
-            f"   • 0 = coherent (no action)\n"
-            f"   • 1 = critical-line projection (Re[Ψ] > 0)\n"
-            f"   • 2 = Natalia fibration (Re[Ψ] ≤ 0)\n"
-            f"🌀 *Re[Ψ]* = `{info['re_psi']}`\n"
-            f"🌀 *Current Φ* = `{qstr}`\n"
-            f"🔷 *FVG anchors:* {len(state.fvg_anchor_map)}"
-        )
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown")
-
-    async def dbz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        state = self.engine.state
-        info = self.engine._verify_arc_length_coherence()
-        eps = self.engine._eps
-        branch_names = {0: "COHERENT", 1: "CRITICAL-LINE (Branch A)", 2: "NATALIA (Branch B)"}
-        response = (
-            "🌿 *DECIDING-BY-ZERO (DbZ) STATE*\n"
-            f"🌿 *Current Branch:* {info['dbz_branch']} — {branch_names.get(info['dbz_branch'], 'UNKNOWN')}\n"
-            f"🌀 *ε (fibration parameter):* `{eps}`\n"
-            f"💠 *ε as float:* {eps.to_float():.10f}\n"
-            f"🌀 *Re[Ψ] =* `{info['re_psi']}`\n"
-            f"🌀 *Δ (deviation) =* `{info['deviation']}`\n\n"
-            "*Branch semantics:*\n"
-            "• Re[Ψ] > 0 → project to critical line Re(s)=½\n"
-            "• Re[Ψ] ≤ 0 → apply Natalia fibration ε perturbation\n"
-            "• Δ ≈ 0 → relax ε toward baseline 1/100"
-        )
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown")
-
     async def diagnostics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = self.engine.get_signal_status()
         response = (
@@ -4441,10 +4010,6 @@ class AEI_Bot:
             f"🎯 *Signal History:* {status.get('signal_count')}\n"
             f"⚖️ *Local m / n:* {status.get('m_count')} / {status.get('n_count')}\n"
             f"⚖️ *m / n (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
-            f"🧮 *Arc s² =* `{status.get('arc_sq')}`\n"
-            f"🧮 *Rad r² =* `{status.get('radius_sq')}`\n"
-            f"🧮 *Δ =* `{status.get('deviation')}`\n"
-            f"🌀 *Re[Ψ] =* `{status.get('re_psi')}`\n"
             f"🎯 *Signal:* {status.get('signal'):.5f}\n"
             f"📊 *Regime:* {status.get('regime')}\n"
             f"🔀 *KC:* {status.get('KC')}  |  *Prime:* {status.get('prime')}  |  *Dime:* {status.get('dime')}\n"
@@ -4521,7 +4086,6 @@ class AEI_Bot:
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
         condition_met = (m_local >= 12) or (n_local >= 12)
-        info = self.engine._verify_arc_length_coherence()
         condition_mark = "✅ MET" if condition_met else "❌ NOT MET"
         response = (
             "🎯 *TRADING SIGNAL*\n"
@@ -4532,7 +4096,6 @@ class AEI_Bot:
             f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"✅ *δ(m-n-2)=1 (MQL4 gate):* {condition_mark}\n"
-            f"🌿 *DbZ Branch:* {info['dbz_branch']}\n"
             f"🔀 *KC State:* {state.KC}\n"
             f"🔢 *Prime:* {state.prime}\n"
             f"🔢 *Dime:* {state.dime}\n"
@@ -4649,8 +4212,6 @@ class AEI_Bot:
             "• Regime classification seeded to 'sRange'\n"
             "• Premium/Discount/HH/LL reset to current bar data\n"
             "• k/l signal flags cleared\n"
-            "• Quaternion field Φ reset to identity\n"
-            "• DbZ branch history cleared\n"
             "• FVG anchor map cleared\n"
             "• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
@@ -4832,17 +4393,17 @@ class AEI_Bot:
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
         await update.message.reply_text(
             "🌐 *ÆEA Telegram Mini App*\n"
-            "Tap the button below to launch the full Codex Symbolica visualization.\n\n"
+            "Tap the button below to launch the full engine visualization.\n\n"
             "*Features inside the Mini App:*\n"
             "  ▲ Draw premium FVG\n"
             "  ▼ Draw discount FVG\n"
             "  ✖ Delete FVG\n"
             "  🔄 Live state polling every 2s\n"
-            "  🧬 Engine-authoritative coherence panel\n"
+            "  📊 Candlestick chart with signal overlays\n"
             "  🔀 KC / Prime / Dime visible in HUD\n"
             "  🔍 OnTrack / OnStand counters in engine panel\n"
             "  📈 Trailing stop state mirrored from engine T()\n"
-            "  📊 Candlestick chart with signal overlays\n"
+            "  📈 13D indicator projection grid\n"
             "  🔄 Auto-refresh every 30s (chart mode)",
             parse_mode="Markdown",
             reply_markup=keyboard,
@@ -4893,10 +4454,6 @@ class AEI_Bot:
             await self.probe(update, context)
         elif action == "rebuild_yf":
             await self.rebuild_yf(update, context)
-        elif action == "arclen":
-            await self.arclen(update, context)
-        elif action == "dbz":
-            await self.dbz(update, context)
         elif action == "diagnostics":
             await self.diagnostics(update, context)
         elif action == "webapp_pending":
@@ -4927,8 +4484,6 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("indicators", self.indicators))
         self.application.add_handler(CommandHandler("chart", self.chart))
         self.application.add_handler(CommandHandler("fvg", self.fvg))
-        self.application.add_handler(CommandHandler("arclen", self.arclen))
-        self.application.add_handler(CommandHandler("dbz", self.dbz))
         self.application.add_handler(CommandHandler("diagnostics", self.diagnostics))
         self.application.add_handler(CommandHandler("reset", self.reset))
         self.application.add_handler(CommandHandler("start_feed", self.start_feed))
@@ -4945,8 +4500,6 @@ class AEI_Bot:
         logger.info(f"🤖 {self.bot_name} starting...")
         logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
-        logger.info("🌿 DbZ branching: Re[Ψ] quaternion component (parallel symbolic layer).")
-        logger.info("🧬 Leech lattice anchor: parallel symbolic layer.")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
         logger.info("🎯 Signal logging enabled for all imbalance events.")
@@ -4964,6 +4517,7 @@ class AEI_Bot:
         self.application.run_polling()
 
 _bridge_attach_to_bot(AEI_Bot)
+
 
 # ============================================================================
 # MAIN ENTRY POINT

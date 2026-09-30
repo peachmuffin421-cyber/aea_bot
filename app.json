@@ -1,12 +1,36 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity Edition",
   "repository": "https://github.com/yourusername/aea-bot",
-  "keywords": ["trading", "telegram", "quantum", "finance"],
+  "keywords": ["trading", "telegram", "quantum", "finance", "mq4-parity"],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
       "description": "Your Telegram Bot Token from @BotFather",
       "required": true
+    },
+    "TELEGRAM_WEBAPP_URL": {
+      "description": "Public HTTPS URL of the Telegram Mini App (GitHub Pages). Skips tunnel spawn when set.",
+      "required": false
+    },
+    "RELAY_URL": {
+      "description": "Cloudflare Worker relay URL. Required for live prices.",
+      "required": false
+    },
+    "RELAY_KEY": {
+      "description": "Optional shared secret matching `wrangler secret put RELAY_KEY`.",
+      "required": false
+    },
+    "CORS_ORIGIN": {
+      "description": "Lock down writes to your GitHub Pages origin. Defaults to '*'.",
+      "required": false
+    },
+    "SYMBOL": {
+      "description": "Default trading symbol. Defaults to 'BTC-USD'.",
+      "required": false
+    },
+    "UPDATE_INTERVAL": {
+      "description": "Price-feed polling interval in seconds. Defaults to 30.",
+      "required": false
     }
   },
   "formation": {
