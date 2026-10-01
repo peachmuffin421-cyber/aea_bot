@@ -6,7 +6,7 @@ Faithful Unabridged Port of æea.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.0.0 (MQL4-Parity + MT4/TradingView TWA Edition)
+Version: 4.0.1 (MQL4-Parity + MT4/TradingView TWA Edition — CORS/Error Hardening)
 """
 import asyncio
 import hashlib
@@ -224,7 +224,6 @@ class Fraction:
 # ============================================================================
 # CONSTANTS & CONFIGURATION — MQL4 PARITY
 # ============================================================================
-# These are mutable at runtime via the /settings endpoint.
 COMMISSION: Decimal = Decimal('0.0')
 STOP_LOSS: Decimal = Decimal('0.0')
 TAKE_PROFIT: Decimal = Decimal('0.0')
@@ -749,7 +748,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.0.0",
+                    "User-Agent": "AEI-Bridge/v4.0.1",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1106,9 +1105,6 @@ class AEEA_Engine:
             return
         if col_c < 0 or col_c >= len(st.cA[0]):
             col_c = col_i
-
-        f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
-        g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
 
         adx_list: List[Decimal] = []
         for i in range(j + 1):
@@ -2141,14 +2137,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
                     st.prime = 1
@@ -2156,14 +2152,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
                 if (not st.C) or (not st.c):
@@ -2172,14 +2168,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
                     st.prime = 1
@@ -2187,14 +2183,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price:.5f} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             self._KC()
 
     def _on_toe(self) -> None:
@@ -2209,14 +2205,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
                     st.prime = 0
@@ -2224,14 +2220,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
                 if (not st.C) or (not st.c):
@@ -2240,14 +2236,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
                     st.prime = 0
@@ -2255,14 +2251,14 @@ class AEEA_Engine:
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0
                     self._G()
                     self._signal()
                     st.tick_tock = True
                     st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price:.5f} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             self._KC()
 
     def _signal(self) -> None:
@@ -2318,7 +2314,7 @@ class AEEA_Engine:
             st.signal_history = st.signal_history[-st.max_signal_history:]
         st.last_signal_at = signal_record["timestamp"]
 
-        logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price:.5f}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
+        logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
 
     def _on_gaurd(self, inp: int) -> bool:
         st = self.state
@@ -2401,7 +2397,7 @@ class AEEA_Engine:
                     st.trailing_stop_entry = price
                     st.trailing_stop_side = "LONG"
                     st.Buy = 0 if st.Buy == -1 else st.Buy + 1
-                    logger.info(f"🟢 P(): BUY executed #{ticket} at {price:.5f}, target={target:.5f}")
+                    logger.info(f"🟢 P(): BUY executed #{ticket} at {price}, target={target}")
         else:
             self._A(price)
             logger.info("⚠️ P(): BUY rejected — projected PnL <= spread friction")
@@ -2416,7 +2412,7 @@ class AEEA_Engine:
                     st.trailing_stop_entry = price
                     st.trailing_stop_side = "SHORT"
                     st.Sell = 0 if st.Sell == -1 else st.Sell + 1
-                    logger.info(f"🔴 P(): SELL executed #{ticket} at {price:.5f}, target={target:.5f}")
+                    logger.info(f"🔴 P(): SELL executed #{ticket} at {price}, target={target}")
         else:
             self._B(price)
             logger.info("⚠️ P(): SELL rejected — projected PnL <= spread friction")
@@ -2434,7 +2430,7 @@ class AEEA_Engine:
                     st.trailing_stop_entry = price
                     st.trailing_stop_side = "SHORT"
                     st.Sell = 0 if st.Sell == -1 else st.Sell + 1
-                    logger.info(f"🔴 Q(): SELL executed #{ticket} at {price:.5f}, target={target:.5f}")
+                    logger.info(f"🔴 Q(): SELL executed #{ticket} at {price}, target={target}")
         else:
             self._B(price)
             logger.info("⚠️ Q(): SELL rejected — projected PnL <= spread friction")
@@ -2449,7 +2445,7 @@ class AEEA_Engine:
                     st.trailing_stop_entry = price
                     st.trailing_stop_side = "LONG"
                     st.Buy = 0 if st.Buy == -1 else st.Buy + 1
-                    logger.info(f"🟢 Q(): BUY executed #{ticket} at {price:.5f}, target={target:.5f}")
+                    logger.info(f"🟢 Q(): BUY executed #{ticket} at {price}, target={target}")
         else:
             self._A(price)
             logger.info("⚠️ Q(): BUY rejected — projected PnL <= spread friction")
@@ -2492,7 +2488,7 @@ class AEEA_Engine:
                 st.trailing_take_profit = st.price * Decimal('1.02')
             else:
                 st.trailing_take_profit = st.price * Decimal('0.98')
-            logger.info(f"🎯 Trailing stop ACTIVATED at {st.trailing_stop_price:.5f}, TP={st.trailing_take_profit:.5f}, direction={st.trailing_stop_side}")
+            logger.info(f"🎯 Trailing stop ACTIVATED at {st.trailing_stop_price}, TP={st.trailing_take_profit}, direction={st.trailing_stop_side}")
             return
         if len(self.price_history) > 0:
             last = self.price_history[-1]
@@ -2551,9 +2547,9 @@ class AEEA_Engine:
                 st.trailing_take_profit = proposedTP
         if new_sl != st.trailing_stop_price:
             st.trailing_stop_price = new_sl
-            logger.info(f"📈 Trailing stop updated to {st.trailing_stop_price:.5f} (PnL={pnl_points:.1f}pts, friction={friction_points:.1f}pts)")
+            logger.info(f"📈 Trailing stop updated to {st.trailing_stop_price} (PnL={pnl_points}pts, friction={friction_points}pts)")
         if has_long and st.price >= st.trailing_take_profit:
-            logger.info(f"✅ TP hit (LONG) at {st.price:.5f} / TP={st.trailing_take_profit:.5f}")
+            logger.info(f"✅ TP hit (LONG) at {st.price} / TP={st.trailing_take_profit}")
             if st.lOrder_id != -1:
                 self._close_order(st.lOrder_id, st.price)
             st.trailing_stop_active = False
@@ -2564,7 +2560,7 @@ class AEEA_Engine:
             st.has_open_long = False
             st.lOrder_id = -1
         elif has_short and st.price <= st.trailing_take_profit:
-            logger.info(f"✅ TP hit (SHORT) at {st.price:.5f} / TP={st.trailing_take_profit:.5f}")
+            logger.info(f"✅ TP hit (SHORT) at {st.price} / TP={st.trailing_take_profit}")
             if st.kOrder_id != -1:
                 self._close_order(st.kOrder_id, st.price)
             st.trailing_stop_active = False
@@ -2696,7 +2692,7 @@ class AEEA_Engine:
             self._F(j, iH, iL)
         st.FG = True
         st._initialized = True
-        logger.info(f"✅ Engine initialized on first tick at price={st.price:.5f}")
+        logger.info(f"✅ Engine initialized on first tick at price={st.price}")
 
     def _on_tick(self, price_data: PriceData) -> None:
         st = self.state
@@ -2706,7 +2702,7 @@ class AEEA_Engine:
             self._tick_log_counter = 0
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
-            logger.info(f"⚡ Tick #{st.tick}: Price={st.price:.5f}, Signal={st.signal:.5f}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}")
+            logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}")
 
         st.price = price_data.bid
         st.Price = price_data.close
@@ -2896,12 +2892,12 @@ class AEEA_Engine:
                 i += 1
                 continue
             if (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
-                logger.info(f"🔵 FVG maintenance: remove blue @ {price_line:.5f}")
+                logger.info(f"🔵 FVG maintenance: remove blue @ {price_line}")
                 st.BL.pop(i)
                 st.FVG -= 1
                 continue
             if (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
-                logger.info(f"🔴 FVG maintenance: remove red @ {price_line:.5f}")
+                logger.info(f"🔴 FVG maintenance: remove red @ {price_line}")
                 st.BL.pop(i)
                 st.FVG -= 1
                 continue
@@ -2965,7 +2961,7 @@ class AEEA_Engine:
             })
             if len(self.ohlcv_history) > 200:
                 self.ohlcv_history = self.ohlcv_history[-200:]
-            logger.info(f"📊 BAR CLOSE #{self.state.bar_close_count} at {timestamp.isoformat()} close={price_data.close:.5f} (ohlcv={len(self.ohlcv_history)})")
+            logger.info(f"📊 BAR CLOSE #{self.state.bar_close_count} at {timestamp.isoformat()} close={price_data.close} (ohlcv={len(self.ohlcv_history)})")
         else:
             self._bar_open = False
             if self.ohlcv_history:
@@ -3002,8 +2998,8 @@ class AEEA_Engine:
         msg = (
             f"🎯 *ÆEA SIGNAL ALERT*\n"
             f"📊 *Direction:* {direction}\n"
-            f"🎯 *Signal Level:* {st.signal:.5f}\n"
-            f"💰 *Current Price:* {st.price:.5f}\n"
+            f"🎯 *Signal Level:* {st.signal}\n"
+            f"💰 *Current Price:* {st.price}\n"
             f"📊 *Regime:* {regime}\n"
             f"⚖️ *Imbalance @ h={st.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
@@ -3149,7 +3145,7 @@ class AEEA_Engine:
             st.kOrder_id = ticket
             st.trailing_stop_entry = entry
             st.trailing_stop_side = "SHORT"
-        logger.info(f"📝 place_order: {side} #{ticket} @ {entry:.5f}, lot={lot}, sl={sl}, tp={tp}")
+        logger.info(f"📝 place_order: {side} #{ticket} @ {entry}, lot={lot}, sl={sl}, tp={tp}")
         return {"ok": True, "ticket": ticket, "side": side, "entry": float(entry), "sl": float(sl), "tp": float(tp)}
 
     def close_order(self, ticket: int = None, all: bool = False) -> Dict[str, Any]:
@@ -3237,11 +3233,17 @@ class AEEA_Engine:
     def change_symbol(self, new_symbol: str) -> Dict[str, Any]:
         global SYMBOL
         try:
+            if not new_symbol or not isinstance(new_symbol, str):
+                return {"error": "invalid_symbol", "detail": "Symbol must be a non-empty string"}
             yahoo_symbol = SYMBOL_MAP.get(new_symbol.upper(), new_symbol.upper())
             test_feed = FeedClient(yahoo_symbol)
             bid, _ = test_feed.get_current_price()
             if bid <= Decimal('0.0'):
-                return {"error": "no_price_for_symbol", "symbol": yahoo_symbol}
+                return {
+                    "error": "no_price_for_symbol",
+                    "symbol": yahoo_symbol,
+                    "detail": f"Relay returned no price for '{yahoo_symbol}'. Check RELAY_URL and symbol validity.",
+                }
             prev_chat = self.state.chat_id
             prev_on_track = self.state.on_track_runs
             prev_on_stand = self.state.on_stand_runs
@@ -3262,8 +3264,8 @@ class AEEA_Engine:
             logger.info(f"📈 Symbol changed to {yahoo_symbol}")
             return {"ok": True, "symbol": yahoo_symbol}
         except Exception as e:
-            logger.error(f"change_symbol failed: {e}")
-            return {"error": str(e)}
+            logger.exception("change_symbol failed")
+            return {"error": "change_symbol_exception", "detail": str(e), "symbol": new_symbol}
 
 # ============================================================================
 # INDICATOR NAME CONSTANT
@@ -3555,7 +3557,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.0.0"
+    server_version = "AEI-Bridge/4.0.1"
 
     def log_message(self, fmt, *args):
         return
@@ -3565,6 +3567,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data, X-Relay-Key, X-Limit, X-Since")
+        self.send_header("Access-Control-Max-Age", "86400")
         if origin != "*":
             self.send_header("Vary", "Origin")
 
@@ -3604,8 +3607,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return {}
 
     def do_OPTIONS(self) -> None:
+        # Preflight: allow any origin to probe. Telegram sends X-Telegram-Init-Data;
+        # browsers send Authorization. Both are in Access-Control-Allow-Headers.
         self.send_response(204)
         self._set_cors()
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self) -> None:
@@ -3627,7 +3633,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.0.0",
+                "ok": not stale, "service": "aei-bridge", "version": "4.0.1",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": snap.get("engine_initialized", False),
@@ -3641,7 +3647,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         if not _require_auth(self):
-            self._send_json(401, {"error": "unauthorized"})
+            self._send_json(401, {"error": "unauthorized", "detail": "Missing or invalid X-Telegram-Init-Data"})
             return
 
         if path == "/config":
@@ -3671,7 +3677,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if path == "/miniapp-state":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
-                self._send_json(503, {"error": "engine_not_ready"})
+                self._send_json(503, {"error": "engine_not_ready", "detail": "Engine hasn't started. Use /start_feed in the bot."})
                 return
             st = engine.state
             idx = st.Z - (st.y + 1)
@@ -3729,6 +3735,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "signal_count": len(st.signal_history),
                 "last_signal_at": st.last_signal_at,
                 "bar_close_count": int(st.bar_close_count),
+                "engine_initialized": bool(st.FG),
             }
             self._send_json(200, payload)
             return
@@ -3900,12 +3907,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 init_data = data.get("initData", "").strip()
                 chat_id = data.get("chat_id")
                 if not init_data:
-                    self._send_json(400, {"error": "missing_init_data"})
+                    self._send_json(400, {"error": "missing_init_data", "detail": "Provide initData from Telegram.WebApp.initData"})
                     return
                 verified = verify_telegram_init_data(init_data, TELEGRAM_BOT_TOKEN_ENV)
                 if not verified or not verified.get("user"):
                     logger.warning("🚫 Handshake rejected: initData verification failed")
-                    self._send_json(403, {"error": "invalid_init_data"})
+                    self._send_json(403, {"error": "invalid_init_data", "detail": "Telegram initData HMAC verification failed. Ensure TELEGRAM_BOT_TOKEN matches the bot that issued initData."})
                     return
                 u = verified["user"] or {}
                 user_id = u.get("id")
@@ -3922,7 +3929,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         if not _require_auth(self):
-            self._send_json(401, {"error": "unauthorized"})
+            self._send_json(401, {"error": "unauthorized", "detail": "Missing or invalid X-Telegram-Init-Data"})
             return
 
         if path == "/fvg":
@@ -4001,7 +4008,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             sym = data.get("symbol")
             if not sym:
-                self._send_json(400, {"error": "missing_symbol"})
+                self._send_json(400, {"error": "missing_symbol", "detail": "Provide 'symbol' in JSON body"})
                 return
             result = engine.change_symbol(sym)
             code = 200 if result.get("ok") else 400
@@ -4055,7 +4062,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         path = urlparse(self.path).path
         if not _require_auth(self):
-            self._send_json(401, {"error": "unauthorized"})
+            self._send_json(401, {"error": "unauthorized", "detail": "Missing or invalid X-Telegram-Init-Data"})
             return
         m = _re_bridge.match(r"^/fvg/(\d+)$", path)
         if m:
@@ -4722,7 +4729,8 @@ class AEI_Bot:
                 parse_mode="Markdown",
             )
         else:
-            await update.message.reply_text(f"❌ Error: {result.get('error')}")
+            detail = result.get("detail") or result.get("error") or "unknown"
+            await update.message.reply_text(f"❌ Error: {detail}")
 
     async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         info = self.engine.feed.get_info()

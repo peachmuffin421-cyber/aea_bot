@@ -1,5 +1,5 @@
 # **ÆEA BOT — DEPLOYMENT GUIDE**
-*Version:* 6.0 (MQL4-Parity + MT4/TradingView TWA Edition — Split-Origin Architecture + Cloudflare Worker Relay)
+*Version:* 4.0.1 (MQL4-Parity + MT4/TradingView TWA Edition — Split-Origin Architecture + Cloudflare Worker Relay + CORS/Backend-URL Hardening)
 *Target:* `index.html` (static frontend) + `app.py` (bot + bridge) + `worker.js` (relay)
 *Prereqs:* `TELEGRAM_BOT_TOKEN`, a Cloudflare account, a GitHub account, a Heroku account, `git`, `wrangler`, `heroku` CLI, Python 3.11+
 
@@ -16,6 +16,8 @@ The ÆEA system is three cooperating surfaces:
 | **Relay** | Cloudflare Workers | Proxies Yahoo Finance through Cloudflare's egress IPs so the Heroku dyno's IP is never rate-limited by Yahoo. |
 
 The Mini App is not a separate server. It is the same `index.html` that runs locally, loaded by Telegram's WebView, authenticated via `initData`, bound back to the bot's `chat_id` through `/handshake`.
+
+**Critical for split-origin correctness (v4.0.1):** Because the frontend is served from GitHub Pages (origin `https://<user>.github.io`) and the backend lives on Heroku (origin `https://<app>.herokuapp.com`), the frontend must be explicitly told the backend origin. This is done with the `?backend=` query parameter (see §5.1 and §6.1). Without it, the TWA will attempt to fetch `/miniapp-state`, `/ohlcv`, etc. from GitHub Pages and receive 404s.
 
 ---
 
@@ -134,11 +136,13 @@ TELEGRAM_WEBAPP_URL does two things:
 
 REQUIRE_AUTH defaults to 1. Set it to 0 only for local development without Telegram initData.
 
+Critical for CORS (v4.0.1): CORS_ORIGIN should be set to your GitHub Pages origin (https://<your-username>.github.io), NOT *, so that the browser preflight for X-Telegram-Init-Data is honored correctly and the wildcard does not collide with credentialed requests. If you must use *, the frontend still works because it sends credentials: 'omit', but locking down is recommended.
+
 4.3 Deploy
 
 ```bash
 git add .
-git commit -m "ÆEA backend v4.0.0 (MQL4-Parity + MT4/TradingView TWA)"
+git commit -m "ÆEA backend v4.0.1 (MQL4-Parity + MT4/TradingView TWA — CORS hardening)"
 git push heroku main
 ```
 
@@ -146,7 +150,7 @@ git push heroku main
 
 ```bash
 curl "https://your-app-name.herokuapp.com/health"
-# → {"ok":true,"service":"aei-bridge","version":"4.0.0",...}
+# → {"ok":true,"service":"aei-bridge","version":"4.0.1",...}
 
 curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/config"
 # → {"public_url":"...","require_auth":true,...}
@@ -160,14 +164,22 @@ Key check on /probe: "empty": false and relay_url populated.
 
 5.1 Configure the Backend URL
 
-The patched index.html resolves the backend in this order:
+The patched index.html (v4.0.1) resolves the backend in this order:
 
-1. window.__AEEA_BACKEND_URL__ (if the host page sets it)
+1. window.__AEEA_BACKEND_URL__ (if the host page sets it before the script loads)
 2. ?backend=https://... query-string override (persisted to localStorage)
 3. localStorage['aeea_backend_url']
 4. same-origin (relative paths)
 
 No hard-coded Heroku fallback. A fork must be explicitly configured.
+
+In the Telegram Mini App context, the Web App URL configured in BotFather must include the query string:
+
+```
+https://<your-username>.github.io/<repo-name>/?backend=https://your-app-name.herokuapp.com/
+```
+
+This is what makes the TWA able to reach the Heroku backend. Without it, the TWA loads, renders the empty chart, and displays a connection badge of no backend with an explicit error banner.
 
 5.2 Push to GitHub
 
@@ -175,7 +187,7 @@ No hard-coded Heroku fallback. A fork must be explicitly configured.
 cd aei-miniapp
 git init
 git add index.html README.md
-git commit -m "ÆEA Mini App v4.0.0 (MT4/TradingView-style)"
+git commit -m "ÆEA Mini App v4.0.1 (MT4/TradingView-style)"
 git branch -M main
 git remote add origin https://github.com/<your-username>/<repo-name>.git
 git push -u origin main
@@ -209,18 +221,20 @@ Open it with ?backend=https://your-app-name.herokuapp.com/ to point it at your b
 → Description:    MQL4-Parity Trading Bot Visualization
 → Photo:          640x360 PNG (optional)
 → Short name:     aea-engine
-→ Web App URL:    https://<your-username>.github.io/<repo-name>/
+→ Web App URL:    https://<your-username>.github.io/<repo-name>/?backend=https://your-app-name.herokuapp.com/
 → Short name in menu: ÆEA
 ```
 
-Critical: the Web App URL must be the GitHub Pages URL, not the Heroku URL. Telegram loads the static frontend; the frontend then talks to Heroku.
+Critical: the Web App URL must be the GitHub Pages URL with the ?backend= query string appended. Telegram loads the static frontend; the frontend then talks to Heroku because it has been told the backend origin explicitly.
+
+Without the ?backend= parameter, the TWA shows no backend in the connection badge and refuses to poll. This is intentional: it eliminates the silent-failure mode where the TWA would otherwise poll GitHub Pages for /miniapp-state.
 
 6.2 Set the Menu Button
 
 ```
 /setmenubutton
 → pick your bot
-→ URL: https://<your-username>.github.io/<repo-name>/
+→ URL: https://<your-username>.github.io/<repo-name>/?backend=https://your-app-name.herokuapp.com/
 → Button text: ÆEA Mini App
 ```
 
@@ -242,7 +256,7 @@ BRIDGE_HOST 0.0.0.0 Bind address. Heroku requires 0.0.0.0.
 BRIDGE_USE_TLS 0 Heroku terminates TLS at its router → leave 0.
 BRIDGE_TLS_CERT / BRIDGE_TLS_KEY (empty) Only when running your own TLS.
 BRIDGE_TUNNEL cloudflared Ignored on Heroku (no cloudflared binary).
-CORS_ORIGIN  *  Set to your GitHub Pages origin to lock down writes.
+CORS_ORIGIN * Set to your GitHub Pages origin to lock down writes.
 REQUIRE_AUTH 1 Enforce X-Telegram-Init-Data on all non-/health endpoints.
 LOG_BUFFER_SIZE 200 Ring-buffer size for the /log endpoint.
 SYMBOL BTC-USD Default trading symbol.
@@ -250,7 +264,7 @@ UPDATE_INTERVAL 30 Price-feed polling interval (seconds).
 
 GitHub Pages (Frontend)
 
-There are no environment variables on static hosting. All configuration lives in index.html and is resolved at boot (see §5.1).
+There are no environment variables on static hosting. All configuration lives in index.html and is resolved at boot (see §5.1). The canonical way to configure it is through the ?backend= query parameter in the BotFather Web App URL (§6.1).
 
 ---
 
@@ -265,10 +279,11 @@ After all three surfaces are deployed:
 ☐ https://<user>.github.io/<repo>/?backend=https://your-app.herokuapp.com/ loads the ÆEA UI in a browser
 ☐ Telegram → /start → tap ⚡ Open ÆEA Mini App
 ☐ Top toolbar renders symbol + timeframe + chart-type
+☐ Connection badge shows connected (green)
 ☐ Chart renders candlesticks with crosshair
 ☐ Pan/zoom works (drag, wheel, pinch)
 ☐ Long-press opens the context menu
-☐ + IND opens the indicator picker
+☐ · IND opens the indicator picker
 ☐ Added indicator sub-panels render live series
 ☐ REGIME view renders the per-bar map
 ☐ Engine Panel shows KC/prime/dime/mem/tag/invert/safety
@@ -294,17 +309,21 @@ expected_hash     = HMAC_SHA256(data_check_string, secret_key).hexdigest()
 
 Freshness is enforced: auth_date must be within [-5 min, +24 h] of server time.
 
-9.2 Relay Exposure
+9.2 CORS (v4.0.1 Hardening)
+
+The bridge now:
+
+· Responds to OPTIONS preflight with 204 No Content.
+· Advertises X-Telegram-Init-Data and Authorization in Access-Control-Allow-Headers.
+· Advertises GET, POST, DELETE, OPTIONS in Access-Control-Allow-Methods.
+· Caches preflight for 86400 seconds via Access-Control-Max-Age.
+· Sends Vary: Origin when CORS_ORIGIN is not *.
+
+The frontend always sends credentials: 'omit' and uses header-based auth (X-Telegram-Init-Data), so wildcard CORS_ORIGIN=* is technically compatible. Locking down CORS_ORIGIN to the GitHub Pages origin is recommended.
+
+9.3 Relay Exposure
 
 The Cloudflare Worker is public by default. If you enable RELAY_KEY, every non-/health request must present X-Relay-Key. app.py reads RELAY_KEY from env and injects the header automatically.
-
-9.3 CORS
-
-Default CORS_ORIGIN=* permits any origin. To lock down:
-
-```bash
-heroku config:set CORS_ORIGIN="https://<your-username>.github.io" -a your-app-name
-```
 
 9.4 Tunnel Exposure (Local Mode Only)
 
@@ -325,6 +344,8 @@ python3 app.py
 
 The bot starts, the bridge listens on http://127.0.0.1:8765, and the tunnel spawns automatically. Open http://localhost:8765/ in a browser on the same machine. With REQUIRE_AUTH=0, the auth gate is bypassed.
 
+To point the local browser at the same bridge without a query string, same-origin resolution kicks in (step 4 in §5.1).
+
 ---
 
 11. Troubleshooting Matrix
@@ -336,7 +357,9 @@ Worker returns no_data for BTC-USD Yahoo renamed ticker for Cloudflare IP Try BT
 /probe shows "empty": true Worker unreachable from dyno curl $RELAY_URL/health from your terminal; check RELAY_KEY match
 /status shows 0.00000 Feed was running before relay was set Send /stop_feed, then /start_feed
 /health on Heroku shows "stale": true Feed loop not receiving data Check heroku logs --tail; send /stop_feed then /start_feed
-Mini App loads but HUD stays DISCONNECTED Backend URL wrong Append ?backend=https://your-app.herokuapp.com/ to the Pages URL
+Mini App HUD shows no backend in connection badge Web App URL lacks ?backend= Append ?backend=https://your-app.herokuapp.com/ to the BotFather Web App URL
+Mini App shows Awaiting OHLCV data… forever Backend URL resolution failed OR CORS blocked Verify the ?backend= parameter; verify CORS_ORIGIN matches your GitHub Pages origin; check DevTools Network tab
+Symbol change → Symbol change failed: unknown /symbol returned non-JSON or the relay returned no price Check heroku logs for change_symbol_exception; ensure RELAY_URL is set and the Worker is healthy for the target symbol
 POST /handshake → 403 invalid_init_data Bot token mismatch Ensure Heroku's TELEGRAM_BOT_TOKEN matches the token used in BotFather
 All non-/health endpoints return 401 REQUIRE_AUTH=1 and no initData Launch from inside Telegram, or set REQUIRE_AUTH=0 for local dev
 Telegram button opens blank page Web App URL is http:// Recheck /newapp — must be HTTPS
@@ -344,6 +367,7 @@ FVG commits silently vanish Not authenticated Launch from Telegram; check heroku
 Chart drag closes Mini App disableVerticalSwipes not applied Confirm telegram-web-app.js loads before app JS
 Indicator sub-panel shows Awaiting data… /indicators endpoint returned empty Ensure ohlcv_history has ≥ MIN_HISTORY_WINDOW bars
 heroku logs shows bind: Address already in use Port conflict Ensure app.py reads $PORT (it does via BRIDGE_PORT fallback)
+Connection badge stuck on retrying… Backend reachable but auth failing Check /health from terminal; check that /miniapp-state returns 200; verify REQUIRE_AUTH and header propagation
 
 ---
 
@@ -381,6 +405,15 @@ wrangler deploy
 
 No coordination needed — the three deploys are independent.
 
+Config-var changes (CORS, backend URL, relay URL):
+
+```bash
+heroku config:set CORS_ORIGIN="https://<user>.github.io" -a your-app-name
+heroku config:set TELEGRAM_WEBAPP_URL="https://<user>.github.io/<repo>/?backend=https://your-app-name.herokuapp.com/" -a your-app-name
+```
+
+After changing TELEGRAM_WEBAPP_URL, re-run /setmenubutton in BotFather so the menu button picks up the new URL.
+
 ---
 
 13. Q.E.D.
@@ -392,3 +425,5 @@ The Mini App is now served from two cooperating origins, fed by a third:
 · Cloudflare Worker — the market-data relay, polled by the dyno.
 
 BACKEND_URL is the wire between frontend and backend. RELAY_URL is the wire between backend and relay. Set them once, push all three, and the Mini App is live inside Telegram.
+
+v4.0.1 addendum: The wire between frontend and backend is now established explicitly via the ?backend= query parameter in the BotFather Web App URL, and CORS preflight is fully honored by the bridge. The failure mode of the earlier version — silent Awaiting OHLCV data… with no diagnostic — is now surfaced as no backend in the connection badge, with a corresponding error banner.
