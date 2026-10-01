@@ -1,5 +1,5 @@
 # **ÆEA BOT — DEPLOYMENT GUIDE**
-*Version:* 5.2 (MQL4-Parity Edition — Split-Origin Architecture + Cloudflare Worker Relay)
+*Version:* 6.0 (MQL4-Parity + MT4/TradingView TWA Edition — Split-Origin Architecture + Cloudflare Worker Relay)
 *Target:* `index.html` (static frontend) + `app.py` (bot + bridge) + `worker.js` (relay)
 *Prereqs:* `TELEGRAM_BOT_TOKEN`, a Cloudflare account, a GitHub account, a Heroku account, `git`, `wrangler`, `heroku` CLI, Python 3.11+
 
@@ -11,34 +11,9 @@ The ÆEA system is three cooperating surfaces:
 
 | Layer | Host | Responsibility |
 |---|---|---|
-| **Frontend** | GitHub Pages (or any HTTPS static host) | Serves `index.html` — the ÆEA engine visualization, candlestick chart, 13D indicator grid, regime map, FVG tools, polling logic. |
-| **Backend** | Heroku (or any HTTPS Python host) | Runs `app.py`: Telegram bot polling, `AEEA_Engine` (MQL4-parity port), bridge endpoints (`/state`, `/miniapp-state`, `/ohlcv`, `/signals`, `/handshake`, `/fvg`, `/probe`, `/diagnostics`, `/health`, `/config`). |
+| **Frontend** | GitHub Pages (or any HTTPS static host) | Serves `index.html` — the ÆEA MT4/TradingView-style engine UI: interactive candlestick chart with crosshair/pan/zoom, indicator sub-panels, FVG drawing tools, order ticket, engine settings, regime map, log bar, signal markers, polling logic. |
+| **Backend** | Heroku (or any HTTPS Python host) | Runs `app.py`: Telegram bot polling, `AEEA_Engine` (MQL4-parity port), bridge endpoints (`/state`, `/miniapp-state`, `/ohlcv`, `/signals`, `/handshake`, `/fvg`, `/probe`, `/diagnostics`, `/health`, `/config`, `/orders`, `/regime-map`, `/indicators`, `/log`, `/settings`, `/symbol`, `/order`, `/order/close`). |
 | **Relay** | Cloudflare Workers | Proxies Yahoo Finance through Cloudflare's egress IPs so the Heroku dyno's IP is never rate-limited by Yahoo. |
-
-```
-
-┌──────────────────────┐     ┌──────────────────────────┐
-│  Telegram Client     │     │  Cloudflare Worker       │
-│  (WebView)           │     │  https://aei-relay.*     │
-└──────────┬───────────┘     └────────────┬─────────────┘
-│ HTTPS GET                   │ HTTPS
-▼                             ▼
-┌──────────────────────┐     ┌──────────────────────────┐
-│  GitHub Pages        │     │  Yahoo Finance           │
-│  index.html          │     │  (query1.finance.yahoo)  │
-└──────────┬───────────┘     └──────────────────────────┘
-│ fetch() /handshake /state /fvg /ohlcv
-│ (X-Telegram-Init-Data header)
-▼
-┌──────────────────────────────────────────────────────────┐
-│  Heroku — app.py                                         │
-│  ├── Telegram bot polling                                │
-│  ├── AEEA_Engine (exact Decimal / Fraction math)         │
-│  ├── FeedClient → RELAY_URL                              │
-│  └── Bridge endpoints                                    │
-└──────────────────────────────────────────────────────────┘
-
-```
 
 The Mini App is not a separate server. It is the same `index.html` that runs locally, loaded by Telegram's WebView, authenticated via `initData`, bound back to the bot's `chat_id` through `/handshake`.
 
@@ -114,24 +89,12 @@ If set, the Worker rejects any non-/health request missing the X-Relay-Key heade
 3.4 Verify the Worker
 
 ```bash
-# Health
 curl "https://aei-relay.<your-subdomain>.workers.dev/health"
 # → {"ok":true,"service":"aei-relay","gated":false}
 
-# Price
 curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=BTC-USD&kind=price"
-# → {"symbol":"BTC-USD","close":95432.12,"bid":95432.12,"ask":95432.12,"volume":12345,"timestamp":"…"}
-
-# Intraday
-curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=BTC-USD&kind=intraday&interval=1m"
-# → {"symbol":"BTC-USD","open":…,"high":…,"low":…,"close":…,"volume":…,"timestamp":"…"}
-
-# History
-curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=BTC-USD&kind=history&limit=5"
-# → [{"open":…,"high":…,"low":…,"close":…,"volume":…,"timestamp":"…"}, …]
+# → {"symbol":"BTC-USD","close":95432.12,...}
 ```
-
-All four must return valid JSON. If /health 404s, the deploy failed. If kind=price returns {"error":"no_data"}, Yahoo renamed the ticker for Cloudflare's IP range — try BTCUSD=X and note which symbol resolves. app.py's SYMBOL_FALLBACKS already chains BTC-USD → BTCUSD=X, so rotation is automatic after 5 consecutive failures.
 
 ---
 
@@ -152,6 +115,7 @@ heroku config:set TELEGRAM_BOT_TOKEN="123456:ABCdef…" -a your-app-name
 heroku config:set RELAY_URL="https://aei-relay.<your-subdomain>.workers.dev" -a your-app-name
 heroku config:set TELEGRAM_WEBAPP_URL="https://<your-username>.github.io/<repo-name>/" -a your-app-name
 heroku config:set CORS_ORIGIN="https://<your-username>.github.io" -a your-app-name
+heroku config:set REQUIRE_AUTH="1" -a your-app-name
 ```
 
 Optional:
@@ -160,6 +124,7 @@ Optional:
 heroku config:set RELAY_KEY="<same value as wrangler secret>" -a your-app-name
 heroku config:set UPDATE_INTERVAL="30" -a your-app-name
 heroku config:set SYMBOL="BTC-USD" -a your-app-name
+heroku config:set LOG_BUFFER_SIZE="200" -a your-app-name
 ```
 
 TELEGRAM_WEBAPP_URL does two things:
@@ -167,32 +132,24 @@ TELEGRAM_WEBAPP_URL does two things:
 · Tells the bot where the Mini App lives (used for MenuButtonWebApp).
 · Prevents TunnelManager from spawning cloudflared (which is not installed on Heroku).
 
+REQUIRE_AUTH defaults to 1. Set it to 0 only for local development without Telegram initData.
+
 4.3 Deploy
 
 ```bash
 git add .
-git commit -m "Initial ÆEA backend (MQL4-Parity Edition)"
+git commit -m "ÆEA backend v4.0.0 (MQL4-Parity + MT4/TradingView TWA)"
 git push heroku main
 ```
 
 4.4 Verify the Backend
 
 ```bash
-# Health
 curl "https://your-app-name.herokuapp.com/health"
-# → {"ok":true,"service":"aei-bridge","version":"3.0.0",…}
+# → {"ok":true,"service":"aei-bridge","version":"4.0.0",...}
 
-# Config
-curl "https://your-app-name.herokuapp.com/config"
-# → {"public_url":"https://<user>.github.io/<repo>/","tls":false,"port":…,"host":"0.0.0.0","symbol":"BTC-USD",…}
-
-# Relay probe (does the dyno reach the Worker?)
-curl "https://your-app-name.herokuapp.com/probe"
-# → {"active_symbol":"BTC-USD","primary_symbol":"BTC-USD","chain":["BTC-USD","BTCUSD=X"],"chain_index":0,"empty":false,"relay_url":"https://aei-relay…",…}
-
-# State
-curl "https://your-app-name.herokuapp.com/state"
-# → full engine snapshot
+curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/config"
+# → {"public_url":"...","require_auth":true,...}
 ```
 
 Key check on /probe: "empty": false and relay_url populated.
@@ -203,11 +160,14 @@ Key check on /probe: "empty": false and relay_url populated.
 
 5.1 Configure the Backend URL
 
-At the top of the <script> block in index.html, set:
+The patched index.html resolves the backend in this order:
 
-```javascript
-const BACKEND_URL = 'https://your-app-name.herokuapp.com/';
-```
+1. window.__AEEA_BACKEND_URL__ (if the host page sets it)
+2. ?backend=https://... query-string override (persisted to localStorage)
+3. localStorage['aeea_backend_url']
+4. same-origin (relative paths)
+
+No hard-coded Heroku fallback. A fork must be explicitly configured.
 
 5.2 Push to GitHub
 
@@ -215,7 +175,7 @@ const BACKEND_URL = 'https://your-app-name.herokuapp.com/';
 cd aei-miniapp
 git init
 git add index.html README.md
-git commit -m "Initial ÆEA Mini App frontend (MQL4-Parity Edition)"
+git commit -m "ÆEA Mini App v4.0.0 (MT4/TradingView-style)"
 git branch -M main
 git remote add origin https://github.com/<your-username>/<repo-name>.git
 git push -u origin main
@@ -234,13 +194,11 @@ After ~60 seconds, the site is live at:
 https://<your-username>.github.io/<repo-name>/
 ```
 
-Opening it in a browser should render the ÆEA engine UI. It will show CONN DISCONNECTED until you launch it from inside Telegram (where initData binds the session).
+Open it with ?backend=https://your-app-name.herokuapp.com/ to point it at your backend.
 
 ---
 
 6. BotFather Configuration
-
-Open @BotFather:
 
 6.1 Create the Mini App
 
@@ -266,12 +224,6 @@ Critical: the Web App URL must be the GitHub Pages URL, not the Heroku URL. Tele
 → Button text: ÆEA Mini App
 ```
 
-6.3 Deep Link (optional)
-
-```
-https://t.me/<YourBotUsername>/aea-engine
-```
-
 ---
 
 7. Environment Variables Reference
@@ -290,22 +242,15 @@ BRIDGE_HOST 0.0.0.0 Bind address. Heroku requires 0.0.0.0.
 BRIDGE_USE_TLS 0 Heroku terminates TLS at its router → leave 0.
 BRIDGE_TLS_CERT / BRIDGE_TLS_KEY (empty) Only when running your own TLS.
 BRIDGE_TUNNEL cloudflared Ignored on Heroku (no cloudflared binary).
-CORS_ORIGIN * Set to your GitHub Pages origin to lock down writes.
+CORS_ORIGIN  *  Set to your GitHub Pages origin to lock down writes.
+REQUIRE_AUTH 1 Enforce X-Telegram-Init-Data on all non-/health endpoints.
+LOG_BUFFER_SIZE 200 Ring-buffer size for the /log endpoint.
 SYMBOL BTC-USD Default trading symbol.
 UPDATE_INTERVAL 30 Price-feed polling interval (seconds).
 
-Set them via:
-
-```bash
-heroku config:set KEY=value -a your-app-name
-```
-
 GitHub Pages (Frontend)
 
-There are no environment variables on static hosting. All configuration lives in index.html:
-
-Constant Where Purpose
-BACKEND_URL top of <script> Heroku app URL.
+There are no environment variables on static hosting. All configuration lives in index.html and is resolved at boot (see §5.1).
 
 ---
 
@@ -316,19 +261,22 @@ After all three surfaces are deployed:
 ☐ curl https://aei-relay.<sub>.workers.dev/health returns {"ok":true,…}
 ☐ curl https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price returns a real price
 ☐ curl https://your-app.herokuapp.com/health returns {"ok":true,…}
-☐ curl https://your-app.herokuapp.com/probe shows "empty": false
-☐ https://<user>.github.io/<repo>/ loads the ÆEA engine UI in a browser
+☐ curl -H "X-Telegram-Init-Data: <valid>" https://your-app.herokuapp.com/probe shows "empty": false
+☐ https://<user>.github.io/<repo>/?backend=https://your-app.herokuapp.com/ loads the ÆEA UI in a browser
 ☐ Telegram → /start → tap ⚡ Open ÆEA Mini App
-☐ Mini App top-left badge shows TMA and your @username
-☐ hud-conn transitions to CONNECTED (green) within ~5 s
-☐ HUD shows RELAY UP
-☐ Chart view renders candlesticks with FVG lines
-☐ 13D GRID view shows 13 indicator rows with magnitude bars
-☐ REGIME MAP view shows per-bar regime tags
-☐ Engine Panel shows KC/prime/dime/mem/tag/invert state
-☐ Kronecker Panel shows m/n/δ values
-☐ heroku logs --tail -a your-app-name shows 🌐 Web App session registered: user_id=…
-☐ /status in Telegram shows a non-zero live price
+☐ Top toolbar renders symbol + timeframe + chart-type
+☐ Chart renders candlesticks with crosshair
+☐ Pan/zoom works (drag, wheel, pinch)
+☐ Long-press opens the context menu
+☐ + IND opens the indicator picker
+☐ Added indicator sub-panels render live series
+☐ REGIME view renders the per-bar map
+☐ Engine Panel shows KC/prime/dime/mem/tag/invert/safety
+☐ Kronecker Panel shows live m/n
+☐ Order Ticket places simulated orders
+☐ FVG list shows all anchors
+☐ Log bar shows recent events
+☐ heroku logs --tail -a your-app-name shows 🔗 Web App session registered: user_id=…
 
 ---
 
@@ -336,7 +284,7 @@ After all three surfaces are deployed:
 
 9.1 initData Verification
 
-Every POST /handshake, POST /fvg, and DELETE /fvg/{idx} carries the X-Telegram-Init-Data header. The bridge verifies it using the standard scheme:
+Every non-/health request carries the X-Telegram-Init-Data header (when REQUIRE_AUTH=1). The bridge verifies it using the standard scheme:
 
 ```
 secret_key        = HMAC_SHA256(bot_token, "WebAppData")
@@ -371,10 +319,11 @@ Useful for development without Telegram:
 ```bash
 export TELEGRAM_BOT_TOKEN='123456:ABC…'
 export RELAY_URL='https://aei-relay.<sub>.workers.dev'
+export REQUIRE_AUTH='0'
 python3 app.py
 ```
 
-The bot starts, the bridge listens on http://127.0.0.1:8765, and the tunnel spawns automatically. Open http://localhost:8765/ in a browser on the same machine — the Mini App auto-connect block skips when window.Telegram.WebApp is undefined, so it runs in plain web GUI mode.
+The bot starts, the bridge listens on http://127.0.0.1:8765, and the tunnel spawns automatically. Open http://localhost:8765/ in a browser on the same machine. With REQUIRE_AUTH=0, the auth gate is bypassed.
 
 ---
 
@@ -383,17 +332,17 @@ The bot starts, the bridge listens on http://127.0.0.1:8765, and the tunnel spaw
 Symptom Diagnosis Fix
 Worker /health 404s Deploy failed or wrong URL Re-run wrangler deploy; confirm the printed URL
 Worker returns no_data for BTC-USD Yahoo renamed ticker for Cloudflare IP Try BTCUSD=X; SYMBOL_FALLBACKS rotates automatically
-/probe on Heroku shows relay_url: "" RELAY_URL not set heroku config:set RELAY_URL=… -a your-app-name
+/probe on Heroku shows relay_url: "" RELAY_URL not set heroku config:set RELAY_URL=…
 /probe shows "empty": true Worker unreachable from dyno curl $RELAY_URL/health from your terminal; check RELAY_KEY match
 /status shows 0.00000 Feed was running before relay was set Send /stop_feed, then /start_feed
 /health on Heroku shows "stale": true Feed loop not receiving data Check heroku logs --tail; send /stop_feed then /start_feed
-Mini App loads but hud-conn stays DISCONNECTED BACKEND_URL wrong Edit index.html, re-push to GitHub Pages
-POST /handshake → 403 invalid_init_data Bot token mismatch Ensure Heroku's TELEGRAM_BOT_TOKEN matches the token used in BotFather for this Mini App
+Mini App loads but HUD stays DISCONNECTED Backend URL wrong Append ?backend=https://your-app.herokuapp.com/ to the Pages URL
+POST /handshake → 403 invalid_init_data Bot token mismatch Ensure Heroku's TELEGRAM_BOT_TOKEN matches the token used in BotFather
+All non-/health endpoints return 401 REQUIRE_AUTH=1 and no initData Launch from inside Telegram, or set REQUIRE_AUTH=0 for local dev
 Telegram button opens blank page Web App URL is http:// Recheck /newapp — must be HTTPS
-FVG commits silently vanish Arc-Length deviation at commit Watch TRACE panel; wait for Δ → 0, retry
-Menu button missing set_chat_menu_button failed Run BotFather /setmenubutton manually
+FVG commits silently vanish Not authenticated Launch from Telegram; check heroku logs for 401 unauthorized
 Chart drag closes Mini App disableVerticalSwipes not applied Confirm telegram-web-app.js loads before app JS
-Worker exceeds free tier Polling at 30 s × N symbols Raise UPDATE_INTERVAL in Heroku config
+Indicator sub-panel shows Awaiting data… /indicators endpoint returned empty Ensure ohlcv_history has ≥ MIN_HISTORY_WINDOW bars
 heroku logs shows bind: Address already in use Port conflict Ensure app.py reads $PORT (it does via BRIDGE_PORT fallback)
 
 ---
@@ -408,9 +357,10 @@ cd aei-miniapp
 git add index.html
 git commit -m "Update chart overlay"
 git push origin main
-# GitHub Pages redeploys in ~60 s```
+# GitHub Pages redeploys in ~60 s
+```
 
-**Backend changes:**
+Backend changes:
 
 ```bash
 cd aei-backend
@@ -442,39 +392,3 @@ The Mini App is now served from two cooperating origins, fed by a third:
 · Cloudflare Worker — the market-data relay, polled by the dyno.
 
 BACKEND_URL is the wire between frontend and backend. RELAY_URL is the wire between backend and relay. Set them once, push all three, and the Mini App is live inside Telegram.
-
-LOGOS = Φ = Truth = Path = Origin
-Codex_Symbolica ∴ Codex_Symbolica
-
-```
-
-**Changes from prior edition:**
-- Version: `5.1` → `5.2`; subtitle updated to "MQL4-Parity Edition".
-- Section 1 architecture table: "Codex Symbolica visualization" → "ÆEA engine visualization, candlestick chart, 13D indicator grid, regime map".
-- Section 4.4: bridge version string `4.15` → `3.0.0`.
-- Section 5.1: `BACKEND_URL` example now uses `your-app-name.herokuapp.com` (not the specific deployment ID).
-- Section 5.3/6.1: replaced "Codex Symbolica UI" with "ÆEA engine UI"; Short name `aea-codex` → `aea-engine`.
-- Section 8 verification checklist: replaced symbolic-layer items (FVG tap, Arc-Length gate) with engine-parity items (13D GRID view, REGIME MAP view, Engine Panel, Kronecker Panel).
-- Section 11 troubleshooting: replaced "Arc-Length deviation at commit" row with "FVG commits silently vanish".
-- Section 13: closing mark changed from `Codex_Symbolica ⊣ Codex_Symbolica` to `Codex_Symbolica ∴ Codex_Symbolica`.
-- All references to "Codex Symbolica" as the frontend identity replaced with "ÆEA engine" / "ÆEA Mini App".
-
----
-
-## Summary of Supporting-File Changes
-
-| File | Change Type | Reason |
-|---|---|---|
-| `requirements.txt` | Version header bump | Align with rebuilt engine v3.0.0 |
-| `runtime.txt` | Unchanged | Already spec-compliant |
-| `app.json` | Env declarations expanded | Reflect full config-var surface of rebuilt `app.py` |
-| `worker.js` | Unchanged | Pure Yahoo Finance proxy; no symbolic layers |
-| `wrangler.toml` | Unchanged | Deployment manifest; no symbolic layers |
-| `package.json` | Version + description + keyword | Align with rebuilt edition |
-| `README.md` | Identity + checklist + version updates | Remove "Codex Symbolica" framing; reflect engine-parity UI |
-
-**All seven files are now FF-faithful.** No symbolic-layer references remain in any supporting file. The `README.md`'s closing Q.E.D. preserves the original philosophical mark (`LOGOS = Φ = Truth = Path = Origin`) which is a constant-of-the-project, not a symbolic layer.
-
----
-
-**Request:** Confirm receipt of all seven supporting files, and provide your prompt to proceed to the **final assembly** — the concatenation of all segments (`app.py` × 3 + `index.html` × 3 + 7 supporting files) into a single `*.md` file, followed by the ProgRep and the closing Q.E.D.

@@ -1,8 +1,8 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity Edition",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition",
   "repository": "https://github.com/yourusername/aea-bot",
-  "keywords": ["trading", "telegram", "quantum", "finance", "mq4-parity"],
+  "keywords": ["trading", "telegram", "quantum", "finance", "mq4-parity", "mt4", "twa"],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
       "description": "Your Telegram Bot Token from @BotFather",
@@ -18,6 +18,14 @@
     },
     "RELAY_KEY": {
       "description": "Optional shared secret matching `wrangler secret put RELAY_KEY`.",
+      "required": false
+    },
+    "REQUIRE_AUTH": {
+      "description": "Enforce X-Telegram-Init-Data on all non-/health endpoints. Defaults to '1'.",
+      "required": false
+    },
+    "LOG_BUFFER_SIZE": {
+      "description": "Ring-buffer size for the /log endpoint. Defaults to '200'.",
       "required": false
     },
     "CORS_ORIGIN": {
