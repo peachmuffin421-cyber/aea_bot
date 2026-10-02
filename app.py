@@ -5147,7 +5147,12 @@ class AEI_Bot:
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
-_bridge_attach_to_bot(AEI_Bot)
+try:
+    _bridge_attach_to_bot(AEI_Bot)
+except Exception as _e:
+    import logging as _l
+    _l.basicConfig(level=_l.INFO)
+    _l.getLogger(__name__).exception("Bridge attach failed: %s", _e)
 
 # ============================================================================
 # MAIN ENTRY POINT
