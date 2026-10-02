@@ -1367,7 +1367,7 @@ class AEEA_Engine:
             diff = close[-i] - close[-i - 1]
             if diff > Decimal('0.0'):
                 numerator += diff
-                elif diff < Decimal('0.0'):
+            elif diff < Decimal('0.0'):
                 denominator += abs(diff)
         if denominator == Decimal('0.0'):
             if numerator == Decimal('0.0'):
