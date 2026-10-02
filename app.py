@@ -6,7 +6,7 @@ Faithful Unabridged Port of æea.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.0.1 (MQL4-Parity + MT4/TradingView TWA Edition — CORS/Error Hardening)
+Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
 """
 import asyncio
 import hashlib
@@ -455,6 +455,12 @@ class AEI_CoreState:
     tally: str = "   "
     m: int = 0
     n: int = 0
+    m_now: int = 0
+    n_now: int = 0
+    lPass: Decimal = Decimal('0.0')
+    ilPass: Decimal = Decimal('0.0')
+    kPass: Decimal = Decimal('0.0')
+    ikPass: Decimal = Decimal('0.0')
     Premium: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
     Discount: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
     HH: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
@@ -497,6 +503,7 @@ class AEI_CoreState:
     iIHKt: Decimal = Decimal('50.0')
     FVG: int = -1
     BL: List[Decimal] = field(default_factory=list)
+    BL_type: List[str] = field(default_factory=list)
     bottomLine: str = "   "
     bL: str = "   "
     S: int = X_PERIOD
@@ -540,7 +547,7 @@ class AEI_CoreState:
     bar_close_count: int = 0
 
 # ============================================================================
-# MODULE-LEVEL INDICATOR HELPERS
+# MODULE-LEVEL INDICATOR HELPERS — MQL4 PARITY
 # ============================================================================
 def sma(data: List[Decimal], period: int) -> Decimal:
     if len(data) < period or period <= 0:
@@ -581,9 +588,24 @@ def stochastic(high, low, close, k_period=14, d_period=3):
     lowest = min(low[-k_period:])
     range_val = highest - lowest
     if range_val == Decimal('0.0'):
-        return Decimal('50.0'), Decimal('50.0')
-    k = Decimal('100.0') * (close[-1] - lowest) / range_val
-    return k, k
+        k = Decimal('50.0')
+    else:
+        k = Decimal('100.0') * (close[-1] - lowest) / range_val
+    k_series = []
+    for i in range(d_period):
+        if len(close) < k_period + i:
+            k_series.append(k)
+            continue
+        h_i = max(high[-(k_period + i):-i]) if i > 0 else max(high[-k_period:])
+        l_i = min(low[-(k_period + i):-i]) if i > 0 else min(low[-k_period:])
+        r_i = h_i - l_i
+        if r_i == Decimal('0.0'):
+            k_series.append(Decimal('50.0'))
+        else:
+            c_i = close[-1 - i]
+            k_series.append(Decimal('100.0') * (c_i - l_i) / r_i)
+    d = sum(k_series) / Decimal(len(k_series)) if k_series else k
+    return k, d
 
 def bollinger_bands(close, period=20, dev=Decimal('2.0')):
     if len(close) < period or period <= 0:
@@ -595,16 +617,21 @@ def bollinger_bands(close, period=20, dev=Decimal('2.0')):
     lower = mid - dev * std
     return upper, mid, lower
 
+def true_range(high, low, close, i):
+    if i + 1 >= len(close):
+        return high[i] - low[i]
+    tr1 = high[i] - low[i]
+    tr2 = abs(high[i] - close[i + 1])
+    tr3 = abs(low[i] - close[i + 1])
+    return max(tr1, tr2, tr3)
+
 def atr(high, low, close, period=14):
     if len(close) < period + 1 or period <= 0:
         return Decimal('0.0')
-    tr_values = []
-    for i in range(1, period + 1):
-        tr1 = high[-i] - low[-i]
-        tr2 = abs(high[-i] - close[-i - 1])
-        tr3 = abs(low[-i] - close[-i - 1])
-        tr_values.append(max(tr1, tr2, tr3))
-    return sum(tr_values) / Decimal(period)
+    trs = []
+    for i in range(period):
+        trs.append(true_range(high, low, close, i))
+    return sum(trs) / Decimal(period)
 
 def stddev(data, period):
     if len(data) < period or period <= 0:
@@ -613,15 +640,14 @@ def stddev(data, period):
     variance = sum((x - mean) ** 2 for x in data[-period:]) / Decimal(period)
     return Decimal(str(math.sqrt(float(variance)))) if variance > Decimal('0.0') else Decimal('0.0')
 
-def ichimoku(high, low, close):
-    n1, n2, n3 = 9, 26, 52
-    if len(close) < n3:
+def ichimoku(high, low, close, t_period: int, k_period: int, j_period: int):
+    if len(close) < j_period or j_period <= 0 or k_period <= 0 or t_period <= 0:
         return {"tenkan": Decimal('50.0'), "kijun": Decimal('50.0'),
                 "senkou_a": Decimal('50.0'), "senkou_b": Decimal('50.0')}
-    tenkan = (max(high[-n1:]) + min(low[-n1:])) / Decimal('2.0')
-    kijun = (max(high[-n2:]) + min(low[-n2:])) / Decimal('2.0')
+    tenkan = (max(high[-t_period:]) + min(low[-t_period:])) / Decimal('2.0')
+    kijun = (max(high[-k_period:]) + min(low[-k_period:])) / Decimal('2.0')
     senkou_a = (tenkan + kijun) / Decimal('2.0')
-    senkou_b = (max(high[-n3:]) + min(low[-n3:])) / Decimal('2.0')
+    senkou_b = (max(high[-j_period:]) + min(low[-j_period:])) / Decimal('2.0')
     return {"tenkan": tenkan, "kijun": kijun, "senkou_a": senkou_a, "senkou_b": senkou_b}
 
 def to_decimal(value):
@@ -748,7 +774,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.0.1",
+                    "User-Agent": "AEI-Bridge/v4.1.0",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1019,10 +1045,17 @@ class AEEA_Engine:
         st.signal = Decimal('0.0')
         st.FVG = -1
         st.BL = []
+        st.BL_type = []
         st.bottomLine = "   "
         st.bL = "   "
         st.count = 0
         st.fvg_anchor_map = {}
+        st.m_now = 0
+        st.n_now = 0
+        st.lPass = Decimal('0.0')
+        st.ilPass = Decimal('0.0')
+        st.kPass = Decimal('0.0')
+        st.ikPass = Decimal('0.0')
         self.ohlcv_history = saved_ohlcv
         st.price = saved_price
         st.Price = saved_Price
@@ -1064,6 +1097,9 @@ class AEEA_Engine:
             st.iATR = Decimal('100.0') * ((atr_list[0] - minATR) / rangeATR)
         else:
             st.iATR = Decimal('50.0')
+        if len(st.ATR) <= j:
+            st.ATR.extend([Decimal('0.0')] * (j + 1 - len(st.ATR)))
+        st.ATR[j] = atr_list[0] if atr_list else Decimal('0.0')
 
         sd_list: List[Decimal] = []
         for i in range(j + 1):
@@ -1076,6 +1112,9 @@ class AEEA_Engine:
             st.iStdDev = Decimal('100.0') * ((sd_list[0] - minSD) / rangeSD)
         else:
             st.iStdDev = Decimal('50.0')
+        if len(st.StdDev) <= j:
+            st.StdDev.extend([Decimal('0.0')] * (j + 1 - len(st.StdDev)))
+        st.StdDev[j] = sd_list[0] if sd_list else Decimal('0.0')
         return st.iATR, st.iStdDev
 
     def _normalize(self, j: int) -> None:
@@ -1142,8 +1181,10 @@ class AEEA_Engine:
 
         ac_list: List[Decimal] = []
         for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
-            ac_list.append(abs(self._compute_ac(high_prices, low_prices, sub_close, j)))
+            ac_list.append(abs(self._compute_ac(sub_high, sub_low, sub_close, j)))
         if ac_list:
             maxAC = max(ac_list)
             minAC = min(ac_list)
@@ -1256,7 +1297,7 @@ class AEEA_Engine:
         rsi_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
-            rsi_list.append(rsi(sub_close, min(j, 14)))
+            rsi_list.append(rsi(sub_close, j))
         if rsi_list:
             maxRSI = max(rsi_list)
             minRSI = min(rsi_list)
@@ -1265,7 +1306,13 @@ class AEEA_Engine:
                 st.iA[12][col_i] = Decimal('100.0') * ((rsi_list[0] - minRSI) / rangeRSI)
                 st.cA[12][col_c] = Decimal('100.0') * ((rsi_list[1] - minRSI) / rangeRSI) if len(rsi_list) > 1 else st.iA[12][col_i]
 
-        ihk = ichimoku(high_prices, low_prices, close_prices)
+        kIHK = int(round(j / 2.0))
+        tIHK = int(round((kIHK + 1.0) / 3.0))
+        if kIHK < 1:
+            kIHK = 1
+        if tIHK < 1:
+            tIHK = 1
+        ihk = ichimoku(high_prices, low_prices, close_prices, tIHK, kIHK, j)
         st.iIHKk = ihk["kijun"]
         st.iIHKt = ihk["tenkan"]
 
@@ -1280,66 +1327,106 @@ class AEEA_Engine:
             dn_move = low[-i - 1] - low[-i]
             plus_dm.append(up_move if up_move > dn_move and up_move > 0 else Decimal('0.0'))
             minus_dm.append(dn_move if dn_move > up_move and dn_move > 0 else Decimal('0.0'))
-        atr_val = sum(trs) / Decimal(period)
-        if atr_val == Decimal('0.0'):
+        if len(trs) < period:
             return Decimal('50.0')
-        plus_di = Decimal('100.0') * (sum(plus_dm) / Decimal(period)) / atr_val
-        minus_di = Decimal('100.0') * (sum(minus_dm) / Decimal(period)) / atr_val
-        di_sum = plus_di + minus_di
-        if di_sum == Decimal('0.0'):
+        dx_series = []
+        atr_k = Decimal('0.0')
+        plus_di = Decimal('0.0')
+        minus_di = Decimal('0.0')
+        for k in range(period):
+            if k == 0:
+                atr_k = sum(trs[:period]) / Decimal(period)
+                plus_di = Decimal('100.0') * (sum(plus_dm[:period]) / Decimal(period)) / atr_k if atr_k != Decimal('0.0') else Decimal('0.0')
+                minus_di = Decimal('100.0') * (sum(minus_dm[:period]) / Decimal(period)) / atr_k if atr_k != Decimal('0.0') else Decimal('0.0')
+            else:
+                atr_k = (atr_k * Decimal(period - 1) + trs[period - k - 1]) / Decimal(period)
+                smoothed_plus = (plus_di * Decimal(period - 1) + plus_dm[period - k - 1]) / Decimal(period)
+                smoothed_minus = (minus_di * Decimal(period - 1) + minus_dm[period - k - 1]) / Decimal(period)
+                plus_di = Decimal('100.0') * smoothed_plus / atr_k if atr_k != Decimal('0.0') else Decimal('0.0')
+                minus_di = Decimal('100.0') * smoothed_minus / atr_k if atr_k != Decimal('0.0') else Decimal('0.0')
+            di_sum = plus_di + minus_di
+            if di_sum == Decimal('0.0'):
+                dx_series.append(Decimal('0.0'))
+            else:
+                dx_series.append(Decimal('100.0') * abs(plus_di - minus_di) / di_sum)
+        if not dx_series:
             return Decimal('50.0')
-        return Decimal('100.0') * abs(plus_di - minus_di) / di_sum
+        if len(dx_series) < period:
+            return dx_series[-1]
+        adx_val = sum(dx_series[:period]) / Decimal(period)
+        for k in range(period, len(dx_series)):
+            adx_val = (adx_val * Decimal(period - 1) + dx_series[k]) / Decimal(period)
+        return adx_val
 
     def _compute_rvi(self, close, period: int) -> Decimal:
         if len(close) < period + 1 or period <= 0:
             return Decimal('50.0')
-        numerator = sum(abs(close[-i] - close[-i - 1]) for i in range(1, period + 1))
-        denominator = sum(abs(close[-i] - close[-i - 1]) for i in range(1, period + 1))
+        numerator = Decimal('0.0')
+        denominator = Decimal('0.0')
+        for i in range(1, period + 1):
+            diff = close[-i] - close[-i - 1]
+            if diff > Decimal('0.0'):
+                numerator += diff            elif diff < Decimal('0.0'):
+                denominator += abs(diff)
         if denominator == Decimal('0.0'):
-            return Decimal('50.0')
+            if numerator == Decimal('0.0'):
+                return Decimal('50.0')
+            return Decimal('100.0')
         ratio = numerator / denominator
-        return Decimal('50.0') + Decimal('50.0') * (ratio - Decimal('0.5'))
+        return Decimal('100.0') * ratio / (Decimal('1.0') + ratio)
 
     def _compute_ac(self, high, low, close, period: int) -> Decimal:
-        if len(close) < period * 2 or period <= 0:
-            return Decimal('50.0')
-        ao_now = (sum(close[-i] for i in range(1, period + 1)) / Decimal(period) - sum(close[-i] for i in range(period + 1, 2 * period + 1)) / Decimal(period))
-        ao_prev = (sum(close[-i - 1] for i in range(1, period + 1)) / Decimal(period) - sum(close[-i - 1] for i in range(period + 1, 2 * period + 1)) / Decimal(period))
-        ac = ao_now - ao_prev
-        return Decimal('50.0') + ac
+        if len(close) < 40 or period <= 0:
+            return Decimal('0.0')
+        median = [(high[-i] + low[-i]) / Decimal('2.0') for i in range(len(close))]
+        median.reverse()
+        def sma_local(data, p):
+            if len(data) < p or p <= 0:
+                return Decimal('0.0')
+            return sum(data[-p:]) / Decimal(p)
+        ao_now = sma_local(median, 5) - sma_local(median, 34)
+        if len(median) < 5:
+            return Decimal('0.0')
+        ao_series = []
+        for i in range(min(5, len(median))):
+            sub = median[:len(median) - i] if i > 0 else median
+            ao_series.append(sma_local(sub, 5) - sma_local(sub, 34))
+        ac = ao_now - sma_local(ao_series, 5)
+        return ac
 
     def _compute_force(self, close, volume, period: int) -> Decimal:
         if len(close) < period + 1 or period <= 0:
-            return Decimal('50.0')
-        forces = [volume[-i] * (close[-i] - close[-i - 1]) for i in range(1, period + 1)]
-        avg = sum(forces) / Decimal(period)
-        return Decimal('50.0') + avg / max(abs(avg), Decimal('1.0')) * Decimal('50.0')
+            return Decimal('0.0')
+        forces = []
+        for i in range(1, period + 1):
+            forces.append(volume[-i] * (close[-i] - close[-i - 1]))
+        return sum(forces) / Decimal(period)
 
     def _compute_obv(self, close, volume, period: int) -> Decimal:
         if len(close) < period + 1 or period <= 0:
-            return Decimal('50.0')
+            return Decimal('0.0')
         obv = Decimal('0.0')
-        for i in range(1, period + 1):
+        for i in range(period, 0, -1):
+            if i >= len(close):
+                continue
             if close[-i] > close[-i - 1]:
                 obv += volume[-i]
             elif close[-i] < close[-i - 1]:
                 obv -= volume[-i]
-        max_possible = sum(volume[-period:])
-        if max_possible == Decimal('0.0'):
-            return Decimal('50.0')
-        return Decimal('50.0') + Decimal('50.0') * obv / max_possible
+        return obv
 
     def _compute_ad(self, high, low, close, volume, period: int) -> Decimal:
-        if len(close) < period or period <= 0:
-            return Decimal('50.0')
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('0.0')
         ad = Decimal('0.0')
-        for i in range(1, period + 1):
+        for i in range(period, 0, -1):
+            if i >= len(close):
+                continue
             hl = high[-i] - low[-i]
             if hl > Decimal('0.0'):
                 mfv = ((close[-i] - low[-i]) - (high[-i] - close[-i])) / hl * volume[-i]
                 ad += mfv
-        max_abs = max(abs(ad), Decimal('1.0'))
-        return Decimal('50.0') + Decimal('50.0') * ad / max_abs
+        return ad
 
     def _compute_mfi(self, high, low, close, volume, period: int) -> Decimal:
         if len(close) < period + 1 or period <= 0:
@@ -1354,17 +1441,16 @@ class AEEA_Engine:
             elif tp < tp_prev:
                 neg_flow += mf
         if neg_flow == Decimal('0.0'):
+            if pos_flow == Decimal('0.0'):
+                return Decimal('50.0')
             return Decimal('100.0')
         mr = pos_flow / neg_flow
         return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + mr))
 
     def _compute_momentum(self, close, period: int) -> Decimal:
         if len(close) < period + 1 or period <= 0:
-            return Decimal('50.0')
-        mom = close[-1] - close[-period - 1]
-        ref = abs(close[-period - 1]) if close[-period - 1] != Decimal('0.0') else Decimal('1.0')
-        pct = mom / ref * Decimal('100.0')
-        return Decimal('50.0') + max(Decimal('-50.0'), min(Decimal('50.0'), pct))
+            return Decimal('0.0')
+        return close[-1] - close[-period - 1]
 
     def _compute_demarker(self, high, low, period: int) -> Decimal:
         if len(high) < period + 1 or period <= 0:
@@ -1382,24 +1468,70 @@ class AEEA_Engine:
 
     def _compute_wpr(self, high, low, close, period: int) -> Decimal:
         if len(close) < period or period <= 0:
-            return Decimal('50.0')
+            return Decimal('0.0')
         hh = max(high[-period:])
         ll = min(low[-period:])
         rng = hh - ll
         if rng == Decimal('0.0'):
-            return Decimal('50.0')
+            return Decimal('0.0')
         return Decimal('-100.0') * (hh - close[-1]) / rng
 
     def _compute_cci(self, high, low, close, period: int) -> Decimal:
         if len(close) < period or period <= 0:
-            return Decimal('50.0')
+            return Decimal('0.0')
         tp = [(high[-i] + low[-i] + close[-i]) / Decimal('3.0') for i in range(1, period + 1)]
         sma_tp = sum(tp) / Decimal(period)
         mad = sum(abs(x - sma_tp) for x in tp) / Decimal(period)
         if mad == Decimal('0.0'):
-            return Decimal('50.0')
-        cci = (tp[0] - sma_tp) / (Decimal('0.015') * mad)
-        return Decimal('50.0') + max(Decimal('-50.0'), min(Decimal('50.0'), cci / Decimal('4.0')))
+            return Decimal('0.0')
+        return (tp[0] - sma_tp) / (Decimal('0.015') * mad)
+
+    def _count_imbalance(self, j: int) -> Tuple[int, int]:
+        st = self.state
+        y = st.y
+        m = 0
+        n = 0
+        idx_i = j - (y + 1)
+        if idx_i < 0 or idx_i >= len(st.iA[0]):
+            return (0, 0)
+        idx_c = idx_i
+        if idx_c < 0 or idx_c >= len(st.cA[0]):
+            idx_c = idx_i
+        f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
+        g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
+        hh_val = st.HH[idx_i] if idx_i < len(st.HH) else Decimal('0.0')
+        ll_val = st.LL[idx_i] if idx_i < len(st.LL) else Decimal('0.0')
+        for i in range(13):
+            iA_val = st.iA[i][idx_i]
+            cA_val = st.cA[i][idx_c]
+            kA_val = st.kA[i][idx_c]
+            lA_val = st.lA[i][idx_c]
+            if st.Price > hh_val:
+                if iA_val > f_plus_gf or cA_val < kA_val:
+                    m += 1
+            elif st.price > hh_val:
+                if iA_val > f_plus_gf or iA_val < kA_val:
+                    m += 1
+            else:
+                if iA_val > f_plus_gf:
+                    m += 1
+            if st.Price < ll_val:
+                if iA_val < g_minus_gf or cA_val > lA_val:
+                    n += 1
+            elif st.price < ll_val:
+                if iA_val < g_minus_gf or iA_val > lA_val:
+                    n += 1
+            else:
+                if iA_val < g_minus_gf:
+                    n += 1
+        adx_val = st.iA[0][idx_i]
+        if adx_val > f_plus_gf or adx_val < g_minus_gf:
+            m += 1
+        if st.iIHKt > f_plus_gf and st.iIHKk > f_plus_gf:
+            m += 1
+        if st.iIHKt < g_minus_gf and st.iIHKk < g_minus_gf:
+            n += 1
+        return (m, n)
 
     def _M(self, j: int) -> int:
         st = self.state
@@ -1713,9 +1845,20 @@ class AEEA_Engine:
                 st.iStock = st.Stock
                 st.iSale = st.Sale
 
-        if len(self.ohlcv_history) >= 2:
+        if len(self.ohlcv_history) >= 3:
+            st.iopen = self.ohlcv_history[-3]["open"]
+            st.iPrice = self.ohlcv_history[-3]["close"]
+        elif len(self.ohlcv_history) >= 2:
             st.iopen = self.ohlcv_history[-2]["open"]
             st.iPrice = self.ohlcv_history[-2]["close"]
+        elif len(self.ohlcv_history) >= 1:
+            st.iopen = self.ohlcv_history[-1]["open"]
+            st.iPrice = self.ohlcv_history[-1]["close"]
+
+        st.lPass = st.Price if st.Price < st.open else st.open
+        st.ilPass = st.iPrice if st.iPrice < st.iopen else st.iopen
+        st.kPass = st.Price if st.Price > st.open else st.open
+        st.ikPass = st.iPrice if st.iPrice > st.iopen else st.iopen
 
     def _on_call(self) -> None:
         st = self.state
@@ -1731,9 +1874,9 @@ class AEEA_Engine:
                 st.I = st.iW
                 st.iZ = i
                 st.Z = i
-                st.iC = st.C
                 if st.iw != 0 and st.jC == st.Cc:
                     st.h = st.I
+                st.iC = st.C
                 st.jC = not st.C
                 if self._on_hold(j, "sTrend", "tTrend"):
                     st.iz = i
@@ -1747,9 +1890,9 @@ class AEEA_Engine:
                 st.I = st.iZ
                 st.iW = i
                 st.W = i
-                st.jC = st.C
                 if st.iz != 0 and st.iC == st.Cc:
                     st.h = st.I
+                st.jC = st.C
                 st.iC = not st.C
                 if self._on_hold(j, "sTrend", "tTrend"):
                     st.iw = i
@@ -2271,9 +2414,7 @@ class AEEA_Engine:
         st.tally = " "
         st.signal = st.price
 
-        h_idx = st.h - (st.y + 1)
-        m_local = self._M(st.h) if 0 <= h_idx < len(st.k) else 0
-        n_local = self._N(st.h) if 0 <= h_idx < len(st.l) else 0
+        m_local, n_local = self._count_imbalance(st.h)
 
         st.last_kronecker_m = m_local
         st.last_kronecker_n = n_local
@@ -2313,6 +2454,9 @@ class AEEA_Engine:
         if len(st.signal_history) > st.max_signal_history:
             st.signal_history = st.signal_history[-st.max_signal_history:]
         st.last_signal_at = signal_record["timestamp"]
+
+        st.signature = True
+        st.GF = True
 
         logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
 
@@ -2387,32 +2531,34 @@ class AEEA_Engine:
     def _P(self, price: Decimal) -> None:
         st = self.state
         self._S()
-        target = self._get_next_topological_target("BUY", price)
-        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "BUY"):
-            if (st.Buy == -1 or st.Buy >= 0) and (st.A or not st.B) and (st.u or not st.v):
+        ask_price = self.price_history[-1].ask if self.price_history else price
+        bid_price = self.price_history[-1].bid if self.price_history else price
+        target = self._get_next_topological_target("BUY", ask_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(ask_price, target, "BUY"):
+            if st.Buy >= 0 and (st.A or not st.B) and (st.u or not st.v):
                 if st.C:
-                    ticket = self._open_order("BUY", price, self._bSL, self._bTP, LOT_SIZE)
+                    ticket = self._open_order("BUY", ask_price, self._bSL, self._bTP, LOT_SIZE)
                     st.lOrder_id = ticket
                     st.has_open_long = True
-                    st.trailing_stop_entry = price
+                    st.trailing_stop_entry = ask_price
                     st.trailing_stop_side = "LONG"
                     st.Buy = 0 if st.Buy == -1 else st.Buy + 1
-                    logger.info(f"🟢 P(): BUY executed #{ticket} at {price}, target={target}")
+                    logger.info(f"🟢 P(): BUY executed #{ticket} at {ask_price}, target={target}")
         else:
             self._A(price)
             logger.info("⚠️ P(): BUY rejected — projected PnL <= spread friction")
 
-        target = self._get_next_topological_target("SELL", price)
-        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "SELL"):
-            if (st.Sell == -1 or st.Sell >= 0) and (not st.A or st.B) and (not st.u or st.v):
+        target = self._get_next_topological_target("SELL", bid_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(bid_price, target, "SELL"):
+            if st.Sell >= 0 and (not st.A or st.B) and (not st.u or st.v):
                 if not st.C:
-                    ticket = self._open_order("SELL", price, self._sSL, self._sTP, LOT_SIZE)
+                    ticket = self._open_order("SELL", bid_price, self._sSL, self._sTP, LOT_SIZE)
                     st.lOrder_id = ticket
                     st.has_open_short = True
-                    st.trailing_stop_entry = price
+                    st.trailing_stop_entry = bid_price
                     st.trailing_stop_side = "SHORT"
                     st.Sell = 0 if st.Sell == -1 else st.Sell + 1
-                    logger.info(f"🔴 P(): SELL executed #{ticket} at {price}, target={target}")
+                    logger.info(f"🔴 P(): SELL executed #{ticket} at {bid_price}, target={target}")
         else:
             self._B(price)
             logger.info("⚠️ P(): SELL rejected — projected PnL <= spread friction")
@@ -2420,32 +2566,34 @@ class AEEA_Engine:
     def _Q(self, price: Decimal) -> None:
         st = self.state
         self._S()
-        target = self._get_next_topological_target("SELL", price)
-        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "SELL"):
-            if (st.Sell == -1 or st.Sell >= 0) and (not st.A or st.B) and (not st.u or st.v):
+        ask_price = self.price_history[-1].ask if self.price_history else price
+        bid_price = self.price_history[-1].bid if self.price_history else price
+        target = self._get_next_topological_target("SELL", bid_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(bid_price, target, "SELL"):
+            if st.Sell >= 0 and (not st.A or st.B) and (not st.u or st.v):
                 if st.C:
-                    ticket = self._open_order("SELL", price, self._sSL, self._sTP, LOT_SIZE)
+                    ticket = self._open_order("SELL", bid_price, self._sSL, self._sTP, LOT_SIZE)
                     st.kOrder_id = ticket
                     st.has_open_short = True
-                    st.trailing_stop_entry = price
+                    st.trailing_stop_entry = bid_price
                     st.trailing_stop_side = "SHORT"
                     st.Sell = 0 if st.Sell == -1 else st.Sell + 1
-                    logger.info(f"🔴 Q(): SELL executed #{ticket} at {price}, target={target}")
+                    logger.info(f"🔴 Q(): SELL executed #{ticket} at {bid_price}, target={target}")
         else:
             self._B(price)
             logger.info("⚠️ Q(): SELL rejected — projected PnL <= spread friction")
 
-        target = self._get_next_topological_target("BUY", price)
-        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(price, target, "BUY"):
-            if (st.Buy == -1 or st.Buy >= 0) and (st.A or not st.B) and (st.u or not st.v):
+        target = self._get_next_topological_target("BUY", ask_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(ask_price, target, "BUY"):
+            if st.Buy >= 0 and (st.A or not st.B) and (st.u or not st.v):
                 if not st.C:
-                    ticket = self._open_order("BUY", price, self._bSL, self._bTP, LOT_SIZE)
+                    ticket = self._open_order("BUY", ask_price, self._bSL, self._bTP, LOT_SIZE)
                     st.kOrder_id = ticket
                     st.has_open_long = True
-                    st.trailing_stop_entry = price
+                    st.trailing_stop_entry = ask_price
                     st.trailing_stop_side = "LONG"
                     st.Buy = 0 if st.Buy == -1 else st.Buy + 1
-                    logger.info(f"🟢 Q(): BUY executed #{ticket} at {price}, target={target}")
+                    logger.info(f"🟢 Q(): BUY executed #{ticket} at {ask_price}, target={target}")
         else:
             self._A(price)
             logger.info("⚠️ Q(): BUY rejected — projected PnL <= spread friction")
@@ -2515,7 +2663,7 @@ class AEEA_Engine:
                 if jidx < len(st.Premium) and st.Premium[jidx] > st.price and st.Premium[jidx] != Decimal('0.0'):
                     topological_target = st.Premium[jidx]
                     break
-            slDistance = max(trail_step, SLIPPAGE * point_size)
+            slDistance = max(trail_step, STOP_LOSS * point_size)
             proposedSL = st.price - slDistance
             if ((proposedSL > st.trailing_stop_price or st.trailing_stop_price == Decimal('0.0')) and (topological_target == Decimal('0.0') or proposedSL < (topological_target - min_trail_threshold))):
                 new_sl = proposedSL
@@ -2533,7 +2681,7 @@ class AEEA_Engine:
                 if jidx < len(st.Discount) and st.Discount[jidx] < st.price and st.Discount[jidx] != Decimal('0.0'):
                     topological_target = st.Discount[jidx]
                     break
-            slDistance = max(trail_step, SLIPPAGE * point_size)
+            slDistance = max(trail_step, STOP_LOSS * point_size)
             proposedSL = st.price + slDistance
             if ((st.trailing_stop_price == Decimal('0.0') or proposedSL < st.trailing_stop_price) and (topological_target == Decimal('0.0') or proposedSL > (topological_target + min_trail_threshold))):
                 new_sl = proposedSL
@@ -2613,6 +2761,7 @@ class AEEA_Engine:
         price_str = f"{st.price:.5f}"
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
             st.BL.append(st.price)
+            st.BL_type.append("top")
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}")
@@ -2627,6 +2776,7 @@ class AEEA_Engine:
         price_str = f"{st.price:.5f}"
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
             st.BL.append(st.price)
+            st.BL_type.append("bott")
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}")
@@ -2727,6 +2877,8 @@ class AEEA_Engine:
 
         if not st.FG:
             self._force_initialization()
+
+        st.m_now, st.n_now = self._count_imbalance(st.h) if st.FG else (0, 0)
 
         self._execute_trailing_stop()
 
@@ -2888,17 +3040,22 @@ class AEEA_Engine:
         i = 0
         while i < len(st.BL):
             price_line = st.BL[i]
+            line_type = st.BL_type[i] if i < len(st.BL_type) else "top"
             if price_line <= Decimal('0.0'):
                 i += 1
                 continue
-            if (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
+            if line_type == "top" and (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
                 logger.info(f"🔵 FVG maintenance: remove blue @ {price_line}")
                 st.BL.pop(i)
+                if i < len(st.BL_type):
+                    st.BL_type.pop(i)
                 st.FVG -= 1
                 continue
-            if (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
+            if line_type == "bott" and (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
                 logger.info(f"🔴 FVG maintenance: remove red @ {price_line}")
                 st.BL.pop(i)
+                if i < len(st.BL_type):
+                    st.BL_type.pop(i)
                 st.FVG -= 1
                 continue
             i += 1
@@ -3019,8 +3176,8 @@ class AEEA_Engine:
         h_idx = st.h - (st.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-        m_local = st.last_kronecker_m
-        n_local = st.last_kronecker_n
+        m_local = st.m_now if st.FG else 0
+        n_local = st.n_now if st.FG else 0
         condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else "Unknown"
@@ -3077,10 +3234,35 @@ class AEEA_Engine:
             "last_signal_at": st.last_signal_at,
             "bar_close_count": int(st.bar_close_count),
             "ohlcv_count": len(self.ohlcv_history),
-            "market_m": int(st.last_kronecker_m),
-            "market_n": int(st.last_kronecker_n),
-            "market_imbalance": int(st.last_kronecker_m) - int(st.last_kronecker_n) - 2,
-            "market_regime": "BULLISH" if (int(st.last_kronecker_m) - int(st.last_kronecker_n) - 2) > 2 else ("BEARISH" if (int(st.last_kronecker_m) - int(st.last_kronecker_n) - 2) < -2 else "NEUTRAL")
+            "market_m": int(st.m_now),
+            "market_n": int(st.n_now),
+            "market_imbalance": int(st.m_now) - int(st.n_now) - 2,
+            "market_regime": "BULLISH" if (int(st.m_now) - int(st.n_now) - 2) > 2 else ("BEARISH" if (int(st.m_now) - int(st.n_now) - 2) < -2 else "NEUTRAL"),
+            "A": bool(st.A),
+            "B": bool(st.B),
+            "C": bool(st.C),
+            "c": bool(st.c),
+            "tick_tock": bool(st.tick_tock),
+            "Z": int(st.Z),
+            "z": int(st.z),
+            "O": int(st.O),
+            "o": int(st.o),
+            "W": int(st.W),
+            "w": int(st.w),
+            "I": int(st.I),
+            "iI": int(st.iI),
+            "J": int(st.J),
+            "iJ": int(st.iJ),
+            "iZ": int(st.iZ),
+            "iz": int(st.iz),
+            "iW": int(st.iW),
+            "iw": int(st.iw),
+            "iO": int(st.iO),
+            "io": int(st.io),
+            "lPass": str(st.lPass),
+            "ilPass": str(st.ilPass),
+            "kPass": str(st.kPass),
+            "ikPass": str(st.ikPass),
         }
 
     def get_regime_map(self) -> List[Dict[str, Any]]:
@@ -3307,6 +3489,13 @@ class BridgeState:
             "market_m": 0, "market_n": 0, "market_imbalance": -2, "market_regime": "NEUTRAL",
             "ohlcv_count": 0, "signal_count": 0, "last_signal_at": None,
             "bar_close_count": 0,
+            "A": True, "B": True, "C": True, "c": True,
+            "tick_tock": False, "signature": False,
+            "Z": Y_START + 1, "z": Y_START + 1, "O": Y_START + 1, "o": Y_START + 1,
+            "W": Y_START + 1, "w": Y_START + 1, "I": 0, "iI": 0, "J": 0, "iJ": 0,
+            "iZ": Y_START + 1, "iz": Y_START + 1, "iW": Y_START + 1, "iw": Y_START + 1,
+            "iO": Y_START + 1, "io": Y_START + 1,
+            "lPass": "0.0", "ilPass": "0.0", "kPass": "0.0", "ikPass": "0.0",
         }
         self._fvgs: Dict[int, Dict[str, Any]] = {}
         self._next_fvg_idx = 0
@@ -3557,7 +3746,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.0.1"
+    server_version = "AEI-Bridge/4.1.0"
 
     def log_message(self, fmt, *args):
         return
@@ -3607,8 +3796,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return {}
 
     def do_OPTIONS(self) -> None:
-        # Preflight: allow any origin to probe. Telegram sends X-Telegram-Init-Data;
-        # browsers send Authorization. Both are in Access-Control-Allow-Headers.
         self.send_response(204)
         self._set_cors()
         self.send_header("Content-Length", "0")
@@ -3633,7 +3820,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.0.1",
+                "ok": not stale, "service": "aei-bridge", "version": "4.1.0",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": snap.get("engine_initialized", False),
@@ -3698,8 +3885,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             h_idx = st.h - (st.y + 1)
             m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
             n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-            market_m = int(st.last_kronecker_m)
-            market_n = int(st.last_kronecker_n)
+            market_m = int(st.m_now)
+            market_n = int(st.n_now)
             market_imbalance = market_m - market_n - 2
             if market_imbalance > 2:
                 market_regime = "BULLISH"
@@ -3736,6 +3923,66 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "last_signal_at": st.last_signal_at,
                 "bar_close_count": int(st.bar_close_count),
                 "engine_initialized": bool(st.FG),
+                "KC": bool(st.KC),
+                "invert": bool(st.invert),
+                "tag": int(st.tag),
+                "prime": int(st.prime),
+                "dime": int(st.dime),
+                "mem": int(st.mem),
+                "A": bool(st.A),
+                "B": bool(st.B),
+                "C": bool(st.C),
+                "c": bool(st.c),
+                "tick_tock": bool(st.tick_tock),
+                "signature": bool(st.signature),
+                "safety": bool(st.safety),
+                "trailing_stop_active": bool(st.trailing_stop_active),
+                "trailing_stop_price": str(st.trailing_stop_price),
+                "trailing_take_profit": str(st.trailing_take_profit),
+                "trailing_stop_entry": str(st.trailing_stop_entry),
+                "trailing_stop_side": st.trailing_stop_side,
+                "has_open_long": bool(st.has_open_long),
+                "has_open_short": bool(st.has_open_short),
+                "lOrder_id": int(st.lOrder_id),
+                "kOrder_id": int(st.kOrder_id),
+                "on_track_runs": int(st.on_track_runs),
+                "on_stand_runs": int(st.on_stand_runs),
+                "last_kronecker_bar": int(engine._last_kronecker_bar),
+                "last_kronecker_m": int(st.last_kronecker_m),
+                "last_kronecker_n": int(st.last_kronecker_n),
+                "last_kronecker_h": int(st.last_kronecker_h),
+                "X_scan": int(st.X_scan),
+                "Y_scan": int(st.Y_scan),
+                "S": int(st.S),
+                "T": int(st.T),
+                "r": int(st.r),
+                "ir": int(st.ir),
+                "Z": int(st.Z),
+                "z": int(st.z),
+                "O": int(st.O),
+                "o": int(st.o),
+                "W": int(st.W),
+                "w": int(st.w),
+                "I": int(st.I),
+                "iI": int(st.iI),
+                "J": int(st.J),
+                "iJ": int(st.iJ),
+                "iZ": int(st.iZ),
+                "iz": int(st.iz),
+                "iW": int(st.iW),
+                "iw": int(st.iw),
+                "iO": int(st.iO),
+                "io": int(st.io),
+                "iATR": float(st.iATR),
+                "iStdDev": float(st.iStdDev),
+                "iIHKk": float(st.iIHKk),
+                "iIHKt": float(st.iIHKt),
+                "indicator_populate_count": int(engine._indicator_populate_count),
+                "imbalance_fire_count": int(engine._imbalance_fire_count),
+                "lPass": str(st.lPass),
+                "ilPass": str(st.ilPass),
+                "kPass": str(st.kPass),
+                "ikPass": str(st.ikPass),
             }
             self._send_json(200, payload)
             return
@@ -4160,8 +4407,8 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
             h_idx = st.h - (st.y + 1)
             m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
             n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-            market_m = int(st.last_kronecker_m)
-            market_n = int(st.last_kronecker_n)
+            market_m = int(st.m_now)
+            market_n = int(st.n_now)
             market_imbalance = market_m - market_n - 2
             if market_imbalance > 2:
                 market_regime = "BULLISH"
@@ -4216,6 +4463,15 @@ def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
                 "signal_count": len(st.signal_history),
                 "last_signal_at": st.last_signal_at,
                 "bar_close_count": int(st.bar_close_count),
+                "A": bool(st.A), "B": bool(st.B), "C": bool(st.C), "c": bool(st.c),
+                "tick_tock": bool(st.tick_tock), "signature": bool(st.signature),
+                "Z": int(st.Z), "z": int(st.z), "O": int(st.O), "o": int(st.o),
+                "W": int(st.W), "w": int(st.w), "I": int(st.I), "iI": int(st.iI),
+                "J": int(st.J), "iJ": int(st.iJ),
+                "iZ": int(st.iZ), "iz": int(st.iz), "iW": int(st.iW), "iw": int(st.iw),
+                "iO": int(st.iO), "io": int(st.io),
+                "lPass": str(st.lPass), "ilPass": str(st.ilPass),
+                "kPass": str(st.kPass), "ikPass": str(st.ikPass),
             }
             BRIDGE_STATE.publish(snapshot)
         except Exception as e:
@@ -4346,8 +4602,8 @@ class AEI_Bot:
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         feed_mark = "✅" if self._running else "⏹️"
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
-        m_local = state.last_kronecker_m if state.last_kronecker_m else 0
-        n_local = state.last_kronecker_n if state.last_kronecker_n else 0
+        m_local = state.m_now if state.FG else 0
+        n_local = state.n_now if state.FG else 0
         h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
@@ -4377,7 +4633,8 @@ class AEI_Bot:
             f"📡 *Feed Active:* {feed_mark}\n"
             f"🔀 *KC:* {state.KC}  |  *Prime:* {state.prime}  |  *Dime:* {state.dime}\n"
             f"🔀 *Invert:* {state.invert}  |  *Mem:* {state.mem}  |  *Tag:* {state.tag}\n"
-            f"🔀 *Safety:* {state.safety}\n"
+            f"🔀 *A:* {state.A}  |  *B:* {state.B}  |  *C:* {state.C}  |  *c:* {state.c}\n"
+            f"🔀 *tick_tock:* {state.tick_tock}  |  *safety:* {state.safety}\n"
             f"📊 *Orders:* {order_str}\n"
             f"🛑 *Trailing Stop:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
             f"🎯 *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
@@ -4407,7 +4664,8 @@ class AEI_Bot:
             f"📊 *Regime:* {status.get('regime')}\n"
             f"🔀 *KC:* {status.get('KC')}  |  *Prime:* {status.get('prime')}  |  *Dime:* {status.get('dime')}\n"
             f"🔀 *Invert:* {status.get('invert')}  |  *Mem:* {status.get('mem')}  |  *Tag:* {status.get('tag')}\n"
-            f"🔀 *Safety:* {status.get('safety')}\n"
+            f"🔀 *A:* {status.get('A')}  |  *B:* {status.get('B')}  |  *C:* {status.get('C')}  |  *c:* {status.get('c')}\n"
+            f"🔀 *tick_tock:* {status.get('tick_tock')}  |  *signature:* {status.get('signature')}  |  *safety:* {status.get('safety')}\n"
             f"📈 *Trailing Stop Active:* {status.get('trailing_stop_active')}\n"
             f"📈 *Trailing Stop Price:* {status.get('trailing_stop_price')}\n"
             f"📈 *Trailing Take Profit:* {status.get('trailing_take_profit')}\n"
@@ -4417,7 +4675,14 @@ class AEI_Bot:
             f"🔍 *OnTrack Runs:* {status.get('on_track_runs')}  |  *OnStand Runs:* {status.get('on_stand_runs')}\n"
             f"🎯 *Last Kronecker Bar:* {status.get('last_kronecker_bar')}\n"
             f"🔢 *Last Kronecker m/n/h:* {status.get('last_kronecker_m')}/{status.get('last_kronecker_n')}/{status.get('last_kronecker_h')}\n"
-            f"🔢 *X_PERIOD (const):* {X_PERIOD}  |  *Y_START (const):* {Y_START}"
+            f"🔢 *Derivatives Z/z/O/o/W/w:* {status.get('Z')}/{status.get('z')}/{status.get('O')}/{status.get('o')}/{status.get('W')}/{status.get('w')}\n"
+            f"🔢 *Derivatives I/iI/J/iJ:* {status.get('I')}/{status.get('iI')}/{status.get('J')}/{status.get('iJ')}\n"
+            f"🔢 *Derivatives iZ/iz/iW/iw/iO/io:* {status.get('iZ')}/{status.get('iz')}/{status.get('iW')}/{status.get('iw')}/{status.get('iO')}/{status.get('io')}\n"
+            f"🔢 *Scan S/T/r/ir:* {status.get('S')}/{status.get('T')}/{status.get('r')}/{status.get('ir')}\n"
+            f"🔢 *X_scan/Y_scan:* {status.get('X_scan')}/{status.get('Y_scan')}\n"
+            f"🔢 *X_PERIOD (const):* {X_PERIOD}  |  *Y_START (const):* {Y_START}\n"
+            f"🔢 *iATR/iStdDev/iIHKk/iIHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
+            f"🔢 *lPass/ilPass/kPass/ikPass:* {status.get('lPass')}/{status.get('ilPass')}/{status.get('kPass')}/{status.get('ikPass')}"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -4438,8 +4703,8 @@ class AEI_Bot:
         discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
         hh = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
         ll = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
-        m_local = state.last_kronecker_m if state.last_kronecker_m else 0
-        n_local = state.last_kronecker_n if state.last_kronecker_n else 0
+        m_local = state.m_now if state.FG else 0
+        n_local = state.n_now if state.FG else 0
         imbalance_status = "✅ TRIGGER" if (m_local >= 12 or n_local >= 12) else "⏳ WAITING"
         response = (
             "📊 *REGIME CLASSIFICATION*\n"
@@ -4474,8 +4739,8 @@ class AEI_Bot:
         else:
             direction = "🔴 SELL"
             confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
-        m_local = state.last_kronecker_m if state.last_kronecker_m else 0
-        n_local = state.last_kronecker_n if state.last_kronecker_n else 0
+        m_local = state.m_now if state.FG else 0
+        n_local = state.n_now if state.FG else 0
         h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
@@ -4864,20 +5129,21 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.1.0).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
         logger.info("🎯 Signal logging enabled for all imbalance events.")
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
-        logger.info("🛑 Trailing stop: real Ask−Bid spread + symbol-adaptive point size.")
-        logger.info("🎯 Kronecker gate: LOCAL m/n at h-bar.")
+        logger.info("🛑 Trailing stop: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
+        logger.info("🎯 Kronecker gate: LOCAL m/n computed per tick (m_now/n_now).")
         logger.info("🔄 O() regime mutation restored.")
         logger.info("📊 OnBar per-j HH/LL anchoring.")
         logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored.")
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
+        logger.info("🧪 Audit-patched: A/B/C/c/tick_tock/signature/derivatives all exposed via /miniapp-state.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 

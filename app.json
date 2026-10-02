@@ -1,6 +1,6 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched)",
   "repository": "https://github.com/yourusername/aea-bot",
   "keywords": ["trading", "telegram", "quantum", "finance", "mq4-parity", "mt4", "twa"],
   "env": {
