@@ -51,7 +51,7 @@ class Fraction:
         if isinstance(num, Fraction):
             self._f = num._f
         elif isinstance(num, PyFraction):
-            self._f = num.
+            self._f = num
         elif isinstance(num, int) and isinstance(den, int):
             if den == 0:
                 raise ZeroDivisionError("Fraction denominator cannot be zero")
