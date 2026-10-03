@@ -13,11 +13,11 @@
       "required": false
     },
     "RELAY_URL": {
-      "description": "Cloudflare Worker relay URL. Required for live prices.",
+      "description": "Cloudflare Worker relay URL (deployed from the aei-relay repo). Required for live prices.",
       "required": false
     },
     "RELAY_KEY": {
-      "description": "Optional shared secret matching `wrangler secret put RELAY_KEY`.",
+      "description": "Optional shared secret matching `wrangler secret put RELAY_KEY` in the aei-relay repo.",
       "required": false
     },
     "REQUIRE_AUTH": {

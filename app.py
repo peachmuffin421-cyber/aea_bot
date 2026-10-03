@@ -40,6 +40,10 @@ ARC_COHERENCE_TOLERANCE = 1e-6
 # ============================================================================
 # EXACT FRACTION WRAPPER
 # ============================================================================
+# Audit D-13: removed the lossy from_float() path. All conversions now
+# originate from exact decimal strings via from_decimal_string().
+# Audit D-15: removed the dead, non-exact sqrt() method.
+# ============================================================================
 class Fraction:
     __slots__ = ('_f',)
 
@@ -63,12 +67,6 @@ class Fraction:
         if isinstance(x, Fraction):
             return x
         return Fraction(x)
-
-    @staticmethod
-    def from_float(f, precision=1000000000000):
-        if isinstance(f, Fraction):
-            return f
-        return Fraction(int(round(float(f) * precision)), precision)
 
     @staticmethod
     def from_decimal_string(s):
@@ -203,24 +201,6 @@ class Fraction:
     def __repr__(self):
         return f"Fraction({self._f.numerator}/{self._f.denominator})"
 
-    def sqrt(self, iterations: int = 8) -> 'Fraction':
-        if self._f.numerator < 0:
-            raise ValueError("sqrt of negative fraction")
-        if self._f.numerator == 0:
-            return Fraction(0, 1)
-        n = self._f.numerator
-        d = self._f.denominator
-        ns = math.isqrt(n)
-        ds = math.isqrt(d)
-        if ns * ns == n and ds * ds == d:
-            return Fraction(ns, ds)
-        x0 = max(1, math.isqrt(int(self.to_float() * 10 ** 12)))
-        x = Fraction(x0, math.isqrt(10 ** 12))
-        two = Fraction(2, 1)
-        for _ in range(iterations):
-            x = (x + self / x) / two
-        return x
-
 # ============================================================================
 # CONSTANTS & CONFIGURATION — MQL4 PARITY
 # ============================================================================
@@ -242,6 +222,10 @@ GF_TOLERANCE: Fraction = Fraction(40, 15)
 F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD.num()) / Decimal(F_THRESHOLD.den())
 G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD.num()) / Decimal(G_THRESHOLD.den())
 GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE.num()) / Decimal(GF_TOLERANCE.den())
+
+# Audit D-14: exact Fraction forms for use in comparisons.
+F_PLUS_GF_F: Fraction = F_THRESHOLD + GF_TOLERANCE
+G_MINUS_GF_F: Fraction = G_THRESHOLD - GF_TOLERANCE
 
 TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
 BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
@@ -546,6 +530,10 @@ class AEI_CoreState:
     last_signal_at: Optional[str] = None
     bar_close_count: int = 0
 
+    # Audit D-46 / D-47: signal-execution flags. Set only by the
+    # Kronecker-delta execution block in _on_bar(), never by _signal().
+    execution_fired: bool = False
+
 # ============================================================================
 # MODULE-LEVEL INDICATOR HELPERS — MQL4 PARITY
 # ============================================================================
@@ -563,19 +551,26 @@ def ema(data: List[Decimal], period: int) -> Decimal:
         return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
     return data[-1]
 
+# Audit D-32: rewritten to use Wilder smoothing, matching MQL4 iRSI.
 def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     if len(data) < period + 1 or period <= 0:
         return Decimal('50.0')
     gains = Decimal('0.0')
     losses = Decimal('0.0')
-    for i in range(1, period + 1):
-        diff = data[-i] - data[-i - 1]
+    for i in range(period):
+        diff = data[i + 1] - data[i]
         if diff >= Decimal('0.0'):
             gains += diff
         else:
             losses -= diff
     avg_gain = gains / Decimal(period)
     avg_loss = losses / Decimal(period)
+    for i in range(period + 1, len(data)):
+        diff = data[i] - data[i - 1]
+        gain = diff if diff > Decimal('0.0') else Decimal('0.0')
+        loss = -diff if diff < Decimal('0.0') else Decimal('0.0')
+        avg_gain = (avg_gain * Decimal(period - 1) + gain) / Decimal(period)
+        avg_loss = (avg_loss * Decimal(period - 1) + loss) / Decimal(period)
     if avg_loss == Decimal('0.0'):
         return Decimal('100.0')
     rs = avg_gain / avg_loss
@@ -749,6 +744,14 @@ class FeedClient:
 
     def active_symbol(self) -> str:
         return self._chain[self._chain_index]
+
+    def failure_count(self) -> int:
+        # Audit D-55: public accessor.
+        return self._failure_count
+
+    def last_update(self) -> Optional[datetime]:
+        # Audit D-55: public accessor.
+        return self._last_update
 
     def _advance_symbol_chain(self) -> None:
         if len(self._chain) <= 1:
@@ -1056,6 +1059,7 @@ class AEEA_Engine:
         st.ilPass = Decimal('0.0')
         st.kPass = Decimal('0.0')
         st.ikPass = Decimal('0.0')
+        st.execution_fired = False
         self.ohlcv_history = saved_ohlcv
         st.price = saved_price
         st.Price = saved_Price
@@ -1206,6 +1210,7 @@ class AEEA_Engine:
                 st.iA[4][col_i] = Decimal('100.0') * ((force_list[0] - minForce) / rangeForce)
                 st.cA[4][col_c] = Decimal('100.0') * ((force_list[1] - minForce) / rangeForce) if len(force_list) > 1 else st.iA[4][col_i]
 
+        # Audit D-25: OBV now cumulative over the full passed array.
         obv_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1219,6 +1224,7 @@ class AEEA_Engine:
                 st.iA[5][col_i] = Decimal('100.0') * ((obv_list[0] - minOBV) / rangeOBV)
                 st.cA[5][col_c] = Decimal('100.0') * ((obv_list[1] - minOBV) / rangeOBV) if len(obv_list) > 1 else st.iA[5][col_i]
 
+        # Audit D-26: AD now cumulative over the full passed array.
         ad_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1403,29 +1409,27 @@ class AEEA_Engine:
             forces.append(volume[-i] * (close[-i] - close[-i - 1]))
         return sum(forces) / Decimal(period)
 
+    # Audit D-25: cumulative OBV over the entire passed array.
     def _compute_obv(self, close, volume, period: int) -> Decimal:
-        if len(close) < period + 1 or period <= 0:
+        if len(close) < 2:
             return Decimal('0.0')
         obv = Decimal('0.0')
-        for i in range(period, 0, -1):
-            if i >= len(close):
-                continue
-            if close[-i] > close[-i - 1]:
-                obv += volume[-i]
-            elif close[-i] < close[-i - 1]:
-                obv -= volume[-i]
+        for i in range(1, len(close)):
+            if close[i] > close[i - 1]:
+                obv += volume[i] if i < len(volume) else Decimal('0.0')
+            elif close[i] < close[i - 1]:
+                obv -= volume[i] if i < len(volume) else Decimal('0.0')
         return obv
 
+    # Audit D-26: cumulative A/D over the entire passed array.
     def _compute_ad(self, high, low, close, volume, period: int) -> Decimal:
-        if len(close) < period + 1 or period <= 0:
+        if len(close) < 2:
             return Decimal('0.0')
         ad = Decimal('0.0')
-        for i in range(period, 0, -1):
-            if i >= len(close):
-                continue
-            hl = high[-i] - low[-i]
+        for i in range(len(close)):
+            hl = high[i] - low[i]
             if hl > Decimal('0.0'):
-                mfv = ((close[-i] - low[-i]) - (high[-i] - close[-i])) / hl * volume[-i]
+                mfv = ((close[i] - low[i]) - (high[i] - close[i])) / hl * (volume[i] if i < len(volume) else Decimal('0.0'))
                 ad += mfv
         return ad
 
@@ -1487,6 +1491,9 @@ class AEEA_Engine:
             return Decimal('0.0')
         return (tp[0] - sma_tp) / (Decimal('0.015') * mad)
 
+    # Audit D-35 / D-36: _count_imbalance is used only for diagnostics.
+    # The authoritative m/n come from the most recent _H()/_L() call,
+    # which write st.last_kronecker_m / st.last_kronecker_n.
     def _count_imbalance(self, j: int) -> Tuple[int, int]:
         st = self.state
         y = st.y
@@ -1612,6 +1619,7 @@ class AEEA_Engine:
                 st.LL[idx_i] = st.Price
         return n
 
+    # Audit D-35 / D-36: _H / _L stamp the authoritative m/n.
     def _H(self, j: int) -> None:
         st = self.state
         idx = j - (st.y + 1)
@@ -1622,6 +1630,7 @@ class AEEA_Engine:
         st.k[idx] = (m >= 12)
         st.last_kronecker_m = m
         st.last_kronecker_h = j
+        st.m_now = m
         st.m = 0
         if st.k[idx]:
             logger.info(f"🔺 H() set k[{idx}] = True (m={m} >= 12) at bar j={j}")
@@ -1636,6 +1645,7 @@ class AEEA_Engine:
         st.l[idx] = (n >= 12)
         st.last_kronecker_n = n
         st.last_kronecker_h = j
+        st.n_now = n
         st.n = 0
         if st.l[idx]:
             logger.info(f"🔻 L() set l[{idx}] = True (n={n} >= 12) at bar j={j}")
@@ -1861,10 +1871,486 @@ class AEEA_Engine:
         st.kPass = st.Price if st.Price > st.open else st.open
         st.ikPass = st.iPrice if st.iPrice > st.iopen else st.iopen
 
+        # ====================================================================
+        # Audit D-47: the FF's Kronecker-delta execution block, ported verbatim.
+        # ====================================================================
+        self._execute_kronecker_block()
+
+    def _execute_kronecker_block(self) -> None:
+        st = self.state
+        fg = ""
+        if st.signal == Decimal('0.0'):
+            return
+
+        if st.price >= st.signal + COMMISSION:
+            logger.info(f"🔵 Long: {st.price}")
+            if st.count == 0 and st.tally == "Sell":
+                st.count += 1
+            st.tally = "Buy"
+        if st.price <= st.signal - COMMISSION:
+            logger.info(f"🔴 Short: {st.price}")
+            if st.count == 0 and st.tally == "Buy":
+                st.count += 1
+            st.tally = "Sell"
+
+        if st.tick_tock:
+            return
+
+        bullish_coherence = (
+            (
+                (st.Price > st.signal)
+                or (st.Price > st.ikPass)
+                or (st.price > st.kPass)
+            )
+            and (
+                (
+                    st.iC == st.Cc
+                    and st.Price > st.HH[MIN_PERIOD - (st.y + 1)]
+                )
+                or (
+                    st.jC == st.Cc
+                    and st.Price >= st.LL[MIN_PERIOD - (st.y + 1)]
+                    and (
+                        (st.open >= st.Stock)
+                        or (st.Price >= st.Stock)
+                        or (st.open >= st.iStock)
+                        or (st.Price >= st.iStock)
+                    )
+                )
+            )
+        )
+        if bullish_coherence:
+            logger.info(f"🟢 Buy: {st.price}")
+            if st.toll == 0 and st.tally == "Sell":
+                st.toll += 1
+            if st.Price > st.signal:
+                fg = "Up"
+            st.tally = "Buy"
+
+        bearish_coherence = (
+            (
+                (st.Price < st.signal)
+                or (st.Price < st.ilPass)
+                or (st.price < st.lPass)
+            )
+            and (
+                (
+                    st.jC == st.Cc
+                    and st.Price < st.LL[MIN_PERIOD - (st.y + 1)]
+                )
+                or (
+                    st.iC == st.Cc
+                    and st.Price <= st.HH[MIN_PERIOD - (st.y + 1)]
+                    and (
+                        (st.open <= st.Sale)
+                        or (st.Price <= st.Sale)
+                        or (st.open <= st.iSale)
+                        or (st.Price <= st.iSale)
+                    )
+                )
+            )
+        )
+        if bearish_coherence:
+            logger.info(f"🔴 Sell: {st.price}")
+            if st.toll == 0 and st.tally == "Buy":
+                st.toll += 1
+            if st.Price < st.signal:
+                fg = "Down"
+            st.tally = "Sell"
+
+        if st.toll == 1 and (st.tally == "Buy" or fg == "Up"):
+            logger.info(f"🔷 Diamond {fg}")
+            self._dispatch_diamond_subblock(fg)
+            st.signal = Decimal('0.0')
+            st.toll = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            st.execution_fired = True
+            return
+
+        if st.toll == 1 and (st.tally == "Sell" or fg == "Down"):
+            logger.info(f"🔻 Ruby {fg}")
+            self._dispatch_ruby_subblock(fg)
+            st.signal = Decimal('0.0')
+            st.toll = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            st.execution_fired = True
+            return
+
+        if st.count == 1 and (st.tally == "Buy" or fg == "Up"):
+            logger.info(f"🔷 Diamond {fg}")
+            self._dispatch_hawk_subblock(fg)
+            st.count = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            st.execution_fired = True
+            return
+
+        if st.count == 1 and (st.tally == "Sell" or fg == "Down"):
+            logger.info(f"🔻 Ruby {fg}")
+            self._dispatch_dove_subblock(fg)
+            st.count = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            st.execution_fired = True
+            return
+
+    def _dispatch_diamond_subblock(self, fg: str) -> None:
+        st = self.state
+        if (st.prime == 0 and st.dime == 0) and fg == "Up":
+            st.dime = 0
+            st.mem = 0
+            self._B(st.price)
+            if st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🐂 Bull")
+            self._Top()
+            st.E = st.price
+        elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
+            st.dime = 0
+            st.mem = 0
+            self._B(st.price)
+            if st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🐂 Bull")
+            self._Top()
+            st.E = st.price
+        elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
+            st.dime = 0
+            st.mem = 0
+            self._B(st.price)
+            if st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🐂 Bull")
+            self._Top()
+            st.E = st.price
+        elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
+            st.dime = 0
+            st.mem = 0
+            self._B(st.price)
+            if st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🐂 Bull")
+            self._Top()
+            st.E = st.price
+        elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
+            if st.safety:
+                self._B(st.price)
+                if st.C:
+                    self._P(st.price)
+                else:
+                    self._Q(st.price)
+                logger.info("🥃 Whisky")
+                self._Top()
+                st.E = st.price
+            else:
+                logger.info("🥃 Whisky")
+                self._Top()
+                st.E = st.price
+                if not st.safety:
+                    st.safety = True
+        elif st.mem == 1 or st.dime == 1:
+            self._on_log()
+            if st.safety:
+                self._A(st.price)
+                if not st.C:
+                    self._P(st.price)
+                else:
+                    self._Q(st.price)
+                logger.info("🍷 Wine")
+                self._Bott()
+                st.D = st.price
+            else:
+                logger.info("🍷 Wine")
+                self._Bott()
+                st.D = st.price
+                if not st.safety:
+                    st.safety = True
+        else:
+            logger.info("🍷 Wine")
+            self._Bott()
+            st.D = st.price
+            if not st.safety:
+                st.safety = True
+
+    def _dispatch_ruby_subblock(self, fg: str) -> None:
+        st = self.state
+        if fg == "Down" and (st.prime == 1 and st.dime == 1):
+            st.dime = 1
+            st.mem = 1
+            self._A(st.price)
+            if not st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🐻 Bear")
+            self._Bott()
+            st.D = st.price
+        elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
+            st.dime = 1
+            st.mem = 1
+            self._A(st.price)
+            if not st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🐻 Bear")
+            self._Bott()
+            st.D = st.price
+        elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
+            st.dime = 1
+            st.mem = 1
+            self._A(st.price)
+            if not st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🐻 Bear")
+            self._Bott()
+            st.D = st.price
+        elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
+            st.dime = 1
+            st.mem = 1
+            self._A(st.price)
+            if not st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🐻 Bear")
+            self._Bott()
+            st.D = st.price
+        elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
+            if st.safety:
+                self._A(st.price)
+                if not st.C:
+                    self._P(st.price)
+                else:
+                    self._Q(st.price)
+                logger.info("🍷 Wine")
+                self._Bott()
+                st.D = st.price
+            else:
+                logger.info("🍷 Wine")
+                self._Bott()
+                st.D = st.price
+                if not st.safety:
+                    st.safety = True
+        elif st.mem == 0 or st.dime == 0:
+            self._on_log()
+            if st.safety:
+                self._B(st.price)
+                if st.C:
+                    self._P(st.price)
+                else:
+                    self._Q(st.price)
+                logger.info("🥃 Whisky")
+                self._Top()
+                st.E = st.price
+            else:
+                logger.info("🥃 Whisky")
+                self._Top()
+                st.E = st.price
+                if not st.safety:
+                    st.safety = True
+        else:
+            logger.info("🥃 Whisky")
+            self._Top()
+            st.E = st.price
+            if not st.safety:
+                st.safety = True
+
+    def _dispatch_hawk_subblock(self, fg: str) -> None:
+        st = self.state
+        if (st.prime == 0 and st.dime == 0) and fg == "Up":
+            st.dime = 0
+            st.mem = 0
+            self._B(st.price)
+            if st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🦅 Hawk")
+            self._Top()
+            st.E = st.price
+        elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
+            st.dime = 0
+            st.mem = 0
+            self._B(st.price)
+            if st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🦅 Hawk")
+            self._Top()
+            st.E = st.price
+        elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
+            st.dime = 0
+            st.mem = 0
+            self._B(st.price)
+            if st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🦅 Hawk")
+            self._Top()
+            st.E = st.price
+        elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
+            st.dime = 0
+            st.mem = 0
+            self._B(st.price)
+            if st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🦅 Hawk")
+            self._Top()
+            st.E = st.price
+        elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
+            if st.safety:
+                self._B(st.price)
+                if st.C:
+                    self._P(st.price)
+                else:
+                    self._Q(st.price)
+                logger.info("💧 Watter")
+                self._Top()
+                st.E = st.price
+            else:
+                logger.info("💧 Watter")
+                self._Top()
+                st.E = st.price
+                if not st.safety:
+                    st.safety = True
+        elif st.mem == 1 or st.dime == 1:
+            self._on_log()
+            if st.safety:
+                self._A(st.price)
+                if not st.C:
+                    self._P(st.price)
+                else:
+                    self._Q(st.price)
+                logger.info("🩸 Blood")
+                self._Bott()
+                st.D = st.price
+            else:
+                logger.info("🩸 Blood")
+                self._Bott()
+                st.D = st.price
+                if not st.safety:
+                    st.safety = True
+        else:
+            logger.info("🩸 Blood")
+            self._Bott()
+            st.D = st.price
+            if not st.safety:
+                st.safety = True
+
+    def _dispatch_dove_subblock(self, fg: str) -> None:
+        st = self.state
+        if fg == "Down" and (st.prime == 1 and st.dime == 1):
+            st.dime = 1
+            st.mem = 1
+            self._A(st.price)
+            if not st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🕊️ Dove")
+            self._Bott()
+            st.D = st.price
+        elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
+            st.dime = 1
+            st.mem = 1
+            self._A(st.price)
+            if not st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🕊️ Dove")
+            self._Bott()
+            st.D = st.price
+        elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
+            st.dime = 1
+            st.mem = 1
+            self._A(st.price)
+            if not st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🕊️ Dove")
+            self._Bott()
+            st.D = st.price
+        elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
+            st.dime = 1
+            st.mem = 1
+            self._A(st.price)
+            if not st.C:
+                self._P(st.price)
+            else:
+                self._Q(st.price)
+            logger.info("🕊️ Dove")
+            self._Bott()
+            st.D = st.price
+        elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
+            if st.safety:
+                self._A(st.price)
+                if not st.C:
+                    self._P(st.price)
+                else:
+                    self._Q(st.price)
+                logger.info("🩸 Blood")
+                self._Bott()
+                st.D = st.price
+            else:
+                logger.info("🩸 Blood")
+                self._Bott()
+                st.D = st.price
+                if not st.safety:
+                    st.safety = True
+        elif st.mem == 0 or st.dime == 0:
+            self._on_log()
+            if st.safety:
+                self._B(st.price)
+                if st.C:
+                    self._P(st.price)
+                else:
+                    self._Q(st.price)
+                logger.info("💧 Watter")
+                self._Top()
+                st.E = st.price
+            else:
+                logger.info("💧 Watter")
+                self._Top()
+                st.E = st.price
+                if not st.safety:
+                    st.safety = True
+        else:
+            logger.info("💧 Watter")
+            self._Top()
+            st.E = st.price
+            if not st.safety:
+                st.safety = True
+
+    # Audit D-41: _on_call uses a while-loop with a dynamically
+    # re-evaluated bound (MQL4 j < X + 2 semantics).
     def _on_call(self) -> None:
         st = self.state
         y = st.y
-        for j in range(y + 1, st.X_scan + 2):
+        j = y + 1
+        while j < st.X_scan + 2:
             idx = j - (y + 1)
             if idx < 0 or idx >= len(st.Regime):
                 break
@@ -1902,6 +2388,7 @@ class AEEA_Engine:
                     self._L(j)
                 if st.X_scan != X_PERIOD - 1:
                     st.X_scan += 1
+            j += 1
         st.X_scan = y
 
     def _on_track(self) -> None:
@@ -2405,6 +2892,10 @@ class AEEA_Engine:
                     logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             self._KC()
 
+    # Audit D-46: _signal no longer sets signature/GF. It sets only
+    # the signal anchor and the diagnostic history record. The
+    # execution block in _on_bar() (via _execute_kronecker_block)
+    # sets signature/GF after a Kronecker-delta execution completes.
     def _signal(self) -> None:
         st = self.state
         if st.price <= Decimal('0.0'):
@@ -2416,7 +2907,6 @@ class AEEA_Engine:
         st.signal = st.price
 
         m_local, n_local = self._count_imbalance(st.h)
-
         st.last_kronecker_m = m_local
         st.last_kronecker_n = n_local
         st.last_kronecker_h = st.h
@@ -2455,10 +2945,6 @@ class AEEA_Engine:
         if len(st.signal_history) > st.max_signal_history:
             st.signal_history = st.signal_history[-st.max_signal_history:]
         st.last_signal_at = signal_record["timestamp"]
-
-        st.signature = True
-        st.GF = True
-
         logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
 
     def _on_gaurd(self, inp: int) -> bool:
@@ -2471,6 +2957,15 @@ class AEEA_Engine:
             if st.signature and inp != -1:
                 st.dime = 1
             return False
+
+    def _on_log(self) -> None:
+        st = self.state
+        if st.dime == 0:
+            logger.info("🕊️ Flying")
+        elif st.dime == 1:
+            logger.info("🔻 Falling")
+        else:
+            logger.info("⏳ Wait/Decern")
 
     def _A(self, price: Decimal) -> None:
         st = self.state
@@ -2608,8 +3103,12 @@ class AEEA_Engine:
             self._sTP = st.price - TAKE_PROFIT
             self._bTP = st.price + TAKE_PROFIT
 
+    # Audit D-48: normalize at the top (matching FF's T()).
+    # Audit D-49: skip only on tStable/tCoherent, not Stable.
     def _execute_trailing_stop(self) -> None:
         st = self.state
+        if len(self.ohlcv_history) >= st.y + 1:
+            self._normalize(st.y + 1)
         has_long = st.has_open_long
         has_short = st.has_open_short
         if not (has_long or has_short):
@@ -2624,7 +3123,7 @@ class AEEA_Engine:
         regime_idx = st.y + 1
         if 0 <= regime_idx < len(st.Regime):
             regime = st.Regime[regime_idx]
-            if regime in ("tStable", "tCoherent", "Stable"):
+            if regime in ("tStable", "tCoherent"):
                 return
         if st.price <= Decimal('0.0'):
             return
@@ -2659,7 +3158,7 @@ class AEEA_Engine:
         new_sl = st.trailing_stop_price
         topological_target = Decimal('0.0')
         if has_long:
-            for ji in range(st.y + 1, X_PERIOD):
+            for ji in range(st.y + 1, X_PERIOD - 1):
                 jidx = ji - (st.y + 1)
                 if jidx < len(st.Premium) and st.Premium[jidx] > st.price and st.Premium[jidx] != Decimal('0.0'):
                     topological_target = st.Premium[jidx]
@@ -2677,7 +3176,7 @@ class AEEA_Engine:
             if proposedTP > (st.price + min_trail_threshold):
                 st.trailing_take_profit = proposedTP
         else:
-            for ji in range(st.y + 1, X_PERIOD):
+            for ji in range(st.y + 1, X_PERIOD - 1):
                 jidx = ji - (st.y + 1)
                 if jidx < len(st.Discount) and st.Discount[jidx] < st.price and st.Discount[jidx] != Decimal('0.0'):
                     topological_target = st.Discount[jidx]
@@ -2720,9 +3219,10 @@ class AEEA_Engine:
             st.has_open_short = False
             st.kOrder_id = -1
 
+    # Audit D-50: loop bound is x - 1 (exclusive), matching the FF.
     def _get_next_topological_target(self, side: str, current_price: Decimal) -> Decimal:
         st = self.state
-        for ji in range(st.y + 1, X_PERIOD):
+        for ji in range(st.y + 1, X_PERIOD - 1):
             jidx = ji - (st.y + 1)
             if side == "BUY":
                 if jidx < len(st.Premium) and st.Premium[jidx] > current_price and st.Premium[jidx] != Decimal('0.0'):
@@ -2787,6 +3287,8 @@ class AEEA_Engine:
                 except Exception as e:
                     logger.warning(f"_bridge_publish_callback failed: {e}")
 
+    # Audit D-34: no neutral fill for bars before MIN_HISTORY_WINDOW.
+    # Leave columns at their natural computed values (or prior values).
     def _populate_indicator_matrix(self) -> None:
         st = self.state
         if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
@@ -2802,12 +3304,6 @@ class AEEA_Engine:
             bars_back = X_PERIOD - j
             bar_end = end - bars_back
             if bar_end < MIN_HISTORY_WINDOW:
-                for i in range(13):
-                    if i < len(st.iA) and idx < len(st.iA[i]):
-                        st.iA[i][idx] = Decimal('50.0')
-                        st.cA[i][idx] = Decimal('50.0')
-                        st.kA[i][idx] = Decimal('50.0')
-                        st.lA[i][idx] = Decimal('50.0')
                 continue
             self._normalize(j)
             self._unify(j)
@@ -2845,6 +3341,9 @@ class AEEA_Engine:
         st._initialized = True
         logger.info(f"✅ Engine initialized on first tick at price={st.price}")
 
+    # Audit D-10: st.Price is the previous completed bar's close,
+    # matching the FF's `Price = iClose(Symbol(), 0, 1)`.
+    # Audit D-11/D-12: st.open, st.iH, st.iL defer until a bar has closed.
     def _on_tick(self, price_data: PriceData) -> None:
         st = self.state
         st.tick += 1
@@ -2856,13 +3355,14 @@ class AEEA_Engine:
             logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}")
 
         st.price = price_data.bid
-        st.Price = price_data.close
         if len(self.ohlcv_history) >= 2:
+            st.Price = self.ohlcv_history[-2]["close"]
             st.iPrice = self.ohlcv_history[-2]["close"]
             st.open = self.ohlcv_history[-2]["open"]
             st.iH = self.ohlcv_history[-2]["high"]
             st.iL = self.ohlcv_history[-2]["low"]
         else:
+            st.Price = price_data.close
             st.iPrice = st.price
             st.open = st.price
             st.iH = st.price
@@ -2879,7 +3379,8 @@ class AEEA_Engine:
         if not st.FG:
             self._force_initialization()
 
-        st.m_now, st.n_now = self._count_imbalance(st.h) if st.FG else (0, 0)
+        # m_now / n_now are set by the most recent _H()/_L() call. No
+        # re-computation here (Audit D-35, D-36).
 
         self._execute_trailing_stop()
 
@@ -3177,8 +3678,9 @@ class AEEA_Engine:
         h_idx = st.h - (st.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-        m_local = st.m_now if st.FG else 0
-        n_local = st.n_now if st.FG else 0
+        # Audit D-35 / D-36: authoritative m/n from last H()/L() call.
+        m_local = st.m_now
+        n_local = st.n_now
         condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else "Unknown"
@@ -3461,61 +3963,14 @@ INDICATOR_NAMES = [
 # ============================================================================
 # BRIDGE STATE
 # ============================================================================
+# Audit D-60: _snapshot removed. /state delegates to engine state.
 class BridgeState:
     def __init__(self):
         self._lock = threading.Lock()
-        self._snapshot: Dict[str, Any] = {
-            "symbol": SYMBOL, "price": "0.0", "ask": "0.0", "bid": "0.0",
-            "signal": "0.0", "regime": "Unknown", "tick": 0,
-            "m_count": 0, "n_count": 0,
-            "timestamp": datetime.now().isoformat(), "endpoint": None,
-            "webapp_user_id": None, "webapp_username": None,
-            "last_price_update": None, "engine_initialized": False,
-            "consecutive_zero_prices": 0,
-            "relay_url": RELAY_URL, "relay_healthy": True,
-            "indicator_populate_count": 0, "imbalance_fire_count": 0,
-            "trailing_stop_active": False, "trailing_stop_price": "0.0",
-            "trailing_take_profit": "0.0", "trailing_stop_entry": "0.0",
-            "trailing_stop_side": "", "has_open_long": False, "has_open_short": False,
-            "lOrder_id": -1, "kOrder_id": -1, "KC": True, "prime": -1,
-            "dime": -1, "mem": -1, "tag": -1, "invert": True,
-            "safety": False,
-            "m_at_h": 0, "n_at_h": 0, "h_bar": 0,
-            "on_track_runs": 0, "on_stand_runs": 0,
-            "last_kronecker_bar": -1, "last_kronecker_m": 0,
-            "last_kronecker_n": 0, "last_kronecker_h": -1,
-            "X_scan": Y_START, "Y_scan": Y_START,
-            "S": X_PERIOD, "T": X_PERIOD, "r": 0, "ir": 0,
-            "iATR": 50.0, "iStdDev": 50.0, "iIHKk": 50.0, "iIHKt": 50.0,
-            "market_m": 0, "market_n": 0, "market_imbalance": -2, "market_regime": "NEUTRAL",
-            "ohlcv_count": 0, "signal_count": 0, "last_signal_at": None,
-            "bar_close_count": 0,
-            "A": True, "B": True, "C": True, "c": True,
-            "tick_tock": False, "signature": False,
-            "Z": Y_START + 1, "z": Y_START + 1, "O": Y_START + 1, "o": Y_START + 1,
-            "W": Y_START + 1, "w": Y_START + 1, "I": 0, "iI": 0, "J": 0, "iJ": 0,
-            "iZ": Y_START + 1, "iz": Y_START + 1, "iW": Y_START + 1, "iw": Y_START + 1,
-            "iO": Y_START + 1, "io": Y_START + 1,
-            "lPass": "0.0", "ilPass": "0.0", "kPass": "0.0", "ikPass": "0.0",
-        }
         self._fvgs: Dict[int, Dict[str, Any]] = {}
         self._next_fvg_idx = 0
         self._webapp_sessions: Dict[int, Dict[str, Any]] = {}
         self._handshake_lock = threading.Lock()
-
-    def publish(self, snapshot: Dict[str, Any]) -> None:
-        with self._lock:
-            if "price" in snapshot and snapshot["price"] != "0.0":
-                snapshot["last_price_update"] = datetime.now().isoformat()
-            self._snapshot = dict(snapshot)
-            if snapshot.get("tick", 0) % 50 == 0:
-                logger.info(f"🌉 BRIDGE_SNAPSHOT: price={snapshot.get('price')} tick={snapshot.get('tick')} "
-                            f"ohlcv={snapshot.get('ohlcv_count')} signals={snapshot.get('signal_count')} "
-                            f"bars={snapshot.get('bar_close_count')}")
-
-    def get_snapshot(self) -> Dict[str, Any]:
-        with self._lock:
-            return dict(self._snapshot)
 
     def register_webapp_session(self, user_id: int, username: Optional[str], chat_id: Optional[int] = None) -> bool:
         with self._handshake_lock:
@@ -3524,9 +3979,6 @@ class BridgeState:
                 "first_seen": self._webapp_sessions.get(user_id, {}).get("first_seen", datetime.now().isoformat()),
                 "last_seen": datetime.now().isoformat(),
             }
-        with self._lock:
-            self._snapshot["webapp_user_id"] = user_id
-            self._snapshot["webapp_username"] = username
         engine = BRIDGE_ENGINE_REF.get("engine")
         if engine is not None:
             try:
@@ -3807,30 +4259,27 @@ class BridgeHandler(BaseHTTPRequestHandler):
         query = dict(parse_qsl(urlparse(self.path).query))
 
         if path == "/health":
-            snap = BRIDGE_STATE.get_snapshot()
-            last = snap.get("last_price_update")
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            last = None
             stale = True
             age_seconds = None
-            if last:
-                try:
-                    last_dt = datetime.fromisoformat(last)
-                    if last_dt.tzinfo is None:
-                        last_dt = last_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
-                    age_seconds = (datetime.now().astimezone() - last_dt).total_seconds()
+            if engine is not None:
+                lu = engine.feed.last_update()
+                if lu:
+                    last = lu.isoformat()
+                    age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
-                except Exception:
-                    pass
             self._send_json(200, {
                 "ok": not stale, "service": "aei-bridge", "version": "4.1.0",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
-                "engine_initialized": snap.get("engine_initialized", False),
-                "indicator_populate_count": snap.get("indicator_populate_count", 0),
-                "imbalance_fire_count": snap.get("imbalance_fire_count", 0),
-                "ohlcv_count": snap.get("ohlcv_count", 0),
-                "signal_count": snap.get("signal_count", 0),
-                "bar_close_count": snap.get("bar_close_count", 0),
-                "relay_healthy": snap.get("relay_healthy", True),
+                "engine_initialized": bool(engine.state.FG) if engine else False,
+                "indicator_populate_count": int(engine._indicator_populate_count) if engine else 0,
+                "imbalance_fire_count": int(engine._imbalance_fire_count) if engine else 0,
+                "ohlcv_count": len(engine.ohlcv_history) if engine else 0,
+                "signal_count": len(engine.state.signal_history) if engine else 0,
+                "bar_close_count": int(engine.state.bar_close_count) if engine else 0,
+                "relay_healthy": (engine.feed.failure_count() < 3) if engine else True,
             })
             return
 
@@ -3849,17 +4298,47 @@ class BridgeHandler(BaseHTTPRequestHandler):
             })
             return
 
+        # Audit D-60: /state delegates to engine state, no redundant snapshot.
         if path == "/state":
-            snap = BRIDGE_STATE.get_snapshot()
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready", "detail": "Engine hasn't started. Use /start_feed in the bot."})
+                return
+            st = engine.state
             public = BRIDGE_ENGINE_REF.get("public_url")
             if public:
-                snap["endpoint"] = public
+                endpoint = public
             else:
                 host = self.headers.get("Host", f"{BRIDGE_HOST}:{BRIDGE_PORT}")
                 scheme = "https" if BRIDGE_USE_TLS else "http"
-                snap["endpoint"] = f"{scheme}://{host}"
-            snap["relay_url"] = RELAY_URL
-            self._send_json(200, snap)
+                endpoint = f"{scheme}://{host}"
+            idx = st.Z - (st.y + 1)
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+            self._send_json(200, {
+                "symbol": SYMBOL,
+                "price": str(st.price),
+                "bid": str(engine.price_history[-1].bid) if engine.price_history else "0.0",
+                "ask": str(engine.price_history[-1].ask) if engine.price_history else "0.0",
+                "signal": str(st.signal),
+                "regime": regime,
+                "tick": int(st.tick),
+                "m_count": int(st.m_now),
+                "n_count": int(st.n_now),
+                "m_at_h": int(st.last_kronecker_m),
+                "n_at_h": int(st.last_kronecker_n),
+                "h_bar": int(st.h),
+                "timestamp": datetime.now().isoformat(),
+                "endpoint": endpoint,
+                "webapp_user_id": st.webapp_user_id,
+                "webapp_username": st.webapp_username,
+                "last_price_update": engine.feed.last_update().isoformat() if engine.feed.last_update() else None,
+                "engine_initialized": bool(st.FG),
+                "consecutive_zero_prices": int(engine._consecutive_zero_prices),
+                "relay_url": RELAY_URL,
+                "relay_healthy": (engine.feed.failure_count() < 3),
+                "indicator_populate_count": int(engine._indicator_populate_count),
+                "imbalance_fire_count": int(engine._imbalance_fire_count),
+            })
             return
 
         if path == "/miniapp-state":
@@ -3886,6 +4365,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             h_idx = st.h - (st.y + 1)
             m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
             n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
+            # Audit D-35 / D-36: authoritative m/n from last H()/L() call.
             market_m = int(st.m_now)
             market_n = int(st.n_now)
             market_imbalance = market_m - market_n - 2
@@ -3912,7 +4392,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "market_imbalance": market_imbalance,
                 "market_regime": market_regime,
                 "last_price_update": datetime.now().isoformat(),
-                "relay_healthy": (engine.feed._failure_count < 3),
+                "relay_healthy": (engine.feed.failure_count() < 3),
                 "X_PERIOD": X_PERIOD,
                 "Y_START": Y_START,
                 "fvg_anchors": fvg_anchors,
@@ -4060,7 +4540,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             probe_data = engine.feed.probe()
             try:
                 probe_data["signal_status"] = engine.get_signal_status()
-                probe_data["relay_healthy"] = (engine.feed._failure_count < 3)
+                probe_data["relay_healthy"] = (engine.feed.failure_count() < 3)
             except Exception:
                 pass
             self._send_json(200, probe_data)
@@ -4074,12 +4554,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
             try:
                 diag = engine.get_signal_status()
                 diag["ohlcv_history_depth"] = len(engine.ohlcv_history)
-                diag["indicator_sample_col0"] = [str(engine.state.iA[i][0]) for i in range(13)]
-                diag["indicator_sample_col1"] = [str(engine.state.iA[i][1]) for i in range(13)] if len(engine.state.iA[0]) > 1 else []
+                # Audit D-56: sample current column, tag with index.
+                current_col = engine.state.Z - (engine.state.y + 1)
+                if current_col < 0:
+                    current_col = 0
+                diag["indicator_col_index"] = [current_col, max(0, current_col - 1)]
+                diag["indicator_sample_col0"] = [
+                    str(engine.state.iA[i][current_col]) if current_col < len(engine.state.iA[i]) else "50"
+                    for i in range(13)
+                ]
+                prev_col = max(0, current_col - 1)
+                diag["indicator_sample_col1"] = [
+                    str(engine.state.cA[i][prev_col]) if prev_col < len(engine.state.cA[i]) else "50"
+                    for i in range(13)
+                ]
                 diag["x_period_constant"] = X_PERIOD
                 diag["y_start_constant"] = Y_START
                 diag["consecutive_zero_prices"] = engine._consecutive_zero_prices
-                diag["relay_healthy"] = (engine.feed._failure_count < 3)
+                diag["relay_healthy"] = (engine.feed.failure_count() < 3)
                 diag["active_symbol"] = engine.feed.active_symbol()
                 diag["last_bar_close"] = engine.state.bar_close_count
                 diag["recent_signals"] = engine.state.signal_history[-10:]
@@ -4398,86 +4890,6 @@ class BridgeServer:
 def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
     if getattr(engine, "_bridge_attached", False):
         return
-    original_on_tick = engine._on_tick
-    def wrapped_on_tick(price_data: PriceData) -> None:
-        original_on_tick(price_data)
-        try:
-            st = engine.state
-            idx = st.Z - (st.y + 1)
-            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-            h_idx = st.h - (st.y + 1)
-            m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
-            n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-            market_m = int(st.m_now)
-            market_n = int(st.n_now)
-            market_imbalance = market_m - market_n - 2
-            if market_imbalance > 2:
-                market_regime = "BULLISH"
-            elif market_imbalance < -2:
-                market_regime = "BEARISH"
-            else:
-                market_regime = "NEUTRAL"
-            snapshot = {
-                "symbol": SYMBOL, "price": str(st.price),
-                "bid": str(price_data.bid), "ask": str(price_data.ask),
-                "signal": str(st.signal), "regime": regime,
-                "tick": int(st.tick),
-                "m_count": market_m, "n_count": market_n,
-                "m_at_h": int(m_at_h), "n_at_h": int(n_at_h), "h_bar": int(st.h),
-                "timestamp": datetime.now().isoformat(),
-                "endpoint": BRIDGE_ENGINE_REF.get("public_url"),
-                "webapp_user_id": st.webapp_user_id, "webapp_username": st.webapp_username,
-                "last_price_update": datetime.now().isoformat(),
-                "engine_initialized": bool(st.FG),
-                "consecutive_zero_prices": int(getattr(engine, "_consecutive_zero_prices", 0)),
-                "relay_url": RELAY_URL,
-                "relay_healthy": (engine.feed._failure_count < 3),
-                "indicator_populate_count": int(engine._indicator_populate_count),
-                "imbalance_fire_count": int(engine._imbalance_fire_count),
-                "trailing_stop_active": bool(st.trailing_stop_active),
-                "trailing_stop_price": str(st.trailing_stop_price),
-                "trailing_take_profit": str(st.trailing_take_profit),
-                "trailing_stop_entry": str(st.trailing_stop_entry),
-                "trailing_stop_side": st.trailing_stop_side,
-                "has_open_long": bool(st.has_open_long),
-                "has_open_short": bool(st.has_open_short),
-                "lOrder_id": int(st.lOrder_id), "kOrder_id": int(st.kOrder_id),
-                "KC": bool(st.KC), "prime": int(st.prime),
-                "dime": int(st.dime), "mem": int(st.mem), "tag": int(st.tag),
-                "invert": bool(st.invert),
-                "safety": bool(st.safety),
-                "on_track_runs": int(st.on_track_runs),
-                "on_stand_runs": int(st.on_stand_runs),
-                "last_kronecker_bar": int(engine._last_kronecker_bar),
-                "last_kronecker_m": int(st.last_kronecker_m),
-                "last_kronecker_n": int(st.last_kronecker_n),
-                "last_kronecker_h": int(st.last_kronecker_h),
-                "X_scan": int(st.X_scan), "Y_scan": int(st.Y_scan),
-                "S": int(st.S), "T": int(st.T), "r": int(st.r), "ir": int(st.ir),
-                "iATR": float(st.iATR), "iStdDev": float(st.iStdDev),
-                "iIHKk": float(st.iIHKk), "iIHKt": float(st.iIHKt),
-                "market_m": market_m,
-                "market_n": market_n,
-                "market_imbalance": market_imbalance,
-                "market_regime": market_regime,
-                "ohlcv_count": len(engine.ohlcv_history),
-                "signal_count": len(st.signal_history),
-                "last_signal_at": st.last_signal_at,
-                "bar_close_count": int(st.bar_close_count),
-                "A": bool(st.A), "B": bool(st.B), "C": bool(st.C), "c": bool(st.c),
-                "tick_tock": bool(st.tick_tock), "signature": bool(st.signature),
-                "Z": int(st.Z), "z": int(st.z), "O": int(st.O), "o": int(st.o),
-                "W": int(st.W), "w": int(st.w), "I": int(st.I), "iI": int(st.iI),
-                "J": int(st.J), "iJ": int(st.iJ),
-                "iZ": int(st.iZ), "iz": int(st.iz), "iW": int(st.iW), "iw": int(st.iw),
-                "iO": int(st.iO), "io": int(st.io),
-                "lPass": str(st.lPass), "ilPass": str(st.ilPass),
-                "kPass": str(st.kPass), "ikPass": str(st.ikPass),
-            }
-            BRIDGE_STATE.publish(snapshot)
-        except Exception as e:
-            logger.warning(f"Bridge publish failed: {e}")
-    engine._on_tick = wrapped_on_tick
     engine._bridge_attached = True
     logger.info("🔗 Bridge attached to AEEA_Engine")
 
@@ -4603,8 +5015,8 @@ class AEI_Bot:
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         feed_mark = "✅" if self._running else "⏹️"
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
-        m_local = state.m_now if state.FG else 0
-        n_local = state.n_now if state.FG else 0
+        m_local = state.m_now
+        n_local = state.n_now
         h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
@@ -4704,8 +5116,8 @@ class AEI_Bot:
         discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
         hh = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
         ll = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
-        m_local = state.m_now if state.FG else 0
-        n_local = state.n_now if state.FG else 0
+        m_local = state.m_now
+        n_local = state.n_now
         imbalance_status = "✅ TRIGGER" if (m_local >= 12 or n_local >= 12) else "⏳ WAITING"
         response = (
             "📊 *REGIME CLASSIFICATION*\n"
@@ -4740,8 +5152,8 @@ class AEI_Bot:
         else:
             direction = "🔴 SELL"
             confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
-        m_local = state.m_now if state.FG else 0
-        n_local = state.n_now if state.FG else 0
+        m_local = state.m_now
+        n_local = state.n_now
         h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
@@ -5137,14 +5549,14 @@ class AEI_Bot:
         logger.info("🎯 Signal logging enabled for all imbalance events.")
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
         logger.info("🛑 Trailing stop: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
-        logger.info("🎯 Kronecker gate: LOCAL m/n computed per tick (m_now/n_now).")
+        logger.info("🎯 Kronecker gate: LOCAL m/n from authoritative H()/L() stamps.")
         logger.info("🔄 O() regime mutation restored.")
         logger.info("📊 OnBar per-j HH/LL anchoring.")
         logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored.")
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🧪 Audit-patched: A/B/C/c/tick_tock/signature/derivatives all exposed via /miniapp-state.")
+        logger.info("🧪 Audit-patched: _signal no longer sets signature/GF; execution block present in _on_bar.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
