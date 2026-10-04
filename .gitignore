@@ -1,104 +1,15 @@
 # ============================================================================
-# ÆEA BACKEND — .gitignore
-# Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
-# Repo: aei-backend (Heroku)
+# ÆEA MINI APP — FRONTEND .gitignore
+# Version: 4.1.1 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+# Repo: aei-miniapp (GitHub Pages)
 # ============================================================================
 #
-# The backend repo contains app.py, the Heroku deployment manifests, and
-# the environment template. It MUST NOT contain:
-#   - the bot token (TELEGRAM_BOT_TOKEN)
-#   - the relay shared secret (RELAY_KEY)
-#   - TLS private keys or certificate chains
-#   - the local .env file (only .env.example is committed)
-#   - Python bytecode caches, virtualenvs, test caches
-#   - Heroku-local state directories
-#
-# The Cloudflare Worker source is NOT in this repo. It lives exclusively
-# in aei-relay. Do not add a .wrangler/ section here.
+# The frontend is a static single-file app (index.html). There is no build
+# step, no node_modules, no bundler. This .gitignore therefore focuses on
+# editor/OS cruft and any local-only artifacts a developer might create
+# while iterating on index.html.
 #
 # ============================================================================
-
-# ----------------------------------------------------------------------------
-# SECRETS — HIGHEST PRIORITY
-# ----------------------------------------------------------------------------
-# The .env file holds live secrets. Only .env.example is committed.
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-*.crt
-*.cer
-*.p12
-*.pfx
-*.jks
-secrets.json
-credentials.json
-*.secret
-*.secrets
-
-# ----------------------------------------------------------------------------
-# PYTHON
-# ----------------------------------------------------------------------------
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-htmlcov/
-.tox/
-.nox/
-.pytest_cache/
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pyre/
-.pytype/
-cython_debug/
-Pipfile.lock
-poetry.lock
-
-# ----------------------------------------------------------------------------
-# VIRTUALENVS
-# ----------------------------------------------------------------------------
-venv/
-ENV/
-env/
-.venv/
-.ENV/
-env.bak/
-venv.bak/
 
 # ----------------------------------------------------------------------------
 # EDITOR / IDE CRUFT
@@ -113,7 +24,6 @@ venv.bak/
 .project
 .classpath
 .settings/
-*.code-workspace
 
 # ----------------------------------------------------------------------------
 # OS METADATA
@@ -128,14 +38,33 @@ Thumbs.db
 desktop.ini
 
 # ----------------------------------------------------------------------------
-# HEROKU
+# LOCAL DEVELOPMENT OVERRIDES
 # ----------------------------------------------------------------------------
-# Heroku writes no local state by default, but local use of `heroku local`
-# creates a .env file (see SECRETS above) and a Procfile.local override.
-Procfile.local
-Procfile.windows
-.heroku/
-heroku.yml
+# If a developer creates a local variant of index.html for testing a
+# different backend URL, keep it out of the repo.
+index.local.html
+*.local.html
+*.local.js
+*.local.css
+
+# ----------------------------------------------------------------------------
+# SECRETS (SHOULD NEVER APPEAR IN A STATIC FRONTEND, BUT DEFENSIVE)
+# ----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+secrets.json
+credentials.json
+
+# ----------------------------------------------------------------------------
+# GITHUB PAGES ARTIFACTS
+# ----------------------------------------------------------------------------
+# GitHub Pages serves the repo root directly. Do not commit any build
+# output, Jekyll caches, or generated site directories.
+_site/
+.jekyll-cache/
+.jekyll-metadata
+Gemfile.lock
 
 # ----------------------------------------------------------------------------
 # LOGS / TEMP
@@ -144,15 +73,10 @@ heroku.yml
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 *.tmp
 *.temp
 tmp/
 temp/
-*.pid
-*.seed
-*.pid.lock
 
 # ----------------------------------------------------------------------------
 # ARCHIVES
@@ -165,11 +89,11 @@ temp/
 *.7z
 
 # ----------------------------------------------------------------------------
-# TLS / CERTIFICATE MATERIAL
+# OPTIONAL LOCAL SERVER TOOLING
 # ----------------------------------------------------------------------------
-# If BRIDGE_USE_TLS=1 is set for local testing, the cert/key files must
-# never be committed.
-certs/
-*.csr
-*.srl
-*.chain
+# If a developer uses `python -m http.server`, `npx serve`, or similar,
+# these directories may appear.
+dist/
+build/
+.cache/
+.parcel-cache/
