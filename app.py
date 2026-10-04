@@ -5037,7 +5037,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error(f"/reset error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
-            return        if path == "/settings":
+            return
+        if path == "/settings":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
                 self._send_json(503, {"error": "engine_not_ready"})
