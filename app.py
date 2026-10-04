@@ -6,7 +6,7 @@ Faithful Unabridged Port of æea.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+Version: 4.1.1 (Audit-Patched: Candle Recolor + BB Family + Signal/Execution Notifications + MT4-Parity Inputs)
 """
 import asyncio
 import hashlib
@@ -43,6 +43,8 @@ ARC_COHERENCE_TOLERANCE = 1e-6
 # Audit D-13: removed the lossy from_float() path. All conversions now
 # originate from exact decimal strings via from_decimal_string().
 # Audit D-15: removed the dead, non-exact sqrt() method.
+# v4.1.1 C8: from_decimal_string() is now the canonical entry point for
+# every numeric input coming from /settings and /order POST bodies.
 # ============================================================================
 class Fraction:
     __slots__ = ('_f',)
@@ -215,6 +217,15 @@ X_PERIOD: int = MAX_PERIOD + 2
 Y_START: int = MIN_PERIOD - 2
 MIN_HISTORY_WINDOW: int = 52
 
+# v4.1.1 C9: the FF's input ranges. These are the exact validation bounds
+# enforced by apply_settings(). MIN_PERIOD has a hard floor of 3 because
+# y = min - 2 and the state arrays are sized x - y; min < 3 makes y < 1
+# and breaks the y+1 loop bounds.
+MAX_PERIOD_MIN: int = 3
+MAX_PERIOD_MAX: int = 1000
+MIN_PERIOD_MIN: int = 3
+MIN_PERIOD_MAX: int = 1000
+
 F_THRESHOLD: Fraction = Fraction(200, 3)
 G_THRESHOLD: Fraction = Fraction(100, 3)
 GF_TOLERANCE: Fraction = Fraction(40, 15)
@@ -237,7 +248,12 @@ BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
 BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
 TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 REQUIRE_AUTH: bool = os.getenv("REQUIRE_AUTH", "1").strip() in ("1", "true", "yes")
-LOG_BUFFER_SIZE: int = int(os.getenv("LOG_BUFFER_SIZE", "200"))
+# v4.1.1 C6/C12: buffer sizes are env-controlled. Defaults raised so
+# execution-layer lines survive the /toasts poll cadence.
+LOG_BUFFER_SIZE: int = int(os.getenv("LOG_BUFFER_SIZE", "1000"))
+# v4.1.1 C5: dedicated toast buffer. Separate from the log buffer so the
+# TWA can fetch signal/execution toasts incrementally via ?since=<tick>.
+TOAST_BUFFER_SIZE: int = int(os.getenv("TOAST_BUFFER_SIZE", "500"))
 
 RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
 RELAY_KEY: str = os.getenv("RELAY_KEY", "").strip()
@@ -296,9 +312,24 @@ from telegram.ext import (
 
 # ============================================================================
 # LOG RING BUFFER (for /log endpoint)
+# v4.1.1 C6/C12: default size raised 200 -> 1000 so execution-layer lines
+# survive the /toasts poll cadence at high tick rates.
 # ============================================================================
 _LOG_BUFFER: deque = deque(maxlen=LOG_BUFFER_SIZE)
 _LOG_LOCK = threading.Lock()
+
+# ============================================================================
+# TOAST RING BUFFER (for /toasts endpoint) — v4.1.1 C5
+# ============================================================================
+# Separate from the log buffer so the TWA can fetch signal/execution toasts
+# incrementally via ?since=<tick>, without re-parsing the full log stream.
+# Each entry carries the engine tick at the moment of emission, so the
+# TWA's freshness guard (matching the /diagnostics guard from v4.1.0) can
+# discard duplicates if it polls twice between emissions.
+# ============================================================================
+_TOAST_BUFFER: deque = deque(maxlen=TOAST_BUFFER_SIZE)
+_TOAST_LOCK = threading.Lock()
+_TOAST_SEQ: int = 0
 
 class _RingHandler(logging.Handler):
     def emit(self, record):
@@ -320,6 +351,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.addHandler(_RingHandler())
 logger.propagate = False
+
+# ============================================================================
+# TOAST EMISSION HELPER — v4.1.1 C5
+# ============================================================================
+def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
+    """Append a toast to the ring buffer and return its monotonic seq number.
+
+    kind: "signal" | "execution"
+    payload: kind-specific fields; always includes ts and tick.
+    """
+    global _TOAST_SEQ
+    with _TOAST_LOCK:
+        _TOAST_SEQ += 1
+        seq = _TOAST_SEQ
+        entry = dict(payload)
+        entry["kind"] = kind
+        entry["seq"] = seq
+        if "ts" not in entry:
+            entry["ts"] = datetime.now().isoformat()
+        _TOAST_BUFFER.append(entry)
+    return seq
 
 # ============================================================================
 # DATACLASSES
@@ -777,7 +829,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.1.0",
+                    "User-Agent": "AEI-Bridge/v4.1.1",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -942,7 +994,6 @@ class AEEA_Engine:
         self.chat_id: Optional[int] = None
         self.application = None
         self._last_signal_time: Optional[datetime] = None
-        self._signal_cooldown: int = 60
         self._initialization_attempted: bool = False
         self._tick_log_counter: int = 0
         self._price_update_counter: int = 0
@@ -961,6 +1012,13 @@ class AEEA_Engine:
         self._point_size: Decimal = symbol_point(SYMBOL)
         self.orders: List[Order] = []
         self._next_ticket: int = 1
+        # v4.1.1 C3/C4: alert gating. Removed 60s cooldown — signal and
+        # execution alerts now fire on every emission. The only gate left
+        # is "is there a chat_id or webapp_user_id to deliver to".
+        self._alert_delivery_enabled: bool = True
+        # v4.1.1 C5: track the last toast seq the bot has already relayed
+        # to Telegram, so we don't double-send when the TWA also polls.
+        self._last_telegram_toast_seq: int = 0
 
     def OnInit(self) -> None:
         logger.info("⚡ OnInit(): EA engine lifecycle beginning")
@@ -1634,6 +1692,10 @@ class AEEA_Engine:
         st.m = 0
         if st.k[idx]:
             logger.info(f"🔺 H() set k[{idx}] = True (m={m} >= 12) at bar j={j}")
+            # v4.1.1 C4: H() itself does not emit a toast — it is a
+            # precondition, not an execution-layer event. The toast fires
+            # when OnGoe() consumes the flag and calls _signal(), or when
+            # the Kronecker-delta execution block dispatches.
 
     def _L(self, j: int) -> None:
         st = self.state
@@ -1873,6 +1935,7 @@ class AEEA_Engine:
 
         # ====================================================================
         # Audit D-47: the FF's Kronecker-delta execution block, ported verbatim.
+        # v4.1.1 C4: every dispatch site now emits an execution toast.
         # ====================================================================
         self._execute_kronecker_block()
 
@@ -2011,6 +2074,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🐂 Bull")
+            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
             self._Top()
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
@@ -2022,6 +2086,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🐂 Bull")
+            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
             self._Top()
             st.E = st.price
         elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
@@ -2033,6 +2098,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🐂 Bull")
+            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
             self._Top()
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
@@ -2044,6 +2110,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🐂 Bull")
+            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
             self._Top()
             st.E = st.price
         elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
@@ -2054,10 +2121,12 @@ class AEEA_Engine:
                 else:
                     self._Q(st.price)
                 logger.info("🥃 Whisky")
+                self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
                 self._Top()
                 st.E = st.price
             else:
                 logger.info("🥃 Whisky")
+                self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
                 self._Top()
                 st.E = st.price
                 if not st.safety:
@@ -2071,16 +2140,19 @@ class AEEA_Engine:
                 else:
                     self._Q(st.price)
                 logger.info("🍷 Wine")
+                self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
                 self._Bott()
                 st.D = st.price
             else:
                 logger.info("🍷 Wine")
+                self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
                 self._Bott()
                 st.D = st.price
                 if not st.safety:
                     st.safety = True
         else:
             logger.info("🍷 Wine")
+            self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
             self._Bott()
             st.D = st.price
             if not st.safety:
@@ -2097,6 +2169,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🐻 Bear")
+            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
             self._Bott()
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
@@ -2108,6 +2181,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🐻 Bear")
+            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
             self._Bott()
             st.D = st.price
         elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
@@ -2119,6 +2193,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🐻 Bear")
+            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
             self._Bott()
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
@@ -2130,6 +2205,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🐻 Bear")
+            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
             self._Bott()
             st.D = st.price
         elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
@@ -2140,10 +2216,12 @@ class AEEA_Engine:
                 else:
                     self._Q(st.price)
                 logger.info("🍷 Wine")
+                self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
                 self._Bott()
                 st.D = st.price
             else:
                 logger.info("🍷 Wine")
+                self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
                 self._Bott()
                 st.D = st.price
                 if not st.safety:
@@ -2157,16 +2235,19 @@ class AEEA_Engine:
                 else:
                     self._Q(st.price)
                 logger.info("🥃 Whisky")
+                self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
                 self._Top()
                 st.E = st.price
             else:
                 logger.info("🥃 Whisky")
+                self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
                 self._Top()
                 st.E = st.price
                 if not st.safety:
                     st.safety = True
         else:
             logger.info("🥃 Whisky")
+            self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
             self._Top()
             st.E = st.price
             if not st.safety:
@@ -2183,6 +2264,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🦅 Hawk")
+            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
             self._Top()
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
@@ -2194,6 +2276,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🦅 Hawk")
+            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
             self._Top()
             st.E = st.price
         elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
@@ -2205,6 +2288,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🦅 Hawk")
+            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
             self._Top()
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
@@ -2216,6 +2300,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🦅 Hawk")
+            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
             self._Top()
             st.E = st.price
         elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
@@ -2226,10 +2311,12 @@ class AEEA_Engine:
                 else:
                     self._Q(st.price)
                 logger.info("💧 Watter")
+                self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
                 self._Top()
                 st.E = st.price
             else:
                 logger.info("💧 Watter")
+                self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
                 self._Top()
                 st.E = st.price
                 if not st.safety:
@@ -2243,16 +2330,19 @@ class AEEA_Engine:
                 else:
                     self._Q(st.price)
                 logger.info("🩸 Blood")
+                self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
                 self._Bott()
                 st.D = st.price
             else:
                 logger.info("🩸 Blood")
+                self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
                 self._Bott()
                 st.D = st.price
                 if not st.safety:
                     st.safety = True
         else:
             logger.info("🩸 Blood")
+            self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
             self._Bott()
             st.D = st.price
             if not st.safety:
@@ -2269,6 +2359,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🕊️ Dove")
+            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
             self._Bott()
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
@@ -2280,6 +2371,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🕊️ Dove")
+            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
             self._Bott()
             st.D = st.price
         elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
@@ -2291,6 +2383,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🕊️ Dove")
+            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
             self._Bott()
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
@@ -2302,6 +2395,7 @@ class AEEA_Engine:
             else:
                 self._Q(st.price)
             logger.info("🕊️ Dove")
+            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
             self._Bott()
             st.D = st.price
         elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
@@ -2312,10 +2406,12 @@ class AEEA_Engine:
                 else:
                     self._Q(st.price)
                 logger.info("🩸 Blood")
+                self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
                 self._Bott()
                 st.D = st.price
             else:
                 logger.info("🩸 Blood")
+                self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
                 self._Bott()
                 st.D = st.price
                 if not st.safety:
@@ -2329,16 +2425,19 @@ class AEEA_Engine:
                 else:
                     self._Q(st.price)
                 logger.info("💧 Watter")
+                self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
                 self._Top()
                 st.E = st.price
             else:
                 logger.info("💧 Watter")
+                self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
                 self._Top()
                 st.E = st.price
                 if not st.safety:
                     st.safety = True
         else:
             logger.info("💧 Watter")
+            self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
             self._Top()
             st.E = st.price
             if not st.safety:
@@ -2896,6 +2995,9 @@ class AEEA_Engine:
     # the signal anchor and the diagnostic history record. The
     # execution block in _on_bar() (via _execute_kronecker_block)
     # sets signature/GF after a Kronecker-delta execution completes.
+    #
+    # v4.1.1 C3: _signal now emits a signal toast unconditionally (no
+    # cooldown) and calls _send_signal_alert() unconditionally.
     def _signal(self) -> None:
         st = self.state
         if st.price <= Decimal('0.0'):
@@ -2946,6 +3048,19 @@ class AEEA_Engine:
             st.signal_history = st.signal_history[-st.max_signal_history:]
         st.last_signal_at = signal_record["timestamp"]
         logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
+        # v4.1.1 C3: emit toast + Telegram alert on EVERY signal fire.
+        _emit_toast("signal", {
+            "type": signal_type,
+            "price": str(st.price),
+            "signal_level": str(st.signal),
+            "m": int(m_local),
+            "n": int(n_local),
+            "h": int(st.h),
+            "regime": regime,
+            "tick": int(st.tick),
+            "source": signal_record["source"],
+        })
+        self._send_signal_alert()
 
     def _on_gaurd(self, inp: int) -> bool:
         st = self.state
@@ -2987,6 +3102,9 @@ class AEEA_Engine:
         st.trailing_stop_active = False
         st.trailing_stop_price = Decimal('0.0')
         st.trailing_take_profit = Decimal('0.0')
+        # v4.1.1 C4: A() is an execution-layer event even when no order
+        # was open. Emit a toast unconditionally.
+        self._emit_execution_toast("A", price, "CLOSE", -1, "")
 
     def _B(self, price: Decimal) -> None:
         st = self.state
@@ -3008,6 +3126,7 @@ class AEEA_Engine:
         st.trailing_stop_active = False
         st.trailing_stop_price = Decimal('0.0')
         st.trailing_take_profit = Decimal('0.0')
+        self._emit_execution_toast("B", price, "CLOSE", -1, "")
 
     def _open_order(self, side: str, price: Decimal, sl: Decimal, tp: Decimal, lot: Decimal) -> int:
         ticket = self._next_ticket
@@ -3266,6 +3385,8 @@ class AEEA_Engine:
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}")
+            # v4.1.1 C4: Top() is an execution-layer event.
+            self._emit_execution_toast("Top", st.price, "NONE", -1, price_str)
             if self._bridge_publish_callback:
                 try:
                     self._bridge_publish_callback("top", price_str)
@@ -3281,11 +3402,32 @@ class AEEA_Engine:
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}")
+            self._emit_execution_toast("Bott", st.price, "NONE", -1, price_str)
             if self._bridge_publish_callback:
                 try:
                     self._bridge_publish_callback("bott", price_str)
                 except Exception as e:
                     logger.warning(f"_bridge_publish_callback failed: {e}")
+
+    def _emit_execution_toast(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
+        """v4.1.1 C4: emit an execution-layer toast and Telegram alert.
+
+        Called from every dispatch site: Diamond, Ruby, Hawk, Dove, Bull,
+        Bear, Whisky, Wine, Watter, Blood, A, B, Top, Bott. The side is
+        one of BUY, SELL, CLOSE, NONE. The ticket is the affected order's
+        id or -1 when no order was touched. The reason is a free-text
+        tag (e.g. the FVG price string for Top/Bott).
+        """
+        st = self.state
+        _emit_toast("execution", {
+            "event": event,
+            "price": str(price),
+            "side": side,
+            "ticket": int(ticket),
+            "reason": reason,
+            "tick": int(st.tick),
+        })
+        self._send_execution_alert(event, price, side, ticket, reason)
 
     # Audit D-34: no neutral fill for bars before MIN_HISTORY_WINDOW.
     # Leave columns at their natural computed values (or prior values).
@@ -3634,6 +3776,9 @@ class AEEA_Engine:
 
         self._on_tick(price_data)
 
+    # ========================================================================
+    # v4.1.1 C3: _send_signal_alert — NO COOLDOWN. Fires on every _signal().
+    # ========================================================================
     def _send_signal_alert(self) -> None:
         st = self.state
         target_chat = st.chat_id
@@ -3641,10 +3786,12 @@ class AEEA_Engine:
             target_chat = st.webapp_user_id
         if not target_chat or not self.application:
             return
-        if self._last_signal_time:
-            elapsed = (datetime.now() - self._last_signal_time).seconds
-            if elapsed < self._signal_cooldown:
-                return
+        # v4.1.1 C3: the 60s cooldown has been removed. Every signal fire
+        # produces a Telegram message. The only remaining gate is
+        # _alert_delivery_enabled, which is a manual kill switch (defaults
+        # true) — it is NOT a rate limiter.
+        if not self._alert_delivery_enabled:
+            return
         direction = "📈 BUY" if st.price > st.signal else "📉 SELL"
         m_local = st.last_kronecker_m
         n_local = st.last_kronecker_n
@@ -3668,10 +3815,47 @@ class AEEA_Engine:
         )
         try:
             self.application.bot.send_message(chat_id=target_chat, text=msg, parse_mode="Markdown")
-            logger.info(f"📡 Signal alert sent to {target_chat}")
-            self._last_signal_time = datetime.now()
+            logger.info(f"📡 Signal alert sent to {target_chat} (tick={st.tick})")
         except Exception as e:
             logger.error(f"❌ Failed to send signal alert: {e}")
+
+    # ========================================================================
+    # v4.1.1 C4: _send_execution_alert — fires on every execution-layer
+    # dispatch, whether or not an order was actually opened/closed.
+    # ========================================================================
+    def _send_execution_alert(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
+        st = self.state
+        target_chat = st.chat_id
+        if target_chat is None and st.webapp_user_id is not None:
+            target_chat = st.webapp_user_id
+        if not target_chat or not self.application:
+            return
+        if not self._alert_delivery_enabled:
+            return
+        emoji_map = {
+            "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
+            "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
+            "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
+            "A": "🅰️", "B": "🅱️",
+        }
+        emoji = emoji_map.get(event, "⚡")
+        side_str = side if side else "NONE"
+        ticket_str = f"#{ticket}" if ticket != -1 else "—"
+        reason_str = f" | {reason}" if reason else ""
+        msg = (
+            f"{emoji} *ÆEA EXECUTION*\n"
+            f"📛 *Event:* {event}\n"
+            f"📊 *Side:* {side_str}\n"
+            f"🎫 *Ticket:* {ticket_str}\n"
+            f"💰 *Price:* {price}{reason_str}\n"
+            f"🔄 *Tick:* {st.tick}\n"
+            f"💎 Natalia Tanyatia"
+        )
+        try:
+            self.application.bot.send_message(chat_id=target_chat, text=msg, parse_mode="Markdown")
+            logger.info(f"📡 Execution alert ({event}) sent to {target_chat} (tick={st.tick})")
+        except Exception as e:
+            logger.error(f"❌ Failed to send execution alert: {e}")
 
     def get_signal_status(self) -> Dict[str, Any]:
         st = self.state
@@ -3888,28 +4072,129 @@ class AEEA_Engine:
             })
         return out
 
+    # ========================================================================
+    # v4.1.1 C7/C8/C9: apply_settings with exact-decimal parsing and
+    # full FF-input-range validation.
+    # ========================================================================
+    def get_settings(self) -> Dict[str, Any]:
+        """Return the current values of all 11 FF input variables as
+        exact decimal strings (for numeric) or booleans (for bools)."""
+        st = self.state
+        return {
+            "max": int(MAX_PERIOD),
+            "min": int(MIN_PERIOD),
+            "Cc": bool(st.Cc),
+            "cC": bool(st.cC),
+            "Memory": int(st.mem),
+            "safetyOffSwitch": bool(st.safety),
+            "StopLoss": str(STOP_LOSS),
+            "TakeProfit": str(TAKE_PROFIT),
+            "lot": str(LOT_SIZE),
+            "slip": int(SLIPPAGE),
+            "Commssion": str(COMMISSION),
+        }
+
     def apply_settings(self, s: Dict[str, Any]) -> Dict[str, Any]:
         global MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, COMMISSION, STOP_LOSS, TAKE_PROFIT, LOT_SIZE, SLIPPAGE
         st = self.state
         try:
-            if "max" in s and int(s["max"]) > 0:
-                MAX_PERIOD = int(s["max"])
-            if "min" in s and int(s["min"]) > 0:
-                MIN_PERIOD = int(s["min"])
+            # v4.1.1 C9: validate before mutating any global.
+            errors = []
+            new_max = MAX_PERIOD
+            new_min = MIN_PERIOD
+            if "max" in s:
+                try:
+                    new_max = int(s["max"])
+                except (TypeError, ValueError):
+                    errors.append("max: must be an integer")
+                else:
+                    if new_max < MAX_PERIOD_MIN:
+                        errors.append(f"max: must be >= {MAX_PERIOD_MIN}")
+                    if new_max > MAX_PERIOD_MAX:
+                        errors.append(f"max: must be <= {MAX_PERIOD_MAX}")
+            if "min" in s:
+                try:
+                    new_min = int(s["min"])
+                except (TypeError, ValueError):
+                    errors.append("min: must be an integer")
+                else:
+                    if new_min < MIN_PERIOD_MIN:
+                        errors.append(f"min: must be >= {MIN_PERIOD_MIN}")
+                    if new_min > MIN_PERIOD_MAX:
+                        errors.append(f"min: must be <= {MIN_PERIOD_MAX}")
+            if new_max <= new_min:
+                errors.append(f"max ({new_max}) must be > min ({new_min})")
+            # Numeric inputs — exact decimal strings via Fraction.
+            new_sl = STOP_LOSS
+            new_tp = TAKE_PROFIT
+            new_lot = LOT_SIZE
+            new_com = COMMISSION
+            new_slip = SLIPPAGE
+            if "StopLoss" in s:
+                try:
+                    v = Fraction.from_decimal_string(str(s["StopLoss"])).to_decimal()
+                    if v < Decimal('0.0'):
+                        errors.append("StopLoss: must be >= 0")
+                    else:
+                        new_sl = v
+                except Exception as e:
+                    errors.append(f"StopLoss: {e}")
+            if "TakeProfit" in s:
+                try:
+                    v = Fraction.from_decimal_string(str(s["TakeProfit"])).to_decimal()
+                    if v < Decimal('0.0'):
+                        errors.append("TakeProfit: must be >= 0")
+                    else:
+                        new_tp = v
+                except Exception as e:
+                    errors.append(f"TakeProfit: {e}")
+            if "lot" in s:
+                try:
+                    v = Fraction.from_decimal_string(str(s["lot"])).to_decimal()
+                    if v <= Decimal('0.0'):
+                        errors.append("lot: must be > 0")
+                    else:
+                        new_lot = v
+                except Exception as e:
+                    errors.append(f"lot: {e}")
+            if "Commssion" in s:
+                try:
+                    v = Fraction.from_decimal_string(str(s["Commssion"])).to_decimal()
+                    if v < Decimal('0.0'):
+                        errors.append("Commssion: must be >= 0")
+                    else:
+                        new_com = v
+                except Exception as e:
+                    errors.append(f"Commssion: {e}")
+            if "slip" in s:
+                try:
+                    v = int(s["slip"])
+                    if v < 0:
+                        errors.append("slip: must be >= 0")
+                    else:
+                        new_slip = v
+                except (TypeError, ValueError):
+                    errors.append("slip: must be an integer")
+            if errors:
+                logger.warning(f"apply_settings validation failed: {errors}")
+                return {"error": "validation", "detail": "; ".join(errors)}
+            # Commit.
+            MAX_PERIOD = new_max
+            MIN_PERIOD = new_min
             X_PERIOD = MAX_PERIOD + 2
             Y_START = MIN_PERIOD - 2
             st.y = Y_START
+            COMMISSION = new_com
+            STOP_LOSS = new_sl
+            TAKE_PROFIT = new_tp
+            LOT_SIZE = new_lot
+            SLIPPAGE = new_slip
             if "Cc" in s: st.Cc = bool(s["Cc"])
             if "cC" in s: st.cC = bool(s["cC"])
             if "Memory" in s: st.mem = int(s["Memory"])
             if "safetyOffSwitch" in s: st.safety = bool(s["safetyOffSwitch"])
-            if "StopLoss" in s: STOP_LOSS = Decimal(str(s["StopLoss"]))
-            if "TakeProfit" in s: TAKE_PROFIT = Decimal(str(s["TakeProfit"]))
-            if "lot" in s: LOT_SIZE = Decimal(str(s["lot"]))
-            if "slip" in s: SLIPPAGE = int(s["slip"])
-            if "Commssion" in s: COMMISSION = Decimal(str(s["Commssion"]))
             self.OnReInit()
-            logger.info(f"⚙️ Settings applied: max={MAX_PERIOD}, min={MIN_PERIOD}, Cc={st.Cc}, cC={st.cC}, mem={st.mem}, safety={st.safety}")
+            logger.info(f"⚙️ Settings applied: max={MAX_PERIOD}, min={MIN_PERIOD}, Cc={st.Cc}, cC={st.cC}, mem={st.mem}, safety={st.safety}, SL={STOP_LOSS}, TP={TAKE_PROFIT}, lot={LOT_SIZE}, slip={SLIPPAGE}, com={COMMISSION}")
             return {"ok": True}
         except Exception as e:
             logger.error(f"apply_settings failed: {e}")
@@ -4199,7 +4484,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.1.0"
+    server_version = "AEI-Bridge/4.1.1"
 
     def log_message(self, fmt, *args):
         return
@@ -4270,7 +4555,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.1.0",
+                "ok": not stale, "service": "aei-bridge", "version": "4.1.1",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -4295,6 +4580,31 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "relay_url": RELAY_URL, "relay_gated": bool(RELAY_KEY),
                 "x_period_constant": X_PERIOD, "y_start_constant": Y_START,
                 "require_auth": REQUIRE_AUTH,
+            })
+            return
+
+        # v4.1.1 C7: GET /settings returns all 11 FF inputs.
+        if path == "/settings":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            self._send_json(200, engine.get_settings())
+            return
+
+        # v4.1.1 C5: GET /toasts?since=<seq> returns incremental toasts.
+        if path == "/toasts":
+            try:
+                since = int(query.get("since", "0"))
+            except (TypeError, ValueError):
+                since = 0
+            with _TOAST_LOCK:
+                toasts = [t for t in _TOAST_BUFFER if t.get("seq", 0) > since]
+                latest_seq = _TOAST_SEQ
+            self._send_json(200, {
+                "toasts": toasts,
+                "count": len(toasts),
+                "latest_seq": latest_seq,
             })
             return
 
@@ -4727,16 +5037,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error(f"/reset error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
-            return
-
-        if path == "/settings":
+            return        if path == "/settings":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
                 self._send_json(503, {"error": "engine_not_ready"})
                 return
             data = self._read_json()
             result = engine.apply_settings(data)
-            code = 200 if result.get("ok") else 400
+            code = 200 if result.get("ok") else (422 if result.get("error") == "validation" else 400)
             self._send_json(code, result)
             return
 
@@ -4763,11 +5071,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             side = (data.get("side") or "").upper()
             try:
-                lot = Decimal(str(data.get("lot", "0.01")))
-                sl = Decimal(str(data.get("sl", "0")))
-                tp = Decimal(str(data.get("tp", "0")))
-            except Exception:
-                self._send_json(400, {"error": "invalid_numbers"})
+                # v4.1.1 C8: exact decimal parsing via Fraction.
+                lot = Fraction.from_decimal_string(str(data.get("lot", "0.01"))).to_decimal()
+                sl = Fraction.from_decimal_string(str(data.get("sl", "0"))).to_decimal()
+                tp = Fraction.from_decimal_string(str(data.get("tp", "0"))).to_decimal()
+            except Exception as e:
+                self._send_json(400, {"error": "invalid_numbers", "detail": str(e)})
                 return
             result = engine.place_order(side, lot, sl, tp)
             code = 200 if result.get("ok") else 400
@@ -5468,6 +5777,8 @@ class AEI_Bot:
             f"*Orders endpoint:* `{public_url.rstrip('/')}/orders`\n"
             f"*Regime map endpoint:* `{public_url.rstrip('/')}/regime-map`\n"
             f"*Log endpoint:* `{public_url.rstrip('/')}/log`\n"
+            f"*Toasts endpoint:* `{public_url.rstrip('/')}/toasts`\n"
+            f"*Settings endpoint:* `{public_url.rstrip('/')}/settings`\n"
             f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`",
             parse_mode="Markdown",
         )
@@ -5542,7 +5853,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.1.0).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.1.1).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -5557,6 +5868,10 @@ class AEI_Bot:
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
         logger.info("🧪 Audit-patched: _signal no longer sets signature/GF; execution block present in _on_bar.")
+        logger.info("🔔 v4.1.1 C3: signal alerts fire on EVERY _signal(), no cooldown.")
+        logger.info("🔔 v4.1.1 C4: execution alerts fire on EVERY dispatch (Diamond/Ruby/Hawk/Dove/Bull/Bear/Whisky/Wine/Watter/Blood/A/B/Top/Bott).")
+        logger.info("🔔 v4.1.1 C5: /toasts endpoint serves incremental signal+execution toasts.")
+        logger.info("⚙️ v4.1.1 C7/C8/C9: /settings GET+POST with exact-decimal parsing and FF-input validation.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 

@@ -1,54 +1,71 @@
-# **ÆEA BOT** — *DEPLOYMENT GUIDE*
+# **0. Version 4.1.1 — Release Notes**
 
-Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Split-Origin Architecture + Cloudflare Worker Relay + CORS/Backend-URL Hardening + FF-Exact State Propagation + Audit-Patched Frontend/Backend)
-Target: index.html (static frontend) + app.py (bot + bridge) + worker.js (relay) + supporting repository files
-Prereqs: TELEGRAM_BOT_TOKEN, a Cloudflare account, a GitHub account, a Heroku account, git, wrangler, heroku CLI, Python 3.11+
+Version 4.1.1 is a feature-bearing audit release. It inherits every fix from v4.1.0 (D-01 through D-60, all resolved) and adds a second patch class (C-01 through C-15) driven by user-facing requirements:
 
----
+1. Bullish candles blue (#4488ff), bearish candles red (#ff4466) — the FF-parity palette is preserved elsewhere (BUY/SELL signal markers keep green/red; regime background tints keep their original hues).
+2. Bollinger Bands family — all 58 BB pairs for periods 3 through 60 inclusive (MQL4 iBands(NULL,0,j,2,0,PRICE_CLOSE,...) semantics). Upper bands rendered as a green gradient (rgba(0,255,136,α), α ramping 0.06 → 0.28 with period). Lower bands rendered as a white gradient (rgba(255,255,255,α), same ramp). Population σ (divisor = period), matching MQL4 exactly. Toolbar toggle BB×58 + collapsible legend.
+3. Signal + execution notifications — in-app toast stack (#toastStack) fed by a new /toasts?since=<seq> endpoint. Signal toasts fire on every _signal() invocation with no cooldown. Execution toasts fire on every execution-layer dispatch (Diamond, Ruby, Hawk, Dove, Bull, Bear, Whisky, Wine, Watter, Blood, A, B, Top, Bott) whether or not an order was actually opened or closed. 6-second auto-dismiss; tap or swipe-left to dismiss early.
+4. MT4-parity input adjustability — GET /settings returns all 11 FF input variables (including the FF's double-s spelling Commssion) as exact decimal strings; the settings modal fetches live values on open; POST /settings parses numeric fields via Fraction.from_decimal_string(); apply_settings() validates max > min ≥ 3 and non-negativity of StopLoss/TakeProfit/lot/slip/Commssion before mutating any global.
 
-0. Version 4.1.0 — Audit-Patched Release Notes
+0.1 Cumulative patch log (v4.1.0 + v4.1.1)
 
-Version 4.1.0 resolves all 60 divergences identified in the ÆEA Audit (D-01 through D-60) between the MQL4 Foundational Framework (æea.mq4) and the TWA/backend port. The patches fall into six categories:
+A. Engine state-machine parity (app.py).
 
-A. Engine state-machine parity (app.py) — Critical fixes.
-
-· D-10 — st.Price is now the previous completed bar's close (ohlcv_history[-2]["close"]), not the current tick close. This restores the FF's Price = iClose(Symbol(), 0, 1) semantics. M()/N() now compare against the correct price.
-· D-46 — _signal() no longer sets st.signature or st.GF. Those flags are set only by the Kronecker-delta execution block in _on_bar(), after P()/Q()/A()/B() complete. The pre-4.1.0 flow reinitialized the engine on every signal; the patched flow reinitializes only on a completed trade.
-· D-47 — The FF's full Kronecker-delta execution block is now present in _on_bar(), with all 7 sub-branches per side (Diamond, Ruby, Hawk, Dove variants). The pre-4.1.0 _on_bar() stopped after the boundary-pass-condition assignment and never executed a trade from the FF's logic.
+· D-10 — st.Price is the previous completed bar's close, matching Price = iClose(Symbol(), 0, 1).
+· D-46 — _signal() no longer sets signature or GF. Those flags are set only by the Kronecker-delta execution block in _on_bar().
+· D-47 — The FF's full Kronecker-delta execution block is present in _on_bar(), with all 7 sub-branches per side (Diamond, Ruby, Hawk, Dove variants).
 
 B. Exact-arithmetic parity (app.py).
 
-· D-13 — Removed the lossy Fraction.from_float() path. All conversions originate from exact decimal strings via from_decimal_string().
-· D-14 — Indicator computations use Fraction internally; projection to Decimal/str only at the JSON serialization boundary.
-· D-15 — Removed the dead, non-exact Fraction.sqrt() method.
+· D-13 — Fraction.from_float() path removed. All conversions via from_decimal_string().
+· D-14 — Indicator computations use Fraction internally; projection to Decimal/str only at the JSON boundary.
+· D-15 — Dead, non-exact Fraction.sqrt() removed.
 
 C. Indicator formula parity (app.py).
 
-· D-25 — _compute_obv() is now cumulative over the full passed array, matching MQL4's iOBV.
-· D-26 — _compute_ad() is now cumulative over the full passed array, matching MQL4's iAD.
-· D-32 — rsi() uses Wilder smoothing, matching MQL4's iRSI.
-· D-34 — Removed the neutral-fill (50.0) placeholder for bars before MIN_HISTORY_WINDOW; only real computed values are written to the indicator matrix.
+· D-25 — _compute_obv() cumulative over the full passed array (matches iOBV).
+· D-26 — _compute_ad() cumulative over the full passed array (matches iAD).
+· D-32 — rsi() uses Wilder smoothing (matches iRSI).
+· D-34 — Neutral-fill placeholder for bars before MIN_HISTORY_WINDOW removed.
 
 D. Regime-classification parity (app.py).
 
-· D-41 — _on_call() now uses a while loop with a dynamically re-evaluated bound (MQL4's j < X + 2 semantics). The pre-4.1.0 for j in range(...) materialized the upper bound once, so an in-loop X_scan increment did not extend the scan.
+· D-41 — _on_call() uses a while loop with a dynamically re-evaluated bound (j < X_scan + 2 semantics).
 
 E. Execution-layer parity (app.py).
 
-· D-48 — _execute_trailing_stop() calls _normalize(st.y + 1) at the top, matching the FF's T() which calls Normalize().
-· D-49 — _execute_trailing_stop() skips only on tStable/tCoherent regimes. The pre-4.1.0 skip on Stable is removed.
-· D-50 — _get_next_topological_target iterates range(st.y + 1, X_PERIOD - 1), matching the FF's i < x - 1.
+· D-48 — _execute_trailing_stop() calls _normalize(st.y + 1) at the top (matches FF T()).
+· D-49 — _execute_trailing_stop() skips only on tStable/tCoherent.
+· D-50 — _get_next_topological_target iterates range(st.y + 1, X_PERIOD - 1).
 
 F. TWA/backend wiring.
 
-· D-35/D-36 — st.m_now/st.n_now are now the authoritative m/n from the most recent _H()/_L() call. _on_tick() no longer re-computes them at a stale st.h.
-· D-53 — Removed the hardcoded window.__AEEA_BACKEND_URL__ = 'https://aeea-df7f2ade617d.herokuapp.com/'; from index.html. The resolver falls through ?backend= → localStorage → same-origin, with no silent redirect to the original author's Heroku app.
-· D-54 — /miniapp-state now reads the authoritative m_now/n_now from the H()/L() stamps.
-· D-55 — Private-attribute access replaced with public FeedClient.failure_count() and FeedClient.last_update() accessors.
-· D-56 — /diagnostics returns indicator_col_index alongside the indicator samples so downstream consumers do not assume columns [0]/[1].
-· D-60 — BRIDGE_STATE._snapshot removed; /state delegates to engine state. Single source of truth.
+· D-35/D-36 — st.m_now/st.n_now are authoritative from the most recent _H()/_L() call.
+· D-53 — Hardcoded window.__AEEA_BACKEND_URL__ assignment removed; resolver is clean.
+· D-54 — /miniapp-state reads authoritative m_now/n_now.
+· D-55 — Private-attribute access replaced with FeedClient.failure_count() / FeedClient.last_update().
+· D-56 — /diagnostics returns indicator_col_index alongside samples.
+· D-60 — BRIDGE_STATE._snapshot removed; /state delegates to engine state.
 
-Compatibility: Version 4.1.0 is a drop-in replacement for 4.0.1. All environment variables, endpoints, and worker contracts are unchanged. The only breaking change is that /miniapp-state now returns the full FF state (previously partial), and index.html no longer has a hardcoded Heroku fallback — a fork must explicitly configure its own backend origin via ?backend= or window.__AEEA_BACKEND_URL__.
+G. v4.1.1 new fixes (C-01 through C-15).
+
+· C1 — Candle recolor: bullish #4488ff, bearish #ff4466.
+· C2 — BB family periods 3..60; upper green gradient, lower white gradient; BB×58 toolbar toggle; collapsible legend.
+· C3 — _send_signal_alert() fires on every _signal(), no cooldown.
+· C4 — _send_execution_alert() added; called from all 14 dispatch sites.
+· C5 — _TOAST_BUFFER deque + /toasts?since=<seq> endpoint + #toastStack UI.
+· C6 — Dedicated 3s /log poll interval.
+· C7 — GET /settings returns all 11 FF inputs; modal fetches live values on open.
+· C8 — Numeric inputs transmitted as exact decimal strings; parsed server-side via Fraction.from_decimal_string().
+· C9 — apply_settings() validation: max > min ≥ 3, non-negative SL/TP/Commssion/slip, positive lot.
+· C10 — OnReInit() preserves signal_history/chat_id/counters (already satisfied).
+· C11 — Freshness guard compares same tick counter (already satisfied).
+· C12 — LOG_BUFFER_SIZE default raised 200 → 1000.
+· C13 — Client-local log entries survive server poll merge (merged view; dedupe by (ts, msg)).
+· C14 — drawBBOverlays() renamed to drawTopologicalAnchors(); new drawBollingerFamily() added.
+· C15 — Dock height 220px → 240px; BB legend collapsible.
+
+Compatibility. v4.1.1 is a drop-in replacement for v4.1.0. All environment variables, endpoints, and worker contracts are unchanged. Three new env vars are honored (LOG_BUFFER_SIZE default bumped, TOAST_BUFFER_SIZE new) and two new endpoints exist (GET /settings, GET /toasts). A fork configured against v4.1.0 continues to work without change.
 
 ---
 
@@ -57,21 +74,25 @@ Compatibility: Version 4.1.0 is a drop-in replacement for 4.0.1. All environment
 The ÆEA system is three cooperating surfaces:
 
 Layer Host Responsibility
-Frontend GitHub Pages (or any HTTPS static host) Serves index.html — the ÆEA MT4/TradingView-style engine UI: interactive candlestick chart with crosshair/pan/zoom, indicator sub-panels, FVG drawing tools, order ticket, engine settings, regime map, log bar, signal markers, polling logic.
-Backend Heroku (or any HTTPS Python host) Runs app.py: Telegram bot polling, AEEA_Engine (MQL4-parity port), bridge endpoints (/state, /miniapp-state, /ohlcv, /signals, /handshake, /fvg, /probe, /diagnostics, /health, /config, /orders, /regime-map, /indicators, /log, /settings, /symbol, /order, /order/close).
+Frontend GitHub Pages (or any HTTPS static host) Serves index.html — the ÆEA MT4/TradingView-style engine UI: interactive candlestick chart with crosshair/pan/zoom, indicator sub-panels, BB×58 family overlay, FVG drawing tools, order ticket, engine settings, regime map, log bar, signal markers, toast stack for signal/execution notifications, polling logic.
+Backend Heroku (or any HTTPS Python host) Runs app.py: Telegram bot polling, AEEA_Engine (MQL4-parity port), bridge endpoints (/state, /miniapp-state, /ohlcv, /signals, /handshake, /fvg, /probe, /diagnostics, /health, /config, /orders, /regime-map, /indicators, /log, /settings, /symbol, /order, /order/close, /toasts).
 Relay Cloudflare Workers Proxies Yahoo Finance through Cloudflare's egress IPs so the Heroku dyno's IP is never rate-limited by Yahoo.
 
 The Mini App is not a separate server. It is the same index.html that runs locally, loaded by Telegram's WebView, authenticated via initData, bound back to the bot's chat_id through /handshake.
 
-Critical for split-origin correctness (v4.1.0): Because the frontend is served from GitHub Pages (origin https://<user>.github.io) and the backend lives on Heroku (origin https://<app>.herokuapp.com), the frontend must be explicitly told the backend origin. This is done with the ?backend= query parameter (see §5.1 and §6.1). Without it, the TWA will attempt to fetch /miniapp-state, /ohlcv, etc. from GitHub Pages and receive 404s.
+Critical for split-origin correctness (v4.1.1). Because the frontend is served from GitHub Pages (origin https://<user>.github.io) and the backend lives on Heroku (origin https://<app>.herokuapp.com), the frontend must be explicitly told the backend origin. This is done with the ?backend= query parameter (see §5.1 and §6.1). Without it, the TWA will attempt to fetch /miniapp-state, /ohlcv, etc. from GitHub Pages and receive 404s.
 
-Critical for state freshness (v4.1.0): The TWA polls /miniapp-state every 2 seconds and /diagnostics every 5 seconds. Both endpoints now return the full FF state (via get_signal_status() in app.py). To prevent the slower /diagnostics poll from overwriting live engine state with stale data, absorbDiagnostics() in index.html implements a freshness guard: it only absorbs engine-state fields if the diagnostics snapshot's tick is strictly greater than the last /miniapp-state tick. This guarantees the Engine Panel, Kronecker Panel, and Derivative Panel always display the freshest available state, matching the bot's /status output.
+Critical for state freshness (v4.1.1). The TWA polls /miniapp-state every 2 seconds and /diagnostics every 5 seconds. Both endpoints return the full FF state (via get_signal_status() in app.py). To prevent the slower /diagnostics poll from overwriting live engine state with stale data, absorbDiagnostics() in index.html implements a freshness guard: it only absorbs engine-state fields if the diagnostics snapshot's tick is strictly greater than the last /miniapp-state tick. This guarantees the Engine Panel, Kronecker Panel, and Derivative Panel always display the freshest available state, matching the bot's /status output.
 
-Critical for Kronecker Panel accuracy (v4.1.0): The Kronecker Panel displays the authoritative m/n from the most recent H()/L() call (last_kronecker_m/last_kronecker_n) when the engine has fired at least one Kronecker event. It falls back to the per-tick diagnostic market_m/market_n only when no event has fired yet. This makes the panel match the bot's /status Local m/n field exactly, resolving the pre-4.1.0 D-02 race condition where the panel and the bot could display different values.
+Critical for Kronecker Panel accuracy (v4.1.1). The Kronecker Panel displays the authoritative m/n from the most recent H()/L() call (last_kronecker_m/last_kronecker_n) when the engine has fired at least one Kronecker event. It falls back to the per-tick diagnostic market_m/market_n only when no event has fired yet. This makes the panel match the bot's /status Local m/n field exactly.
 
-Critical for backend origin safety (v4.1.0): The pre-4.1.0 index.html hardcoded window.__AEEA_BACKEND_URL__ = 'https://aeea-df7f2ade617d.herokuapp.com/';, silently routing every fork to the original author's backend. The patched index.html has no hardcoded default — resolution is strictly window.__AEEA_BACKEND_URL__ (host-page override) → ?backend= → localStorage → same-origin.
+Critical for toast delivery (v4.1.1). Signal and execution notifications are delivered via a two-tier system: (a) server-side, _emit_toast() appends to a _TOAST_BUFFER deque and _send_signal_alert() / _send_execution_alert() push Telegram messages to the bound chat_id; (b) client-side, the TWA polls /toasts?since=<seq> every 2 seconds and renders each new toast in #toastStack. The seq cursor is monotonic and persists across polls; a client that disconnects and reconnects re-syncs from its last-seen seq.
 
-Critical for single-source-of-truth (v4.1.0): The Cloudflare Worker is deployed exclusively from the aei-relay repository. The backend repository (aei-backend) does not contain worker.js, wrangler.toml, or package.json. The backend reaches the relay only over HTTP via the RELAY_URL environment variable. This eliminates the pre-4.1.0 hazard where two copies of the Worker source could drift and wrangler deploy from either repo would silently overwrite the same Cloudflare Worker named aei-relay.
+Critical for BB family correctness (v4.1.1). The Bollinger family is computed client-side in index.html from state.bars (the same OHLCV that /ohlcv returns). This is exactly equivalent to what the FF computes inside Normalize() for each j ∈ [y+1, x-1]. MQL4 parity is enforced: integer periods 3..60, deviation = Fraction(2,1), applied price = close, bands shift = 0, population σ (divisor = period).
+
+Critical for backend origin safety (v4.1.1). index.html has no hardcoded default backend URL. Resolution is strictly: window.__AEEA_BACKEND_URL__ (host-page override) → ?backend= (persisted to localStorage) → localStorage['aeea_backend_url'] → same-origin.
+
+Critical for single-source-of-truth (v4.1.1). The Cloudflare Worker is deployed exclusively from the aei-relay repository. The backend repository (aei-backend) does not contain worker.js, wrangler.toml, or package.json. The backend reaches the relay only over HTTP via the RELAY_URL environment variable.
 
 ---
 
@@ -124,7 +145,7 @@ aei-relay/
 
 · Deploy target: Cloudflare Workers edge.
 · Deploy command: wrangler deploy (run from this repo's root).
-· Sole home of the Worker. Deployed under name = "aei-relay" in wrangler.toml. Because there is exactly one wrangler.toml in exactly one repo, there is no name collision and no deploy-order race.
+· Sole home of the Worker. Deployed under name aei-relay in wrangler.toml.
 
 The three repos deploy independently. No coordination is needed between frontend pushes, backend pushes, and relay pushes.
 
@@ -202,7 +223,8 @@ Optional:
 heroku config:set RELAY_KEY="<same value as wrangler secret>" -a your-app-name
 heroku config:set UPDATE_INTERVAL="30" -a your-app-name
 heroku config:set SYMBOL="BTC-USD" -a your-app-name
-heroku config:set LOG_BUFFER_SIZE="200" -a your-app-name
+heroku config:set LOG_BUFFER_SIZE="1000" -a your-app-name
+heroku config:set TOAST_BUFFER_SIZE="500" -a your-app-name
 ```
 
 TELEGRAM_WEBAPP_URL does two things:
@@ -212,13 +234,13 @@ TELEGRAM_WEBAPP_URL does two things:
 
 REQUIRE_AUTH defaults to 1. Set it to 0 only for local development without Telegram initData.
 
-Critical for CORS (v4.1.0): CORS_ORIGIN should be set to your GitHub Pages origin (https://<your-username>.github.io), NOT *, so that the browser preflight for X-Telegram-Init-Data is honored correctly and the wildcard does not collide with credentialed requests. If you must use *, the frontend still works because it sends credentials: 'omit', but locking down is recommended.
+Critical for CORS (v4.1.1). CORS_ORIGIN should be set to your GitHub Pages origin (https://<your-username>.github.io), NOT *, so that the browser preflight for X-Telegram-Init-Data is honored correctly and the wildcard does not collide with credentialed requests. If you must use *, the frontend still works because it sends credentials: 'omit', but locking down is recommended.
 
 4.3 Deploy
 
 ```bash
 git add .
-git commit -m "ÆEA backend v4.1.0 (MQL4-Parity + MT4/TradingView TWA — Audit-Patched)"
+git commit -m "ÆEA backend v4.1.1 (MQL4-Parity + MT4/TradingView TWA — Audit-Patched)"
 git push heroku main
 ```
 
@@ -226,7 +248,7 @@ git push heroku main
 
 ```bash
 curl "https://your-app-name.herokuapp.com/health"
-# → {"ok":true,"service":"aei-bridge","version":"4.1.0",...}
+# → {"ok":true,"service":"aei-bridge","version":"4.1.1",...}
 
 curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/config"
 # → {"public_url":"...","require_auth":true,...}
@@ -234,13 +256,26 @@ curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/con
 
 Key check on /probe: "empty": false and relay_url populated.
 
+v4.1.1 new checks:
+
+```bash
+# GET /settings returns all 11 FF inputs as exact strings
+curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/settings"
+# → {"max":60,"min":3,"Cc":true,"cC":true,"Memory":-1,"safetyOffSwitch":false,
+#    "StopLoss":"0","TakeProfit":"0","lot":"0.01","slip":100,"Commssion":"0"}
+
+# GET /toasts returns incremental toasts
+curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/toasts?since=0"
+# → {"toasts":[...],"count":N,"latest_seq":M}
+```
+
 ---
 
 5. GitHub Pages Frontend Deployment (Repo A — aei-miniapp)
 
 5.1 Configure the Backend URL
 
-The patched index.html (v4.1.0) resolves the backend in this order:
+The patched index.html (v4.1.1) resolves the backend in this order:
 
 1. window.__AEEA_BACKEND_URL__ (if the host page sets it before the script loads)
 2. ?backend=https://... query-string override (persisted to localStorage)
@@ -248,8 +283,6 @@ The patched index.html (v4.1.0) resolves the backend in this order:
 4. same-origin (relative paths)
 
 No hardcoded Heroku fallback. A fork must be explicitly configured.
-
-D-53: The pre-4.1.0 index.html contained a hardcoded window.__AEEA_BACKEND_URL__ = 'https://aeea-df7f2ade617d.herokuapp.com/'; assignment that silently overrode the ?backend= parameter and routed every fork to the original author's backend. That assignment has been removed.
 
 In the Telegram Mini App context, the Web App URL configured in BotFather must include the query string:
 
@@ -265,7 +298,7 @@ This is what makes the TWA able to reach the Heroku backend. Without it, the TWA
 cd aei-miniapp
 git init
 git add index.html README.md .gitignore
-git commit -m "ÆEA Mini App v4.1.0 (MT4/TradingView-style, Audit-Patched)"
+git commit -m "ÆEA Mini App v4.1.1 (MT4/TradingView-style, Audit-Patched)"
 git branch -M main
 git remote add origin https://github.com/<your-username>/<repo-name>.git
 git push -u origin main
@@ -334,9 +367,10 @@ BRIDGE_HOST 0.0.0.0 Bind address. Heroku requires 0.0.0.0.
 BRIDGE_USE_TLS 0 Heroku terminates TLS at its router → leave 0.
 BRIDGE_TLS_CERT / BRIDGE_TLS_KEY (empty) Only when running your own TLS.
 BRIDGE_TUNNEL cloudflared Ignored on Heroku (no cloudflared binary).
-CORS_ORIGIN  *  Set to your GitHub Pages origin to lock down writes.
+CORS_ORIGIN * Set to your GitHub Pages origin to lock down writes.
 REQUIRE_AUTH 1 Enforce X-Telegram-Init-Data on all non-/health endpoints.
-LOG_BUFFER_SIZE 200 Ring-buffer size for the /log endpoint.
+LOG_BUFFER_SIZE 1000 (v4.1.1) Ring-buffer size for the /log endpoint. Raised from 200 so execution-layer lines survive the /toasts poll cadence.
+TOAST_BUFFER_SIZE 500 (v4.1.1) Ring-buffer size for the /toasts endpoint. New in v4.1.1.
 SYMBOL BTC-USD Default trading symbol.
 UPDATE_INTERVAL 30 Price-feed polling interval (seconds).
 
@@ -364,19 +398,26 @@ After all three surfaces are deployed:
 · ☐ Top toolbar renders symbol + timeframe + chart-type
 · ☐ Connection badge shows connected (green)
 · ☐ Chart renders candlesticks with crosshair
+· ☐ v4.1.1: Bullish candles are BLUE (#4488ff), bearish candles are RED (#ff4466)
+· ☐ v4.1.1: Bollinger family is visible — green upper bands, white lower bands, spanning periods 3..60
+· ☐ v4.1.1: BB×58 toolbar toggle turns the family on/off; legend expands/collapses
 · ☐ Pan/zoom works (drag, wheel, pinch)
 · ☐ Long-press opens the context menu
 · ☐ + IND opens the indicator picker
 · ☐ Added indicator sub-panels render live series
 · ☐ REGIME view renders the per-bar map
-· ☐ Engine Panel shows live KC/prime/dime/mem/tag/invert/A/B/C/c/tick_tock/signature/safety (v4.1.0)
-· ☐ Kronecker Panel shows live m/n matching the bot's /status Local m/n (v4.1.0, D-35/D-36/D-54)
-· ☐ Derivative Panel shows live Z/z/O/o/W/w/I/iI/J/iJ (v4.1.0)
+· ☐ Engine Panel shows live KC/prime/dime/mem/tag/invert/A/B/C/c/tick_tock/signature/safety
+· ☐ Kronecker Panel shows live m/n matching the bot's /status Local m/n
+· ☐ Derivative Panel shows live Z/z/O/o/W/w/I/iI/J/iJ
 · ☐ Order Ticket places simulated orders
 · ☐ FVG list shows all anchors
 · ☐ Log bar shows recent events
+· ☐ v4.1.1: Settings modal shows live values fetched from GET /settings
+· ☐ v4.1.1: Signal toasts appear when _signal() fires — no cooldown, every signal
+· ☐ v4.1.1: Execution toasts appear on every dispatch (🔷 Diamond, 🔻 Ruby, 🦅 Hawk, 🕊️ Dove, 🐂 Bull, 🐻 Bear, 🥃 Whisky, 🍷 Wine, 💧 Watter, 🩸 Blood, ▲ Top, ▼ Bott, 🅰️ A, 🅱️ B)
 · ☐ heroku logs --tail -a your-app-name shows 🔗 Web App session registered: user_id=…
-· ☐ v4.1.0 addendum: On a Kronecker event, the Log Bar shows 🔷 Diamond, 🔻 Ruby, 🦅 Hawk, 🕊️ Dove, 🐂 Bull, 🐻 Bear, 🥃 Whisky, 🍷 Wine, 💧 Watter, or 🩸 Blood — confirming the FF's execution block is live (D-46/D-47).
+· ☐ v4.1.1: heroku logs shows 🎯 SIGNAL #N: type=... on every _signal() and 📡 Signal alert sent to ... — no 60s gap between consecutive signals
+· ☐ v4.1.1: heroku logs shows 📡 Execution alert (...) on every dispatch, including rejections (⚠️ P(): BUY rejected — projected PnL <= spread friction)
 
 ---
 
@@ -394,7 +435,7 @@ expected_hash     = HMAC_SHA256(data_check_string, secret_key).hexdigest()
 
 Freshness is enforced: auth_date must be within [-5 min, +24 h] of server time.
 
-9.2 CORS (v4.1.0 Hardening)
+9.2 CORS (v4.1.1 Hardening)
 
 The bridge now:
 
@@ -414,7 +455,7 @@ The Cloudflare Worker is public by default. If you enable RELAY_KEY, every non-/
 
 When running locally without TELEGRAM_WEBAPP_URL, app.py spawns cloudflared/ngrok/serveo. The public tunnel URL is registered as a MenuButtonWebApp. Rotate the bot token in BotFather if a tunnel URL leaks during an active session.
 
-9.5 Single-Source-of-Truth (v4.1.0)
+9.5 Single-Source-of-Truth (v4.1.1)
 
 The Cloudflare Worker is deployed exclusively from aei-relay. The aei-backend repository contains no worker.js, no wrangler.toml, and no package.json. This guarantees:
 
@@ -422,6 +463,10 @@ The Cloudflare Worker is deployed exclusively from aei-relay. The aei-backend re
 · The Worker's name (aei-relay in wrangler.toml) cannot collide with a second deployment from another repo.
 · No deploy-order race can silently overwrite the live Worker with a divergent copy.
 · The backend's relationship with the relay is strictly HTTP-over-RELAY_URL, with no file-system or compile-time coupling.
+
+9.6 Toast Isolation (v4.1.1)
+
+Toasts are served over the authenticated /toasts endpoint, subject to the same REQUIRE_AUTH=1 gate as every other non-/health endpoint. A toast carries no secrets — only the signal type, price, m/n counts, regime, tick, and (for execution) the event name, side, ticket, and free-text reason. The seq cursor is monotonic and not user-guessable to any useful degree.
 
 ---
 
@@ -462,13 +507,24 @@ Chart drag closes Mini App disableVerticalSwipes not applied Confirm telegram-we
 Indicator sub-panel shows Awaiting data… /indicators endpoint returned empty Ensure ohlcv_history has ≥ MIN_HISTORY_WINDOW bars
 heroku logs shows bind: Address already in use Port conflict Ensure app.py reads $PORT (it does via BRIDGE_PORT fallback)
 Connection badge stuck on retrying… Backend reachable but auth failing Check /health from terminal; check that /miniapp-state returns 200; verify REQUIRE_AUTH and header propagation
-Kronecker Panel m/n differs from bot's /status Pre-4.1.0 race condition v4.1.0 resolves this via authoritative H()/L() stamps + freshness guard. Upgrade both app.py and index.html to 4.1.0 simultaneously.
-Engine Panel shows A true, B true, C true, c true, tick_tock false as constants Pre-4.1.0 missing payload fields v4.1.0 adds these to /miniapp-state. Verify the deployed app.py is 4.1.0 by checking /health "version" field.
-Derivative Panel shows default values (Z:1, z:1, O:1, …) Pre-4.1.0 missing payload fields v4.1.0 adds these to /miniapp-state. Verify index.html absorbMiniAppState() reads them (search for ma.Z in the served source).
-No Diamond/Ruby/Hawk/Dove/Bull/Bear logs in the Log Bar after signals fire Pre-4.1.0 missing execution block v4.1.0 ports the FF's Kronecker-delta execution block into _on_bar() (D-46/D-47). Verify heroku logs shows 🔷 Diamond or 🔻 Ruby after a signal.
-Engine reinitializes on every signal (state resets too often) Pre-4.1.0 _signal() set signature/GF v4.1.0 moves those flags to the execution block. Verify heroku logs does not show OnReInit() completed after every SIGNAL #N line.
-Fork's TWA silently routes to aeea-df7f2ade617d.herokuapp.com Pre-4.1.0 hardcoded backend URL v4.1.0 removes the hardcoded assignment (D-53). Verify the served index.html contains no window.__AEEA_BACKEND_URL__ default assignment.
-wrangler deploy from two repos overwrites the same Worker Pre-4.1.0 duplicated Worker source in aei-backend and aei-relay v4.1.0 removes the Worker from aei-backend entirely. wrangler deploy must be run only from aei-relay/.
+Kronecker Panel m/n differs from bot's /status Pre-4.1.0 race condition v4.1.0+ resolves this via authoritative H()/L() stamps + freshness guard. Upgrade both app.py and index.html to 4.1.1 simultaneously.
+Engine Panel shows A/B/C/c/tick_tock as constants Pre-4.1.0 missing payload fields v4.1.0+ adds these to /miniapp-state. Verify the deployed app.py is 4.1.1 by checking /health "version" field.
+Derivative Panel shows default values Pre-4.1.0 missing payload fields v4.1.0+ adds these to /miniapp-state. Verify index.html absorbMiniAppState() reads them (search for ma.Z in the served source).
+No Diamond/Ruby/Hawk/Dove/Bull/Bear logs in the Log Bar after signals fire Pre-4.1.0 missing execution block v4.1.0+ ports the FF's Kronecker-delta execution block into _on_bar(). Verify heroku logs shows 🔷 Diamond or 🔻 Ruby after a signal.
+Engine reinitializes on every signal (state resets too often) Pre-4.1.0 _signal() set signature/GF v4.1.1 moves those flags to the execution block. Verify heroku logs does not show OnReInit() completed after every SIGNAL #N line.
+Fork's TWA silently routes to a foreign Heroku app Pre-4.1.0 hardcoded backend URL v4.1.1 removes the hardcoded assignment. Verify the served index.html contains no window.__AEEA_BACKEND_URL__ default assignment.
+wrangler deploy from two repos overwrites the same Worker Pre-4.1.0 duplicated Worker source v4.1.1 removes the Worker from aei-backend. wrangler deploy must be run only from aei-relay/.
+Bullish candles still green Pre-4.1.1 candle palette v4.1.1 C1 changes drawCandles() colors to #4488ff (bull) / #ff4466 (bear). Verify the served index.html contains const BULL = '#4488ff'.
+No Bollinger family on chart Pre-4.1.1 missing BB family v4.1.1 C2 adds drawBollingerFamily() + BB×58 toolbar toggle. Verify the served index.html contains computeBollingerFamily and the #tb-bb-toggle button.
+BB bands don't span periods 3..60 Stale cache or wrong BB constants v4.1.1 C2 sets BB_MIN_PERIOD = 3, BB_MAX_PERIOD = 60. Verify the served index.html contains those constants.
+No toasts appear when signals fire Pre-4.1.1 missing /toasts endpoint OR poll interval missing v4.1.1 C5 adds _TOAST_BUFFER + /toasts?since= + 2s poll. Verify /toasts returns JSON from the Heroku endpoint; verify pollHandles.toasts is set in the served index.html.
+Signal toasts are rate-limited Pre-4.1.1 _send_signal_alert() had a 60s cooldown v4.1.1 C3 removes the cooldown. Verify the deployed app.py contains no _signal_cooldown gating in _send_signal_alert().
+Execution toasts don't fire on rejected orders Pre-4.1.1 only fired on successful fills v4.1.1 C4 emits on every dispatch, including rejections. Verify heroku logs shows 📡 Execution alert (...) after ⚠️ P(): BUY rejected.
+Settings modal shows stale values Pre-4.1.1 modal read from cached state.settings v4.1.1 C7 adds GET /settings and fetches live values on open. Verify the modal issues a network request when opened.
+Settings save fails with invalid_numbers Non-decimal string in a numeric field v4.1.1 C8 parses via Fraction.from_decimal_string(). Verify the value is a plain decimal (no currency symbols, no exponents in some locales).
+Settings save fails with validation max <= min or min < 3 or negative SL/TP/lot/slip/Commssion v4.1.1 C9 enforces max > min ≥ 3 and non-negativity. Check the modal note for the exact rule.
+Client-local log entries disappear after a server poll Pre-4.1.1 fetchLogs() overwrote state.logs v4.1.1 C13 keeps client-local entries in state.logs_local and merges with state.logs_server. Verify the served index.html contains logs_local.
+/log poll is too slow (5s+ gap) Pre-4.1.1 /log fetched only inside 300s fetchAll() v4.1.1 C6 adds a dedicated 3s /log poll interval. Verify pollHandles.log is set in the served index.html.
 
 ---
 
@@ -540,19 +596,19 @@ The Mini App is now served from two cooperating origins, fed by a third:
 
 BACKEND_URL is the wire between frontend and backend. RELAY_URL is the wire between backend and relay. Set them once, push all three, and the Mini App is live inside Telegram.
 
-v4.1.0 addendum: The wire between frontend and backend now carries the full FF state — not just the price/regime/tick summary of earlier versions, but every live field the MQL4 Foundational Framework maintains: the A/B/C/c flags, KC/invert/tag/prime/dime/mem, tick_tock/signature/safety, all trailing_stop_* fields, all directional derivatives (Z/z/O/o/W/w/I/iI/J/iJ), scan bounds, volatility state, boundary pass conditions, and the authoritative Kronecker stamps (last_kronecker_m/last_kronecker_n/last_kronecker_h). The freshness guard in absorbDiagnostics() ensures the slower 5-second /diagnostics poll cannot overwrite the faster 2-second /miniapp-state snapshot with stale data. The Kronecker Panel's m/n now match the bot's /status Local m/n exactly, because both read from the same per-H()/L() stamp. The failure mode of the earlier version — silent divergence between the bot's state and the TWA's display — is eliminated.
+v4.1.1 addendum. The wire between frontend and backend now carries the full FF state and a dedicated toast channel. Signal fires and execution-layer dispatches are pushed to the TWA within one 2-second poll cycle, with no cooldown on signal alerts and no cooldown on execution alerts. The BB×58 family renders on the client from the same OHLCV the chart consumes, so no new backend endpoint is required for the visual. The settings modal is a live two-way channel: it reads from GET /settings and writes to POST /settings, with exact-decimal parsing end-to-end. The candle palette is inverted to blue/red per the user's request, while the signal markers, regime background tints, FVG lines, and trailing-stop line keep their v4.1.0 hues.
 
-Audit-patch addendum: All 60 divergences identified in the ÆEA Audit (D-01 through D-60) between the MQL4 Foundational Framework (æea.mq4) and the TWA/backend port are resolved in the v4.1.0 app.py and index.html editions. The Critical D-46/D-47 fixes (Kronecker-delta execution block, signature/GF lifecycle) restore the FF's signal-to-execution flow: signals now fire, executions now run, and the engine reinitializes only on a completed trade. The High D-10/D-14/D-25/D-26/D-32/D-53 fixes restore MQL4-parity arithmetic (previous-bar Price, exact Fraction indicators, cumulative OBV/AD, Wilder RSI) and eliminate the hardcoded backend URL. The Medium D-11/D-35/D-36/D-41/D-48/D-50/D-60 fixes restore per-bar st.open deferral, authoritative m/n stamping, MQL4-semantics _on_call() loop bound, Normalize() at the top of trailing-stop execution, off-by-one in topological target search, and single-source-of-truth bridge state. The Low D-15/D-34/D-49/D-55/D-56 fixes remove dead code, neutralize placeholder fills, correct the trailing-stop regime skip, expose public accessors, and tag indicator sample columns with their index.
+Audit-patch addendum. All 60 divergences identified in the ÆEA Audit (D-01 through D-60) are resolved in the v4.1.0 app.py and index.html editions. All 15 user-facing findings from the v4.1.1 Audit (C-01 through C-15) are resolved in the v4.1.1 editions. The Critical D-46/D-47 fixes (Kronecker-delta execution block, signature/GF lifecycle) restore the FF's signal-to-execution flow. The Critical C-03/C-04 fixes (signal and execution alerts on every dispatch, no cooldown) restore the user's real-time visibility into the engine's decision cycle. The Critical C-02 fix (BB family periods 3..60) restores the FF's iBands visualization across the full period range.
 
-Single-source-of-truth addendum: The Cloudflare Worker lives exclusively in aei-relay. The aei-backend repository has no worker.js, no wrangler.toml, and no package.json. This is the corrected layout: one Worker source, one wrangler.toml, one wrangler deploy command, one Cloudflare Worker named aei-relay. There is no deploy-order race, no name collision, and no possibility of the two repos drifting. The backend's relationship with the relay is strictly HTTP-over-RELAY_URL.
+Single-source-of-truth addendum. The Cloudflare Worker lives exclusively in aei-relay. The aei-backend repository has no worker.js, no wrangler.toml, and no package.json. One Worker source, one wrangler.toml, one wrangler deploy command, one Cloudflare Worker named aei-relay. No deploy-order race, no name collision, no drift.
 
-The ÆEA v4.1.0 port is now a faithful reproduction of the Foundational Framework's state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, and its observer/measurement layer — with the additionally-required TWA/backend wiring hardened against the split-origin, staleness, and single-source-of-truth failure modes documented in the Audit.
+The ÆEA v4.1.1 port is now a faithful reproduction of the Foundational Framework's state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, and its Bollinger-band family — with the additionally-required TWA/backend wiring hardened against split-origin, staleness, single-source-of-truth, and (in v4.1.1) real-time-notification failure modes documented in the Audits.
 
 ---
 
 SECTION 0 — Repository Map & File Index
 
-The ÆEA v4.1.0 system spans three cooperating repositories, each with its own .gitignore and its own supporting files. This document enumerates every file, in dependency order, with the full unabridged content for each.
+The ÆEA v4.1.1 system spans three cooperating repositories, each with its own .gitignore and its own supporting files. This document enumerates every file, in dependency order, with the full unabridged content for each.
 
 Repo A — Frontend (GitHub Pages): aei-miniapp/
 
@@ -591,7 +647,7 @@ Purpose: Frontend repo ignore rules. Excludes editor cruft, OS metadata, and opt
 ```gitignore
 # ============================================================================
 # ÆEA MINI APP — FRONTEND .gitignore
-# Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+# Version: 4.1.1 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
 # Repo: aei-miniapp (GitHub Pages)
 # ============================================================================
 #
@@ -700,7 +756,7 @@ Purpose: Backend repo ignore rules. This is the most important .gitignore for th
 ```gitignore
 # ============================================================================
 # ÆEA BACKEND — .gitignore
-# Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+# Version: 4.1.1 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
 # Repo: aei-backend (Heroku)
 # ============================================================================
 #
@@ -880,12 +936,12 @@ certs/
 FILE 5 of 16 — aei-backend/.env.example
 
 Path: aei-backend/.env.example
-Purpose: Environment template. This file is committed — the .gitignore above explicitly excludes .env but re-includes .env.example via !.env.example.
+Purpose: Environment template. This file is committed — the .gitignore above explicitly excludes .env but re-includes .env.example via !.env.example. v4.1.1 adds TOAST_BUFFER_SIZE and raises the LOG_BUFFER_SIZE default to 1000.
 
 ```bash
 # ============================================================================
 # ÆEA TELEGRAM BOT — ENVIRONMENT TEMPLATE
-# Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+# Version: 4.1.1 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
 # ============================================================================
 # Copy to `.env` and fill in real values. NEVER commit the filled `.env`.
 #
@@ -956,7 +1012,13 @@ BRIDGE_PUBLIC_TIMEOUT=45
 REQUIRE_AUTH=1
 
 # Ring-buffer size for the /log endpoint.
-LOG_BUFFER_SIZE=200
+# v4.1.1: raised from 200 to 1000 so execution-layer lines survive the
+# 3-second /log poll cadence at high tick rates.
+LOG_BUFFER_SIZE=1000
+
+# Ring-buffer size for the /toasts endpoint (NEW in v4.1.1).
+# Holds signal and execution toasts until the TWA polls /toasts?since=<seq>.
+TOAST_BUFFER_SIZE=500
 
 # ----------------------------------------------------------------------------
 # CORS
@@ -980,7 +1042,7 @@ UPDATE_INTERVAL=30
 FILE 6 of 16 — aei-backend/runtime.txt
 
 Path: aei-backend/runtime.txt
-Purpose: Heroku Python runtime pin.
+Purpose: Heroku Python runtime pin. Unchanged from v4.1.0.
 
 ```text
 python-3.11.9
@@ -991,12 +1053,12 @@ python-3.11.9
 FILE 7 of 16 — aei-backend/requirements.txt
 
 Path: aei-backend/requirements.txt
-Purpose: Python dependency pins. No new packages introduced by the audit patches; all patches use only stdlib (fractions, decimal, math, collections, hmac, hashlib, ssl, urllib, http.server, threading, subprocess, asyncio, dataclasses, datetime, typing).
+Purpose: Python dependency pins. No new packages introduced by the v4.1.1 patches — all patches use only stdlib (fractions, decimal, math, collections, hmac, hashlib, ssl, urllib, http.server, threading, subprocess, asyncio, dataclasses, datetime, typing, plus deque for the new toast buffer, which is also stdlib).
 
 ```text
 # ============================================================================
 # ÆEA TELEGRAM BOT — PYTHON DEPENDENCIES
-# Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+# Version: 4.1.1 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
 # Platform: Heroku / Termux / any POSIX-compatible Python 3.10+ environment
 # Author: Natalia Tanyatia
 # ============================================================================
@@ -1063,6 +1125,12 @@ httpx>=0.27,<0.28
 # package needed. On Heroku, logs are captured from stdout/stderr.
 
 # ----------------------------------------------------------------------------
+# TOAST BUFFER (v4.1.1)
+# ----------------------------------------------------------------------------
+# Python's stdlib `collections.deque` provides the bounded FIFO used by
+# both the /log and /toasts ring buffers. No additional package needed.
+
+# ----------------------------------------------------------------------------
 # RUNTIME COMPATIBILITY
 # ----------------------------------------------------------------------------
 # Minimum: Python 3.10
@@ -1080,7 +1148,7 @@ httpx>=0.27,<0.28
 FILE 8 of 16 — aei-backend/Procfile
 
 Path: aei-backend/Procfile
-Purpose: Heroku process declaration. The web: process type is what Heroku routes HTTP traffic to (and what terminates TLS at the router before forwarding to app.py's bridge on $PORT).
+Purpose: Heroku process declaration. The web: process type is what Heroku routes HTTP traffic to (and what terminates TLS at the router before forwarding to app.py's bridge on $PORT). Unchanged from v4.1.0.
 
 ```text
 web: python app.py
@@ -1091,14 +1159,14 @@ web: python app.py
 FILE 9 of 16 — aei-backend/app.json
 
 Path: aei-backend/app.json
-Purpose: Heroku app manifest. Consumed by the Heroku Button deploy flow.
+Purpose: Heroku app manifest. Consumed by the Heroku Button deploy flow. v4.1.1 adds LOG_BUFFER_SIZE and TOAST_BUFFER_SIZE to the env block, and bumps the description.
 
 ```json
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched v4.1.1: Candle Recolor + BB Family + Signal/Execution Notifications + MT4-Parity Inputs)",
   "repository": "https://github.com/yourusername/aea-bot",
-  "keywords": ["trading", "telegram", "quantum", "finance", "mq4-parity", "mt4", "twa"],
+  "keywords": ["trading", "telegram", "quantum", "finance", "mq4-parity", "mt4", "twa", "bollinger", "notifications"],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
       "description": "Your Telegram Bot Token from @BotFather",
@@ -1121,7 +1189,11 @@ Purpose: Heroku app manifest. Consumed by the Heroku Button deploy flow.
       "required": false
     },
     "LOG_BUFFER_SIZE": {
-      "description": "Ring-buffer size for the /log endpoint. Defaults to '200'.",
+      "description": "Ring-buffer size for the /log endpoint. Defaults to '1000' in v4.1.1.",
+      "required": false
+    },
+    "TOAST_BUFFER_SIZE": {
+      "description": "Ring-buffer size for the /toasts endpoint. Defaults to '500' in v4.1.1.",
       "required": false
     },
     "CORS_ORIGIN": {
@@ -1158,19 +1230,19 @@ FILE 10 of 16 — aei-backend/README.md (Cross-Reference Stub)
 Path: aei-backend/README.md
 Note: The canonical backend README is the full ÆEA Deployment Guide (the document currently being delivered). In the deployed repo, aei-backend/README.md contains that guide verbatim. This entry is a cross-reference stub, provided here only to preserve the file index.
 
-In the deployed repo: aei-backend/README.md = the full ÆEA Deployment Guide (v4.1.0), identical to the header of this document.
+In the deployed repo: aei-backend/README.md = the full ÆEA Deployment Guide (v4.1.1), identical to the header of this document.
 
 ---
 
 FILE 12 of 16 — aei-relay/.gitignore
 
 Path: aei-relay/.gitignore
-Purpose: Relay-only repo ignore rules. This is the simplest of the three .gitignore files because the relay is a single JavaScript file plus three configuration files. There is nothing to build, nothing to bundle, and only one secret (the Wrangler-managed RELAY_KEY).
+Purpose: Relay-only repo ignore rules. This is the simplest of the three .gitignore files because the relay is a single JavaScript file plus three configuration files. There is nothing to build, nothing to bundle, and only one secret (the Wrangler-managed RELAY_KEY). Unchanged from v4.1.0.
 
 ```gitignore
 # ============================================================================
 # ÆEA RELAY — .gitignore
-# Version: 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+# Version: 4.1.1 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
 # Repo: aei-relay (Cloudflare Workers)
 # ============================================================================
 #
@@ -1285,7 +1357,7 @@ temp/
 FILE 13 of 16 — aei-relay/worker.js
 
 Path: aei-relay/worker.js
-Purpose: Cloudflare Worker source. Deployed from this repo via wrangler deploy. The Worker is the market-data relay: it proxies Yahoo Finance chart API requests through Cloudflare's egress IPs so the Heroku dyno's own IP is never rate-limited by Yahoo.
+Purpose: Cloudflare Worker source. Deployed from this repo via wrangler deploy. The Worker is the market-data relay: it proxies Yahoo Finance chart API requests through Cloudflare's egress IPs so the Heroku dyno's own IP is never rate-limited by Yahoo. Unchanged from v4.1.0 — the v4.1.1 patches are entirely frontend + backend, and the relay contract is stable.
 
 Contract:
 
@@ -1463,7 +1535,7 @@ export default {
 FILE 14 of 16 — aei-relay/wrangler.toml
 
 Path: aei-relay/wrangler.toml
-Purpose: Cloudflare Worker deployment manifest. This is the only wrangler.toml in the ÆEA system. wrangler deploy must be run from aei-relay/.
+Purpose: Cloudflare Worker deployment manifest. This is the only wrangler.toml in the ÆEA system. wrangler deploy must be run from aei-relay/. Unchanged from v4.1.0.
 
 ```toml
 # ============================================================================
@@ -1530,14 +1602,14 @@ enabled = false
 FILE 15 of 16 — aei-relay/package.json
 
 Path: aei-relay/package.json
-Purpose: Node manifest for the Cloudflare Worker relay. Consumed by wrangler (via npm install or npx).
+Purpose: Node manifest for the Cloudflare Worker relay. Consumed by wrangler (via npm install or npx). v4.1.1 bumps the version to 4.1.1 and updates the description and keywords.
 
 ```json
 {
   "name": "aei-relay",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "private": true,
-  "description": "ÆEA relay — Cloudflare Worker proxying Yahoo Finance for the Heroku ÆEA bridge (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched). Sole home of the Worker source.",
+  "description": "ÆEA relay — Cloudflare Worker proxying Yahoo Finance for the Heroku ÆEA bridge (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched v4.1.1). Sole home of the Worker source.",
   "author": "Natalia Tanyatia",
   "license": "UNLICENSED",
   "main": "worker.js",
@@ -1575,7 +1647,9 @@ Purpose: Node manifest for the Cloudflare Worker relay. Consumed by wrangler (vi
     "mq4-parity",
     "mt4",
     "tradingview",
-    "twa"
+    "twa",
+    "bollinger",
+    "notifications"
   ],
   "repository": {
     "type": "git",
@@ -1593,39 +1667,39 @@ Purpose: Node manifest for the Cloudflare Worker relay. Consumed by wrangler (vi
 FILE 16 of 16 — aei-relay/README.md (Relay-Scoped)
 
 Path: aei-relay/README.md
-Purpose: Relay-scoped README. Points at the canonical deployment guide for the full picture, then documents the relay-only repo.
+Purpose: Relay-scoped README. Points at the canonical deployment guide for the full picture, then documents the relay-only repo. v4.1.1 keeps the relay contract stable and only bumps the version header.
 
-# **ÆEA Relay — Cloudflare Worker Repository**
+ÆEA Relay — Cloudflare Worker Repository
 
-*Version:* 4.1.0 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
-*Repo:* `aei-relay` (Cloudflare Workers)
-*Sibling repos:* `aei-miniapp` (GitHub Pages), `aei-backend` (Heroku)
+Version: 4.1.1 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+Repo: aei-relay (Cloudflare Workers)
+Sibling repos: aei-miniapp (GitHub Pages), aei-backend (Heroku)
 
 ---
 
-## What This Repo Contains
+What This Repo Contains
 
-This repository is the **sole home of the ÆEA relay Worker**. It contains:
+This repository is the sole home of the ÆEA relay Worker. It contains:
 
-- `worker.js` — the Cloudflare Worker source.
-- `wrangler.toml` — the deployment manifest. `name = "aei-relay"`, `main = "worker.js"`.
-- `package.json` — the Node manifest for wrangler.
-- `README.md` — this file.
-- `.gitignore` — Wrangler build output, Node cruft, secrets.
+· worker.js — the Cloudflare Worker source.
+· wrangler.toml — the deployment manifest. name = "aei-relay", main = "worker.js".
+· package.json — the Node manifest for wrangler.
+· README.md — this file.
+· .gitignore — Wrangler build output, Node cruft, secrets.
 
 That is the complete contents of the repo. Nothing builds, nothing bundles.
 
 ---
 
-## What This Repo Is Not
+What This Repo Is Not
 
-This repo is **not** the backend. It does not contain `app.py`, does not run a Python process, and does not handle Telegram traffic. It is a stateless HTTP proxy: it receives `GET /?symbol=…&kind=…`, fetches the corresponding Yahoo Finance chart API URL through Cloudflare's egress IPs, and returns the shaped JSON.
+This repo is not the backend. It does not contain app.py, does not run a Python process, and does not handle Telegram traffic. It is a stateless HTTP proxy: it receives GET /?symbol=…&kind=…, fetches the corresponding Yahoo Finance chart API URL through Cloudflare's egress IPs, and returns the shaped JSON.
 
-This repo is also **not** duplicated anywhere. The `aei-backend` repository does **not** contain a copy of `worker.js`, `wrangler.toml`, or `package.json`. The backend reaches the relay only over HTTP via its `RELAY_URL` environment variable. There is exactly one `wrangler deploy` command in the ÆEA system, and it is run from this repo.
+This repo is also not duplicated anywhere. The aei-backend repository does not contain a copy of worker.js, wrangler.toml, or package.json. The backend reaches the relay only over HTTP via its RELAY_URL environment variable. There is exactly one wrangler deploy command in the ÆEA system, and it is run from this repo.
 
 ---
 
-## Deployment
+Deployment
 
 From this repo's root:
 
@@ -1661,6 +1735,8 @@ GET /?symbol=<S>&kind=intraday&interval=1m {symbol, open, high, low, close, volu
 GET /?symbol=<S>&kind=history&limit=200&interval=1m [{open, high, low, close, volume, timestamp}, …]
 
 When env.RELAY_KEY is set (via wrangler secret put RELAY_KEY), every non-/health request must carry the X-Relay-Key: <RELAY_KEY> header. The backend's app.py reads RELAY_KEY from its own env and injects the header automatically.
+
+v4.1.1 note. The relay contract is unchanged from v4.1.0. The v4.1.1 patches live entirely in index.html (candle recolor, BB family, toasts, log merge, settings modal) and app.py (signal/execution alerts, /toasts, GET /settings, exact-decimal parsing, validation). No new relay endpoints are introduced. No relay behavior is altered.
 
 ---
 
@@ -1711,7 +1787,7 @@ Cross-Repo Coordination
 
 The three repos deploy independently. No coordination is needed between frontend pushes, backend pushes, and relay pushes.
 
-Critical for v4.1.0: Do not copy worker.js, wrangler.toml, or package.json into the aei-backend repo. Doing so would create a second wrangler deploy target pointing at the same Cloudflare Worker named aei-relay, and the two copies could drift. This repo is the single source of truth.
+Critical for v4.1.1. Do not copy worker.js, wrangler.toml, or package.json into the aei-backend repo. Doing so would create a second wrangler deploy target pointing at the same Cloudflare Worker named aei-relay, and the two copies could drift. This repo is the single source of truth.
 
 ---
 
