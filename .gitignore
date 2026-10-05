@@ -1,6 +1,6 @@
 # ============================================================================
 # ÆEA BACKEND — .gitignore
-# Version: 4.1.1 (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched)
+# Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
 # Repo: aei-backend (Heroku)
 # ============================================================================
 #
@@ -21,7 +21,6 @@
 # ----------------------------------------------------------------------------
 # SECRETS — HIGHEST PRIORITY
 # ----------------------------------------------------------------------------
-# The .env file holds live secrets. Only .env.example is committed.
 .env
 .env.*
 !.env.example
@@ -77,9 +76,6 @@ coverage.xml
 .pytest_cache/
 cover/
 htmlcov/
-.tox/
-.nox/
-.pytest_cache/
 .mypy_cache/
 .dmypy.json
 dmypy.json
@@ -130,8 +126,6 @@ desktop.ini
 # ----------------------------------------------------------------------------
 # HEROKU
 # ----------------------------------------------------------------------------
-# Heroku writes no local state by default, but local use of `heroku local`
-# creates a .env file (see SECRETS above) and a Procfile.local override.
 Procfile.local
 Procfile.windows
 .heroku/
@@ -167,8 +161,6 @@ temp/
 # ----------------------------------------------------------------------------
 # TLS / CERTIFICATE MATERIAL
 # ----------------------------------------------------------------------------
-# If BRIDGE_USE_TLS=1 is set for local testing, the cert/key files must
-# never be committed.
 certs/
 *.csr
 *.srl

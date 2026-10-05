@@ -1,8 +1,19 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched v4.1.1: Candle Recolor + BB Family + Signal/Execution Notifications + MT4-Parity Inputs)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched v4.1.2: Semantics-Restored — FF-Exact M()/N(), Wilder ADX, MQL4 iRVI, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2)",
   "repository": "https://github.com/yourusername/aea-bot",
-  "keywords": ["trading", "telegram", "quantum", "finance", "mq4-parity", "mt4", "twa", "bollinger", "notifications"],
+  "keywords": [
+    "trading",
+    "telegram",
+    "quantum",
+    "finance",
+    "mq4-parity",
+    "mt4",
+    "twa",
+    "bollinger",
+    "notifications",
+    "exact-arithmetic"
+  ],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
       "description": "Your Telegram Bot Token from @BotFather",
@@ -25,11 +36,11 @@
       "required": false
     },
     "LOG_BUFFER_SIZE": {
-      "description": "Ring-buffer size for the /log endpoint. Defaults to '1000' in v4.1.1.",
+      "description": "Ring-buffer size for the /log endpoint. Defaults to '1000'.",
       "required": false
     },
     "TOAST_BUFFER_SIZE": {
-      "description": "Ring-buffer size for the /toasts endpoint. Defaults to '500' in v4.1.1.",
+      "description": "Ring-buffer size for the /toasts endpoint. Defaults to '500'.",
       "required": false
     },
     "CORS_ORIGIN": {
@@ -42,6 +53,22 @@
     },
     "UPDATE_INTERVAL": {
       "description": "Price-feed polling interval in seconds. Defaults to 30.",
+      "required": false
+    },
+    "MAX_MIN_GAP": {
+      "description": "Minimum (max - min). The FF requires 2. Defaults to '2'.",
+      "required": false
+    },
+    "MIN_PERIOD_FLOOR": {
+      "description": "Hard floor on the FF's `min` input. The FF requires 3 (so y = min - 2 >= 1). Defaults to '3'.",
+      "required": false
+    },
+    "SYMBOL_DIGITS": {
+      "description": "JSON map of symbol → digits for Point-size emulation. Defaults to a 30-symbol table.",
+      "required": false
+    },
+    "SYMBOL_DIGITS_DEFAULT": {
+      "description": "Fallback digit count for symbols not in the table. Defaults to '2'.",
       "required": false
     }
   },

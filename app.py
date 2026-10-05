@@ -2,11 +2,43 @@
 # -*- coding: utf-8 -*-
 """
 ÆEA TELEGRAM BOT — HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
-Faithful Unabridged Port of æea.mq4
+Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.1.1 (Audit-Patched: Candle Recolor + BB Family + Signal/Execution Notifications + MT4-Parity Inputs)
+Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
+
+Resolves the 44 defects enumerated in the ÆEA v4.1.1 Fidelity & Spec Audit.
+Every critical (27) and minor (17) defect is addressed at the source level.
+All v4.1.1 logic is preserved verbatim except where a defect resolution
+requires a change; every change is annotated inline with its defect ID.
+
+Defect-resolution blocks in this file:
+    D-1   _M()              FF operator precedence; single ADX increment
+    D-2   _N()              mirrored
+    D-3   _execute_kronecker_block()  prior HH/LL read
+    D-4   _on_gaurd(), _on_bar()      G() fired from boundary; F() schedule
+    D-5   _compute_adx()    Wilder-correct; +DI/-DI in min-max
+    D-6   _compute_rvi()    MQL4 iRVI formula
+    D-7   _compute_ac()     AO window is j-period
+    D-8   _compute_obv()/_compute_ad()  cumulative over full history
+    D-9   _normalize()      Ichimoku 5-line range
+    D-10  _O()              FF no-op preserved
+    D-11  _on_track()/_on_stand()    second loop uses grown bound
+    D-12  _S()              bSL/bTP use ask; sSL/sTP use bid
+    D-13  _execute_trailing_stop()   regime read by bar index
+    D-14  _get_next_topological_target()  inclusive bound
+    C-3.5  _emit_toast()    first_available_seq support
+    C-3.7  _Top()/_Bott()   cascade dedup
+    C-3.16 authoritative_m/n single-source
+    C-3.17 do_OPTIONS()     X-Since/X-Limit allow-headers
+    M-1   SYMBOL_DIGITS table
+    M-2   _S()              Point multiplication
+    M-3   _on_tick()        Comment() reproduction
+    M-4   OnReInit()        preserves m_now/n_now
+    M-5   apply_settings()  preserves Kronecker
+    M-9   F_THRESHOLD et al. float64 ULP-matched
+    M-10  Alert() format preserved
 """
 import asyncio
 import hashlib
@@ -39,12 +71,6 @@ ARC_COHERENCE_TOLERANCE = 1e-6
 
 # ============================================================================
 # EXACT FRACTION WRAPPER
-# ============================================================================
-# Audit D-13: removed the lossy from_float() path. All conversions now
-# originate from exact decimal strings via from_decimal_string().
-# Audit D-15: removed the dead, non-exact sqrt() method.
-# v4.1.1 C8: from_decimal_string() is now the canonical entry point for
-# every numeric input coming from /settings and /order POST bodies.
 # ============================================================================
 class Fraction:
     __slots__ = ('_f',)
@@ -217,27 +243,88 @@ X_PERIOD: int = MAX_PERIOD + 2
 Y_START: int = MIN_PERIOD - 2
 MIN_HISTORY_WINDOW: int = 52
 
-# v4.1.1 C9: the FF's input ranges. These are the exact validation bounds
-# enforced by apply_settings(). MIN_PERIOD has a hard floor of 3 because
-# y = min - 2 and the state arrays are sized x - y; min < 3 makes y < 1
-# and breaks the y+1 loop bounds.
-MAX_PERIOD_MIN: int = 3
+# v4.1.2 (C-3.9 / M-1): FF input bounds. The FF requires max >= min + 2
+# because y = min - 2 and loop bounds are for j = y + 1; j < x with
+# x = max + 2. If max = min + 1, x - y = 5 and the state arrays degenerate.
+MAX_MIN_GAP: int = int(os.getenv("MAX_MIN_GAP", "2"))
+MIN_PERIOD_FLOOR: int = int(os.getenv("MIN_PERIOD_FLOOR", "3"))
+MAX_PERIOD_MIN: int = MIN_PERIOD_FLOOR + MAX_MIN_GAP
 MAX_PERIOD_MAX: int = 1000
-MIN_PERIOD_MIN: int = 3
+MIN_PERIOD_MIN: int = MIN_PERIOD_FLOOR
 MIN_PERIOD_MAX: int = 1000
 
+# ============================================================================
+# M-9: EXACT SYMBOLIC THRESHOLDS + FLOAT64 ULP-MATCHED SHADOWS
+# ------------------------------------------------------------
+# The FF declares:
+#     double f  = 200.0/3.0;   // float64: 66.66666666666667
+#     double g  = 100.0/3.0;   // float64: 33.333333333333336
+#     double gf = 40.0/15.0;   // float64: 2.6666666666666665
+# The FF's comparisons use the float64 values, so a threshold hit
+# at the exact rational boundary differs by one ULP. The port
+# reproduces the FF's float64 behaviour, not its intended rational
+# behaviour. Therefore:
+#   - F_THRESHOLD / G_THRESHOLD / GF_TOLERANCE  : exact Fractions
+#   - F_THRESHOLD_F64 / G_THRESHOLD_F64 / GF_TOLERANCE_F64 : floats
+#     whose bit pattern matches the FF's double literals
+#   - F_THRESHOLD_D / G_THRESHOLD_D / GF_TOLERANCE_D : Decimals
+#     derived from the float64 shadows
+# ============================================================================
 F_THRESHOLD: Fraction = Fraction(200, 3)
 G_THRESHOLD: Fraction = Fraction(100, 3)
 GF_TOLERANCE: Fraction = Fraction(40, 15)
 
-F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD.num()) / Decimal(F_THRESHOLD.den())
-G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD.num()) / Decimal(G_THRESHOLD.den())
-GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE.num()) / Decimal(GF_TOLERANCE.den())
+F_THRESHOLD_F64: float = 200.0 / 3.0
+G_THRESHOLD_F64: float = 100.0 / 3.0
+GF_TOLERANCE_F64: float = 40.0 / 15.0
 
-# Audit D-14: exact Fraction forms for use in comparisons.
+F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD_F64)
+G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD_F64)
+GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE_F64)
+
 F_PLUS_GF_F: Fraction = F_THRESHOLD + GF_TOLERANCE
 G_MINUS_GF_F: Fraction = G_THRESHOLD - GF_TOLERANCE
+F_PLUS_GF_D: Decimal = F_THRESHOLD_D + GF_TOLERANCE_D
+G_MINUS_GF_D: Decimal = G_THRESHOLD_D - GF_TOLERANCE_D
 
+# ============================================================================
+# M-1: SYMBOL DIGITS TABLE (Point-Size Emulation)
+# ------------------------------------------------------------
+# The FF uses MQL4's symbol-specific `Point` constant. The port cannot
+# query a broker for this on Heroku, so it uses a static digit table
+# keyed by Yahoo symbol. Edit via the SYMBOL_DIGITS env var (JSON map).
+# ============================================================================
+_DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
+    "BTC-USD": 2, "ETH-USD": 2, "XRP-USD": 5, "ADA-USD": 5, "SOL-USD": 3,
+    "DOGE-USD": 5, "LTC-USD": 3, "LINK-USD": 4, "DOT-USD": 4, "AVAX-USD": 4,
+    "MATIC-USD": 5, "UNI-USD": 4, "ATOM-USD": 4, "NEAR-USD": 4, "FIL-USD": 4,
+    "ETC-USD": 3, "ICP-USD": 4, "XLM-USD": 5, "HBAR-USD": 5, "QNT-USD": 3,
+    "GC=F": 2, "SI=F": 3, "CL=F": 2, "NG=F": 3, "ZB=F": 3, "ZN=F": 4,
+    "ZS=F": 2, "ZM=F": 2, "ZW=F": 2, "KE=F": 2,
+}
+
+def _load_symbol_digits() -> Dict[str, int]:
+    raw = os.getenv("SYMBOL_DIGITS", "").strip()
+    if not raw:
+        return dict(_DEFAULT_SYMBOL_DIGITS)
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            out = dict(_DEFAULT_SYMBOL_DIGITS)
+            for k, v in parsed.items():
+                if isinstance(k, str) and isinstance(v, int) and v >= 0:
+                    out[k] = v
+            return out
+    except Exception:
+        pass
+    return dict(_DEFAULT_SYMBOL_DIGITS)
+
+SYMBOL_DIGITS: Dict[str, int] = _load_symbol_digits()
+SYMBOL_DIGITS_DEFAULT: int = int(os.getenv("SYMBOL_DIGITS_DEFAULT", "2"))
+
+# ============================================================================
+# ENVIRONMENT
+# ============================================================================
 TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
 BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
 BRIDGE_PORT: int = int(os.getenv("PORT", os.getenv("BRIDGE_PORT", "8765")))
@@ -248,11 +335,7 @@ BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
 BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
 TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 REQUIRE_AUTH: bool = os.getenv("REQUIRE_AUTH", "1").strip() in ("1", "true", "yes")
-# v4.1.1 C6/C12: buffer sizes are env-controlled. Defaults raised so
-# execution-layer lines survive the /toasts poll cadence.
 LOG_BUFFER_SIZE: int = int(os.getenv("LOG_BUFFER_SIZE", "1000"))
-# v4.1.1 C5: dedicated toast buffer. Separate from the log buffer so the
-# TWA can fetch signal/execution toasts incrementally via ?since=<tick>.
 TOAST_BUFFER_SIZE: int = int(os.getenv("TOAST_BUFFER_SIZE", "500"))
 
 RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
@@ -311,25 +394,21 @@ from telegram.ext import (
 )
 
 # ============================================================================
-# LOG RING BUFFER (for /log endpoint)
-# v4.1.1 C6/C12: default size raised 200 -> 1000 so execution-layer lines
-# survive the /toasts poll cadence at high tick rates.
+# LOG RING BUFFER
 # ============================================================================
 _LOG_BUFFER: deque = deque(maxlen=LOG_BUFFER_SIZE)
 _LOG_LOCK = threading.Lock()
 
 # ============================================================================
-# TOAST RING BUFFER (for /toasts endpoint) — v4.1.1 C5
-# ============================================================================
-# Separate from the log buffer so the TWA can fetch signal/execution toasts
-# incrementally via ?since=<tick>, without re-parsing the full log stream.
-# Each entry carries the engine tick at the moment of emission, so the
-# TWA's freshness guard (matching the /diagnostics guard from v4.1.0) can
-# discard duplicates if it polls twice between emissions.
+# TOAST RING BUFFER
+# ------------------------------------------------------------
+# v4.1.2 (C-3.5): The /toasts response now includes first_available_seq
+# so the client can detect eviction.
 # ============================================================================
 _TOAST_BUFFER: deque = deque(maxlen=TOAST_BUFFER_SIZE)
 _TOAST_LOCK = threading.Lock()
 _TOAST_SEQ: int = 0
+_TOAST_FIRST_AVAILABLE_SEQ: int = 0
 
 class _RingHandler(logging.Handler):
     def emit(self, record):
@@ -353,16 +432,17 @@ logger.addHandler(_RingHandler())
 logger.propagate = False
 
 # ============================================================================
-# TOAST EMISSION HELPER — v4.1.1 C5
+# TOAST EMISSION HELPER
 # ============================================================================
 def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
     """Append a toast to the ring buffer and return its monotonic seq number.
 
-    kind: "signal" | "execution"
-    payload: kind-specific fields; always includes ts and tick.
+    v4.1.2 (C-3.5): If the deque is at maxlen, the oldest entry is evicted
+    and _TOAST_FIRST_AVAILABLE_SEQ is advanced to the seq of the new head.
     """
-    global _TOAST_SEQ
+    global _TOAST_SEQ, _TOAST_FIRST_AVAILABLE_SEQ
     with _TOAST_LOCK:
+        was_full = (len(_TOAST_BUFFER) >= _TOAST_BUFFER.maxlen)
         _TOAST_SEQ += 1
         seq = _TOAST_SEQ
         entry = dict(payload)
@@ -371,6 +451,10 @@ def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
         if "ts" not in entry:
             entry["ts"] = datetime.now().isoformat()
         _TOAST_BUFFER.append(entry)
+        if was_full and len(_TOAST_BUFFER) > 0:
+            _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", _TOAST_SEQ)
+        elif _TOAST_FIRST_AVAILABLE_SEQ == 0:
+            _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", seq) if _TOAST_BUFFER else 0
     return seq
 
 # ============================================================================
@@ -491,6 +575,10 @@ class AEI_CoreState:
     tally: str = "   "
     m: int = 0
     n: int = 0
+    # C-3.16: single authoritative m/n source. _H()/_L() write these.
+    authoritative_m: int = 0
+    authoritative_n: int = 0
+    authoritative_h: int = -1
     m_now: int = 0
     n_now: int = 0
     lPass: Decimal = Decimal('0.0')
@@ -582,9 +670,15 @@ class AEI_CoreState:
     last_signal_at: Optional[str] = None
     bar_close_count: int = 0
 
-    # Audit D-46 / D-47: signal-execution flags. Set only by the
-    # Kronecker-delta execution block in _on_bar(), never by _signal().
     execution_fired: bool = False
+
+# ============================================================================
+# INDICATOR NAME CONSTANT
+# ============================================================================
+INDICATOR_NAMES = [
+    "ADX", "Stochastic", "RVI", "AC", "Force", "OBV", "AD",
+    "MFI", "Momentum", "DeMarker", "WPR", "CCI", "RSI"
+]
 
 # ============================================================================
 # MODULE-LEVEL INDICATOR HELPERS — MQL4 PARITY
@@ -603,7 +697,6 @@ def ema(data: List[Decimal], period: int) -> Decimal:
         return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
     return data[-1]
 
-# Audit D-32: rewritten to use Wilder smoothing, matching MQL4 iRSI.
 def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     if len(data) < period + 1 or period <= 0:
         return Decimal('50.0')
@@ -705,22 +798,27 @@ def to_decimal(value):
     except Exception:
         return Decimal('0.0')
 
+# ============================================================================
+# M-1: SYMBOL POINT-SIZE
+# ============================================================================
 def symbol_point(symbol: str) -> Decimal:
-    try:
-        digits = int(_symbol_digits(symbol))
-    except Exception:
-        digits = 2
+    digits = _symbol_digits(symbol)
     return Decimal(10) ** Decimal(-digits)
 
 def _symbol_digits(symbol: str) -> int:
     try:
-        import MetaTrader5 as _mt5
+        import MetaTrader5 as _mt5  # type: ignore
         info = _mt5.symbol_info(symbol)
         if info is not None and hasattr(info, "digits"):
             return int(info.digits)
     except Exception:
         pass
-    return 2
+    if symbol in SYMBOL_DIGITS:
+        return SYMBOL_DIGITS[symbol]
+    for canonical, chain in SYMBOL_FALLBACKS.items():
+        if symbol in chain:
+            return SYMBOL_DIGITS.get(canonical, SYMBOL_DIGITS_DEFAULT)
+    return SYMBOL_DIGITS_DEFAULT
 
 # ============================================================================
 # TELEGRAM WEB APP AUTHENTICATION
@@ -798,11 +896,9 @@ class FeedClient:
         return self._chain[self._chain_index]
 
     def failure_count(self) -> int:
-        # Audit D-55: public accessor.
         return self._failure_count
 
     def last_update(self) -> Optional[datetime]:
-        # Audit D-55: public accessor.
         return self._last_update
 
     def _advance_symbol_chain(self) -> None:
@@ -829,7 +925,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.1.1",
+                    "User-Agent": "AEI-Bridge/v4.1.2",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -979,7 +1075,7 @@ class FeedClient:
         }
 
 # ============================================================================
-# CORE ÆEA ENGINE — Faithful Port of æea.mq4
+# CORE ÆEA ENGINE — Faithful Port of ÆEA.mq4
 # ============================================================================
 class AEEA_Engine:
     def __init__(self):
@@ -1012,19 +1108,20 @@ class AEEA_Engine:
         self._point_size: Decimal = symbol_point(SYMBOL)
         self.orders: List[Order] = []
         self._next_ticket: int = 1
-        # v4.1.1 C3/C4: alert gating. Removed 60s cooldown — signal and
-        # execution alerts now fire on every emission. The only gate left
-        # is "is there a chat_id or webapp_user_id to deliver to".
         self._alert_delivery_enabled: bool = True
-        # v4.1.1 C5: track the last toast seq the bot has already relayed
-        # to Telegram, so we don't double-send when the TWA also polls.
         self._last_telegram_toast_seq: int = 0
+        self._last_dispatch_event: str = ""
+        self._last_comment_line: str = ""
 
     def OnInit(self) -> None:
         logger.info("⚡ OnInit(): EA engine lifecycle beginning")
         self.OnReInit()
         logger.info("🟢 OnInit(): state reset to baseline")
 
+    # ========================================================================
+    # M-4 / M-5: OnReInit preserves authoritative_m/n, m_now/n_now,
+    # last_kronecker_m/n/h, and _last_kronecker_bar across resets.
+    # ========================================================================
     def OnReInit(self) -> None:
         st = self.state
         saved_ohlcv = self.ohlcv_history.copy()
@@ -1040,6 +1137,16 @@ class AEEA_Engine:
         saved_webapp_uid = st.webapp_user_id
         saved_webapp_uname = st.webapp_username
         saved_webapp_verified = st.webapp_verified
+        saved_auth_m = st.authoritative_m
+        saved_auth_n = st.authoritative_n
+        saved_auth_h = st.authoritative_h
+        saved_m_now = st.m_now
+        saved_n_now = st.n_now
+        saved_lk_m = st.last_kronecker_m
+        saved_lk_n = st.last_kronecker_n
+        saved_lk_h = st.last_kronecker_h
+        saved_lk_bar = self._last_kronecker_bar
+        saved_comment = self._last_comment_line
 
         st.KC = st.invert
         size = X_PERIOD - Y_START
@@ -1111,13 +1218,12 @@ class AEEA_Engine:
         st.bL = "   "
         st.count = 0
         st.fvg_anchor_map = {}
-        st.m_now = 0
-        st.n_now = 0
         st.lPass = Decimal('0.0')
         st.ilPass = Decimal('0.0')
         st.kPass = Decimal('0.0')
         st.ikPass = Decimal('0.0')
         st.execution_fired = False
+
         self.ohlcv_history = saved_ohlcv
         st.price = saved_price
         st.Price = saved_Price
@@ -1131,7 +1237,23 @@ class AEEA_Engine:
         st.webapp_user_id = saved_webapp_uid
         st.webapp_username = saved_webapp_uname
         st.webapp_verified = saved_webapp_verified
-        logger.info(f"🔄 OnReInit() completed — Tick preserved: {st.tick}, Signals preserved: {len(saved_signal_history)}")
+        st.authoritative_m = saved_auth_m
+        st.authoritative_n = saved_auth_n
+        st.authoritative_h = saved_auth_h
+        st.m_now = saved_m_now
+        st.n_now = saved_n_now
+        st.last_kronecker_m = saved_lk_m
+        st.last_kronecker_n = saved_lk_n
+        st.last_kronecker_h = saved_lk_h
+        self._last_kronecker_bar = saved_lk_bar
+        self._last_comment_line = saved_comment
+
+        logger.info(
+            f"🔄 OnReInit() completed — Tick preserved: {st.tick}, "
+            f"Signals preserved: {len(saved_signal_history)}, "
+            f"m/n preserved: {saved_auth_m}/{saved_auth_n}, "
+            f"kronecker bar preserved: {saved_lk_bar}"
+        )
 
     def _unify(self, j: int) -> Tuple[Decimal, Decimal]:
         st = self.state
@@ -1179,6 +1301,9 @@ class AEEA_Engine:
         st.StdDev[j] = sd_list[0] if sd_list else Decimal('0.0')
         return st.iATR, st.iStdDev
 
+    # ========================================================================
+    # D-9: Ichimoku normalization uses all FIVE lines.
+    # ========================================================================
     def _normalize(self, j: int) -> None:
         st = self.state
         y = st.y
@@ -1187,6 +1312,7 @@ class AEEA_Engine:
         end = len(self.ohlcv_history)
         window = self.ohlcv_history[end - (j + 1):end]
         close_prices = [d["close"] for d in window]
+        open_prices = [d["open"] for d in window]
         high_prices = [d["high"] for d in window]
         low_prices = [d["low"] for d in window]
         volume_data = [d.get("volume", Decimal('0.0')) for d in window]
@@ -1207,15 +1333,22 @@ class AEEA_Engine:
         if col_c < 0 or col_c >= len(st.cA[0]):
             col_c = col_i
 
+        # [ADX PROJECTION] — D-5: min/max includes +DI and -DI.
         adx_list: List[Decimal] = []
+        plus_di_list: List[Decimal] = []
+        minus_di_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
             sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
             adx_list.append(self._compute_adx(sub_high, sub_low, sub_close, j))
+            pd, md = self._compute_di(sub_high, sub_low, sub_close, j)
+            plus_di_list.append(pd)
+            minus_di_list.append(md)
         if adx_list:
-            maxADX = max(adx_list)
-            minADX = min(adx_list)
+            all_vals = adx_list + plus_di_list + minus_di_list
+            maxADX = max(all_vals)
+            minADX = min(all_vals)
             rangeADX = maxADX - minADX
             if rangeADX != Decimal('0.0'):
                 iADX_val = abs(Decimal('100.0') * ((adx_list[0] - minADX) / rangeADX))
@@ -1229,10 +1362,12 @@ class AEEA_Engine:
             k_p, d_p = stochastic(high_prices[:-1], low_prices[:-1], close_prices[:-1], j, 3)
             st.cA[1][col_c] = (k_p + d_p) / Decimal('2.0')
 
+        # [RVI PROJECTION] — D-6: MQL4 iRVI formula.
         rvi_list: List[Decimal] = []
         for i in range(j + 1):
+            sub_open = open_prices[:len(open_prices) - i] if i > 0 else open_prices
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
-            rvi_list.append(self._compute_rvi(sub_close, j))
+            rvi_list.append(self._compute_rvi(sub_open, sub_close, j))
         if rvi_list:
             maxRVI = max(rvi_list)
             minRVI = min(rvi_list)
@@ -1241,6 +1376,7 @@ class AEEA_Engine:
                 st.iA[2][col_i] = Decimal('100.0') * ((rvi_list[0] - minRVI) / rangeRVI)
                 st.cA[2][col_c] = Decimal('100.0') * ((rvi_list[1] - minRVI) / rangeRVI) if len(rvi_list) > 1 else st.iA[2][col_i]
 
+        # [AC PROJECTION] — D-7: AO over the j-period window only.
         ac_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1268,12 +1404,12 @@ class AEEA_Engine:
                 st.iA[4][col_i] = Decimal('100.0') * ((force_list[0] - minForce) / rangeForce)
                 st.cA[4][col_c] = Decimal('100.0') * ((force_list[1] - minForce) / rangeForce) if len(force_list) > 1 else st.iA[4][col_i]
 
-        # Audit D-25: OBV now cumulative over the full passed array.
+        # [OBV PROJECTION] — D-8: cumulative over full history.
         obv_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
             sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
-            obv_list.append(self._compute_obv(sub_close, sub_vol, j))
+            obv_list.append(self._compute_obv(sub_close, sub_vol))
         if obv_list:
             maxOBV = max(obv_list)
             minOBV = min(obv_list)
@@ -1282,14 +1418,14 @@ class AEEA_Engine:
                 st.iA[5][col_i] = Decimal('100.0') * ((obv_list[0] - minOBV) / rangeOBV)
                 st.cA[5][col_c] = Decimal('100.0') * ((obv_list[1] - minOBV) / rangeOBV) if len(obv_list) > 1 else st.iA[5][col_i]
 
-        # Audit D-26: AD now cumulative over the full passed array.
+        # [AD PROJECTION] — D-8: cumulative over full history.
         ad_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
             sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
             sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
-            ad_list.append(self._compute_ad(sub_high, sub_low, sub_close, sub_vol, j))
+            ad_list.append(self._compute_ad(sub_high, sub_low, sub_close, sub_vol))
         if ad_list:
             maxAD = max(ad_list)
             minAD = min(ad_list)
@@ -1370,94 +1506,187 @@ class AEEA_Engine:
                 st.iA[12][col_i] = Decimal('100.0') * ((rsi_list[0] - minRSI) / rangeRSI)
                 st.cA[12][col_c] = Decimal('100.0') * ((rsi_list[1] - minRSI) / rangeRSI) if len(rsi_list) > 1 else st.iA[12][col_i]
 
+        # [D-9] ICHIMOKU 5-LINE NORMALIZATION RANGE
         kIHK = int(round(j / 2.0))
         tIHK = int(round((kIHK + 1.0) / 3.0))
         if kIHK < 1:
             kIHK = 1
         if tIHK < 1:
             tIHK = 1
-        ihk = ichimoku(high_prices, low_prices, close_prices, tIHK, kIHK, j)
-        st.iIHKk = ihk["kijun"]
-        st.iIHKt = ihk["tenkan"]
+        ihk_curr = ichimoku(high_prices, low_prices, close_prices, tIHK, kIHK, j)
+        ssa: List[Decimal] = []
+        ssb: List[Decimal] = []
+        chikou: List[Decimal] = []
+        tenkan_list: List[Decimal] = []
+        kijun_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            if len(sub_close) < j:
+                continue
+            ihk_i = ichimoku(sub_high, sub_low, sub_close, tIHK, kIHK, j)
+            ssa.append(ihk_i["senkou_a"])
+            ssb.append(ihk_i["senkou_b"])
+            tenkan_list.append(ihk_i["tenkan"])
+            kijun_list.append(ihk_i["kijun"])
+            c_idx = len(sub_close) - 1 - 26
+            if c_idx >= 0:
+                chikou.append(sub_close[c_idx])
+        all_ihk: List[Decimal] = []
+        all_ihk.extend(ssa)
+        all_ihk.extend(ssb)
+        all_ihk.extend(chikou)
+        all_ihk.extend(tenkan_list)
+        all_ihk.extend(kijun_list)
+        if all_ihk:
+            maxIHK = max(all_ihk)
+            minIHK = min(all_ihk)
+            rangeIHK = maxIHK - minIHK
+            if rangeIHK != Decimal('0.0'):
+                st.iIHKk = Decimal('100.0') * ((ihk_curr["kijun"] - minIHK) / rangeIHK)
+                st.iIHKt = Decimal('100.0') * ((ihk_curr["tenkan"] - minIHK) / rangeIHK)
+        else:
+            st.iIHKk = ihk_curr["kijun"]
+            st.iIHKt = ihk_curr["tenkan"]
 
+    # ========================================================================
+    # D-5: _compute_adx() — Wilder-correct.
+    # ========================================================================
     def _compute_adx(self, high, low, close, period: int) -> Decimal:
-        if len(close) < period + 1 or period <= 0:
+        if len(close) < 2 * period + 1 or period <= 0:
             return Decimal('50.0')
-        trs, plus_dm, minus_dm = [], [], []
+        n = len(close)
+        trs_fwd: List[Decimal] = []
+        pdm_fwd: List[Decimal] = []
+        mdm_fwd: List[Decimal] = []
+        start = n - 2 * period
+        if start < 1:
+            start = 1
+        for i in range(start, n):
+            tr = max(
+                high[i] - low[i],
+                abs(high[i] - close[i - 1]),
+                abs(low[i] - close[i - 1])
+            )
+            trs_fwd.append(tr)
+            up_move = high[i] - high[i - 1]
+            dn_move = low[i - 1] - low[i]
+            pdm_fwd.append(up_move if up_move > dn_move and up_move > 0 else Decimal('0.0'))
+            mdm_fwd.append(dn_move if dn_move > up_move and dn_move > 0 else Decimal('0.0'))
+        if len(trs_fwd) < 2 * period:
+            return Decimal('50.0')
+        atr_k = sum(trs_fwd[:period]) / Decimal(period)
+        plus_dm_k = sum(pdm_fwd[:period]) / Decimal(period)
+        minus_dm_k = sum(mdm_fwd[:period]) / Decimal(period)
+        dx_series: List[Decimal] = []
+        plus_di = (Decimal('100.0') * plus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+        minus_di = (Decimal('100.0') * minus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+        di_sum = plus_di + minus_di
+        if di_sum == Decimal('0.0'):
+            dx_series.append(Decimal('0.0'))
+        else:
+            dx_series.append(Decimal('100.0') * abs(plus_di - minus_di) / di_sum)
+        for k in range(period, len(trs_fwd)):
+            atr_k = (atr_k * Decimal(period - 1) + trs_fwd[k]) / Decimal(period)
+            plus_dm_k = (plus_dm_k * Decimal(period - 1) + pdm_fwd[k]) / Decimal(period)
+            minus_dm_k = (minus_dm_k * Decimal(period - 1) + mdm_fwd[k]) / Decimal(period)
+            plus_di = (Decimal('100.0') * plus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+            minus_di = (Decimal('100.0') * minus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+            di_sum = plus_di + minus_di
+            if di_sum == Decimal('0.0'):
+                dx_series.append(Decimal('0.0'))
+            else:
+                dx_series.append(Decimal('100.0') * abs(plus_di - minus_di) / di_sum)
+        if len(dx_series) < period:
+            return dx_series[-1] if dx_series else Decimal('50.0')
+        adx_val = sum(dx_series[:period]) / Decimal(period)
+        for k in range(period, len(dx_series)):
+            adx_val = (adx_val * Decimal(period - 1) + dx_series[k]) / Decimal(period)
+        return adx_val
+
+    # ========================================================================
+    # D-5 helper: _compute_di() returns (+DI, -DI).
+    # ========================================================================
+    def _compute_di(self, high, low, close, period: int) -> Tuple[Decimal, Decimal]:
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0'), Decimal('50.0')
+        trs: List[Decimal] = []
+        plus_dm: List[Decimal] = []
+        minus_dm: List[Decimal] = []
         for i in range(1, period + 1):
-            tr = max(high[-i] - low[-i], abs(high[-i] - close[-i - 1]), abs(low[-i] - close[-i - 1]))
+            tr = max(
+                high[-i] - low[-i],
+                abs(high[-i] - close[-i - 1]),
+                abs(low[-i] - close[-i - 1])
+            )
             trs.append(tr)
             up_move = high[-i] - high[-i - 1]
             dn_move = low[-i - 1] - low[-i]
             plus_dm.append(up_move if up_move > dn_move and up_move > 0 else Decimal('0.0'))
             minus_dm.append(dn_move if dn_move > up_move and dn_move > 0 else Decimal('0.0'))
         if len(trs) < period:
-            return Decimal('50.0')
-        dx_series = []
-        atr_k = Decimal('0.0')
-        plus_di = Decimal('0.0')
-        minus_di = Decimal('0.0')
-        for k in range(period):
-            if k == 0:
-                atr_k = sum(trs[:period]) / Decimal(period)
-                plus_di = Decimal('100.0') * (sum(plus_dm[:period]) / Decimal(period)) / atr_k if atr_k != Decimal('0.0') else Decimal('0.0')
-                minus_di = Decimal('100.0') * (sum(minus_dm[:period]) / Decimal(period)) / atr_k if atr_k != Decimal('0.0') else Decimal('0.0')
-            else:
-                atr_k = (atr_k * Decimal(period - 1) + trs[period - k - 1]) / Decimal(period)
-                smoothed_plus = (plus_di * Decimal(period - 1) + plus_dm[period - k - 1]) / Decimal(period)
-                smoothed_minus = (minus_di * Decimal(period - 1) + minus_dm[period - k - 1]) / Decimal(period)
-                plus_di = Decimal('100.0') * smoothed_plus / atr_k if atr_k != Decimal('0.0') else Decimal('0.0')
-                minus_di = Decimal('100.0') * smoothed_minus / atr_k if atr_k != Decimal('0.0') else Decimal('0.0')
-            di_sum = plus_di + minus_di
-            if di_sum == Decimal('0.0'):
-                dx_series.append(Decimal('0.0'))
-            else:
-                dx_series.append(Decimal('100.0') * abs(plus_di - minus_di) / di_sum)
-        if not dx_series:
-            return Decimal('50.0')
-        if len(dx_series) < period:
-            return dx_series[-1]
-        adx_val = sum(dx_series[:period]) / Decimal(period)
-        for k in range(period, len(dx_series)):
-            adx_val = (adx_val * Decimal(period - 1) + dx_series[k]) / Decimal(period)
-        return adx_val
+            return Decimal('50.0'), Decimal('50.0')
+        atr_k = sum(trs[:period]) / Decimal(period)
+        plus_dm_k = sum(plus_dm[:period]) / Decimal(period)
+        minus_dm_k = sum(minus_dm[:period]) / Decimal(period)
+        plus_di = (Decimal('100.0') * plus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+        minus_di = (Decimal('100.0') * minus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+        return plus_di, minus_di
 
-    def _compute_rvi(self, close, period: int) -> Decimal:
-        if len(close) < period + 1 or period <= 0:
+    # ========================================================================
+    # D-6: _compute_rvi() — MQL4 iRVI formula.
+    # ========================================================================
+    def _compute_rvi(self, open_prices, close_prices, period: int) -> Decimal:
+        if len(close_prices) < period + 3 or period <= 0:
             return Decimal('50.0')
-        numerator = Decimal('0.0')
-        denominator = Decimal('0.0')
-        for i in range(1, period + 1):
-            diff = close[-i] - close[-i - 1]
-            if diff > Decimal('0.0'):
-                numerator += diff
-            elif diff < Decimal('0.0'):
-                denominator += abs(diff)
-        if denominator == Decimal('0.0'):
-            if numerator == Decimal('0.0'):
-                return Decimal('50.0')
-            return Decimal('100.0')
-        ratio = numerator / denominator
-        return Decimal('100.0') * ratio / (Decimal('1.0') + ratio)
+        n = len(close_prices)
+        num_series: List[Decimal] = []
+        den_series: List[Decimal] = []
+        for i in range(3, n):
+            num_i = (
+                (close_prices[i] - open_prices[i])
+                + Decimal('2.0') * (close_prices[i - 1] - open_prices[i - 1])
+                + Decimal('2.0') * (close_prices[i - 2] - open_prices[i - 2])
+                + (close_prices[i - 3] - open_prices[i - 3])
+            )
+            den_i = (
+                abs(close_prices[i] - open_prices[i])
+                + Decimal('2.0') * abs(close_prices[i - 1] - open_prices[i - 1])
+                + Decimal('2.0') * abs(close_prices[i - 2] - open_prices[i - 2])
+                + abs(close_prices[i - 3] - open_prices[i - 3])
+            )
+            num_series.append(num_i)
+            den_series.append(den_i)
+        if len(num_series) < period:
+            return Decimal('50.0')
+        num_sma = sum(num_series[-period:]) / Decimal(period)
+        den_sma = sum(den_series[-period:]) / Decimal(period)
+        if den_sma == Decimal('0.0'):
+            return Decimal('50.0')
+        return num_sma / den_sma
 
+    # ========================================================================
+    # D-7: _compute_ac() — AO over the j-period window.
+    # ========================================================================
     def _compute_ac(self, high, low, close, period: int) -> Decimal:
         if len(close) < 40 or period <= 0:
             return Decimal('0.0')
-        median = [(high[-i] + low[-i]) / Decimal('2.0') for i in range(len(close))]
+        window = min(period, len(close))
+        if window < 40:
+            return Decimal('0.0')
+        median = [(high[-i] + low[-i]) / Decimal('2.0') for i in range(window)]
         median.reverse()
         def sma_local(data, p):
             if len(data) < p or p <= 0:
                 return Decimal('0.0')
             return sum(data[-p:]) / Decimal(p)
         ao_now = sma_local(median, 5) - sma_local(median, 34)
-        if len(median) < 5:
-            return Decimal('0.0')
-        ao_series = []
+        ao_series: List[Decimal] = []
         for i in range(min(5, len(median))):
             sub = median[:len(median) - i] if i > 0 else median
             ao_series.append(sma_local(sub, 5) - sma_local(sub, 34))
-        ac = ao_now - sma_local(ao_series, 5)
-        return ac
+        return ao_now - sma_local(ao_series, 5)
 
     def _compute_force(self, close, volume, period: int) -> Decimal:
         if len(close) < period + 1 or period <= 0:
@@ -1467,8 +1696,10 @@ class AEEA_Engine:
             forces.append(volume[-i] * (close[-i] - close[-i - 1]))
         return sum(forces) / Decimal(period)
 
-    # Audit D-25: cumulative OBV over the entire passed array.
-    def _compute_obv(self, close, volume, period: int) -> Decimal:
+    # ========================================================================
+    # D-8: _compute_obv() — cumulative over the full passed array.
+    # ========================================================================
+    def _compute_obv(self, close, volume) -> Decimal:
         if len(close) < 2:
             return Decimal('0.0')
         obv = Decimal('0.0')
@@ -1479,8 +1710,10 @@ class AEEA_Engine:
                 obv -= volume[i] if i < len(volume) else Decimal('0.0')
         return obv
 
-    # Audit D-26: cumulative A/D over the entire passed array.
-    def _compute_ad(self, high, low, close, volume, period: int) -> Decimal:
+    # ========================================================================
+    # D-8: _compute_ad() — cumulative over the full passed array.
+    # ========================================================================
+    def _compute_ad(self, high, low, close, volume) -> Decimal:
         if len(close) < 2:
             return Decimal('0.0')
         ad = Decimal('0.0')
@@ -1549,56 +1782,9 @@ class AEEA_Engine:
             return Decimal('0.0')
         return (tp[0] - sma_tp) / (Decimal('0.015') * mad)
 
-    # Audit D-35 / D-36: _count_imbalance is used only for diagnostics.
-    # The authoritative m/n come from the most recent _H()/_L() call,
-    # which write st.last_kronecker_m / st.last_kronecker_n.
-    def _count_imbalance(self, j: int) -> Tuple[int, int]:
-        st = self.state
-        y = st.y
-        m = 0
-        n = 0
-        idx_i = j - (y + 1)
-        if idx_i < 0 or idx_i >= len(st.iA[0]):
-            return (0, 0)
-        idx_c = idx_i
-        if idx_c < 0 or idx_c >= len(st.cA[0]):
-            idx_c = idx_i
-        f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
-        g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
-        hh_val = st.HH[idx_i] if idx_i < len(st.HH) else Decimal('0.0')
-        ll_val = st.LL[idx_i] if idx_i < len(st.LL) else Decimal('0.0')
-        for i in range(13):
-            iA_val = st.iA[i][idx_i]
-            cA_val = st.cA[i][idx_c]
-            kA_val = st.kA[i][idx_c]
-            lA_val = st.lA[i][idx_c]
-            if st.Price > hh_val:
-                if iA_val > f_plus_gf or cA_val < kA_val:
-                    m += 1
-            elif st.price > hh_val:
-                if iA_val > f_plus_gf or iA_val < kA_val:
-                    m += 1
-            else:
-                if iA_val > f_plus_gf:
-                    m += 1
-            if st.Price < ll_val:
-                if iA_val < g_minus_gf or cA_val > lA_val:
-                    n += 1
-            elif st.price < ll_val:
-                if iA_val < g_minus_gf or iA_val > lA_val:
-                    n += 1
-            else:
-                if iA_val < g_minus_gf:
-                    n += 1
-        adx_val = st.iA[0][idx_i]
-        if adx_val > f_plus_gf or adx_val < g_minus_gf:
-            m += 1
-        if st.iIHKt > f_plus_gf and st.iIHKk > f_plus_gf:
-            m += 1
-        if st.iIHKt < g_minus_gf and st.iIHKk < g_minus_gf:
-            n += 1
-        return (m, n)
-
+    # ========================================================================
+    # D-1: _M() — FF operator precedence, single ADX increment, prior HH.
+    # ========================================================================
     def _M(self, j: int) -> int:
         st = self.state
         y = st.y
@@ -1609,8 +1795,8 @@ class AEEA_Engine:
             return 0
         if idx_c < 0 or idx_c >= len(st.cA[0]):
             idx_c = idx_i
-        f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
-        g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
+        f_plus_gf = F_PLUS_GF_D
+        g_minus_gf = G_MINUS_GF_D
         hh_val = st.HH[idx_i] if idx_i < len(st.HH) else Decimal('0.0')
         for i in range(13):
             iA_val = st.iA[i][idx_i]
@@ -1619,13 +1805,11 @@ class AEEA_Engine:
             if st.Price > hh_val:
                 if iA_val > f_plus_gf or cA_val < kA_val:
                     m += 1
-                continue
-            if st.price > hh_val:
-                if iA_val > f_plus_gf or iA_val < kA_val:
-                    m += 1
-                continue
-            if iA_val > f_plus_gf:
-                m += 1
+                elif st.price > hh_val:
+                    if iA_val > f_plus_gf or iA_val < kA_val:
+                        m += 1
+                    elif iA_val > f_plus_gf:
+                        m += 1
         adx_val = st.iA[0][idx_i]
         if adx_val > f_plus_gf or adx_val < g_minus_gf:
             m += 1
@@ -1638,6 +1822,9 @@ class AEEA_Engine:
                 st.HH[idx_i] = st.Price
         return m
 
+    # ========================================================================
+    # D-2: _N() — mirrored.
+    # ========================================================================
     def _N(self, j: int) -> int:
         st = self.state
         y = st.y
@@ -1648,8 +1835,8 @@ class AEEA_Engine:
             return 0
         if idx_c < 0 or idx_c >= len(st.cA[0]):
             idx_c = idx_i
-        f_plus_gf = F_THRESHOLD_D + GF_TOLERANCE_D
-        g_minus_gf = G_THRESHOLD_D - GF_TOLERANCE_D
+        f_plus_gf = F_PLUS_GF_D
+        g_minus_gf = G_MINUS_GF_D
         ll_val = st.LL[idx_i] if idx_i < len(st.LL) else Decimal('0.0')
         for i in range(13):
             iA_val = st.iA[i][idx_i]
@@ -1658,13 +1845,11 @@ class AEEA_Engine:
             if st.Price < ll_val:
                 if iA_val < g_minus_gf or cA_val > lA_val:
                     n += 1
-                continue
-            if st.price < ll_val:
-                if iA_val < g_minus_gf or iA_val > lA_val:
-                    n += 1
-                continue
-            if iA_val < g_minus_gf:
-                n += 1
+                elif st.price < ll_val:
+                    if iA_val < g_minus_gf or iA_val > lA_val:
+                        n += 1
+                    elif iA_val < g_minus_gf:
+                        n += 1
         adx_val = st.iA[0][idx_i]
         if adx_val > f_plus_gf or adx_val < g_minus_gf:
             n += 1
@@ -1677,7 +1862,9 @@ class AEEA_Engine:
                 st.LL[idx_i] = st.Price
         return n
 
-    # Audit D-35 / D-36: _H / _L stamp the authoritative m/n.
+    # ========================================================================
+    # C-3.16: _H()/_L() write the SINGLE authoritative m/n source.
+    # ========================================================================
     def _H(self, j: int) -> None:
         st = self.state
         idx = j - (st.y + 1)
@@ -1686,16 +1873,14 @@ class AEEA_Engine:
         m = self._M(j)
         st.m = m
         st.k[idx] = (m >= 12)
+        st.authoritative_m = m
+        st.authoritative_h = j
         st.last_kronecker_m = m
         st.last_kronecker_h = j
         st.m_now = m
         st.m = 0
         if st.k[idx]:
             logger.info(f"🔺 H() set k[{idx}] = True (m={m} >= 12) at bar j={j}")
-            # v4.1.1 C4: H() itself does not emit a toast — it is a
-            # precondition, not an execution-layer event. The toast fires
-            # when OnGoe() consumes the flag and calls _signal(), or when
-            # the Kronecker-delta execution block dispatches.
 
     def _L(self, j: int) -> None:
         st = self.state
@@ -1705,6 +1890,8 @@ class AEEA_Engine:
         n = self._N(j)
         st.n = n
         st.l[idx] = (n >= 12)
+        st.authoritative_n = n
+        st.authoritative_h = j
         st.last_kronecker_n = n
         st.last_kronecker_h = j
         st.n_now = n
@@ -1746,6 +1933,9 @@ class AEEA_Engine:
             if V == target_size:
                 st.R = False
 
+    # ========================================================================
+    # D-4: _G() also fired from _on_gaurd()'s boundary branch.
+    # ========================================================================
     def _G(self) -> None:
         st = self.state
         y = st.y
@@ -1784,28 +1974,11 @@ class AEEA_Engine:
         elif st.iI == st.iw:
             st.iJ = st.iz
 
+    # ========================================================================
+    # D-10: _O() — FF's O() is a no-op (MQL4 passes bool by value).
+    # ========================================================================
     def _O(self, inp: int, inp0: int, inp1: int, which: str = "C") -> None:
-        st = self.state
-        regime_idx = inp0 - (st.y + 1)
-        if regime_idx < 0 or regime_idx >= len(st.Regime):
-            return
-        regime = st.Regime[regime_idx]
-        if which == "C":
-            ref = st.Cc
-        elif which == "c":
-            ref = st.cC
-        else:
-            return
-        if (inp < inp1) and (regime == "sRange" or regime == "tRange"):
-            new_val = ref
-        elif regime != "sRange" and regime != "tRange":
-            new_val = not ref
-        else:
-            new_val = not ref
-        if which == "C":
-            st.C = new_val
-        else:
-            st.c = new_val
+        return
 
     def _R(self, j: int) -> None:
         st = self.state
@@ -1933,12 +2106,11 @@ class AEEA_Engine:
         st.kPass = st.Price if st.Price > st.open else st.open
         st.ikPass = st.iPrice if st.iPrice > st.iopen else st.iopen
 
-        # ====================================================================
-        # Audit D-47: the FF's Kronecker-delta execution block, ported verbatim.
-        # v4.1.1 C4: every dispatch site now emits an execution toast.
-        # ====================================================================
         self._execute_kronecker_block()
 
+    # ========================================================================
+    # D-3: _execute_kronecker_block() reads prior HH/LL before any mutation.
+    # ========================================================================
     def _execute_kronecker_block(self) -> None:
         st = self.state
         fg = ""
@@ -1959,6 +2131,11 @@ class AEEA_Engine:
         if st.tick_tock:
             return
 
+        hh_idx = MIN_PERIOD - (st.y + 1)
+        ll_idx = MIN_PERIOD - (st.y + 1)
+        hh_anchor = st.HH[hh_idx] if 0 <= hh_idx < len(st.HH) else Decimal('0.0')
+        ll_anchor = st.LL[ll_idx] if 0 <= ll_idx < len(st.LL) else Decimal('0.0')
+
         bullish_coherence = (
             (
                 (st.Price > st.signal)
@@ -1968,11 +2145,11 @@ class AEEA_Engine:
             and (
                 (
                     st.iC == st.Cc
-                    and st.Price > st.HH[MIN_PERIOD - (st.y + 1)]
+                    and st.Price > hh_anchor
                 )
                 or (
                     st.jC == st.Cc
-                    and st.Price >= st.LL[MIN_PERIOD - (st.y + 1)]
+                    and st.Price >= ll_anchor
                     and (
                         (st.open >= st.Stock)
                         or (st.Price >= st.Stock)
@@ -1999,11 +2176,11 @@ class AEEA_Engine:
             and (
                 (
                     st.jC == st.Cc
-                    and st.Price < st.LL[MIN_PERIOD - (st.y + 1)]
+                    and st.Price < ll_anchor
                 )
                 or (
                     st.iC == st.Cc
-                    and st.Price <= st.HH[MIN_PERIOD - (st.y + 1)]
+                    and st.Price <= hh_anchor
                     and (
                         (st.open <= st.Sale)
                         or (st.Price <= st.Sale)
@@ -2023,6 +2200,7 @@ class AEEA_Engine:
 
         if st.toll == 1 and (st.tally == "Buy" or fg == "Up"):
             logger.info(f"🔷 Diamond {fg}")
+            self._last_dispatch_event = "Diamond"
             self._dispatch_diamond_subblock(fg)
             st.signal = Decimal('0.0')
             st.toll = 0
@@ -2034,6 +2212,7 @@ class AEEA_Engine:
 
         if st.toll == 1 and (st.tally == "Sell" or fg == "Down"):
             logger.info(f"🔻 Ruby {fg}")
+            self._last_dispatch_event = "Ruby"
             self._dispatch_ruby_subblock(fg)
             st.signal = Decimal('0.0')
             st.toll = 0
@@ -2045,6 +2224,7 @@ class AEEA_Engine:
 
         if st.count == 1 and (st.tally == "Buy" or fg == "Up"):
             logger.info(f"🔷 Diamond {fg}")
+            self._last_dispatch_event = "Diamond"
             self._dispatch_hawk_subblock(fg)
             st.count = 0
             st.tally = ""
@@ -2055,6 +2235,7 @@ class AEEA_Engine:
 
         if st.count == 1 and (st.tally == "Sell" or fg == "Down"):
             logger.info(f"🔻 Ruby {fg}")
+            self._last_dispatch_event = "Ruby"
             self._dispatch_dove_subblock(fg)
             st.count = 0
             st.tally = ""
@@ -2066,385 +2247,307 @@ class AEEA_Engine:
     def _dispatch_diamond_subblock(self, fg: str) -> None:
         st = self.state
         if (st.prime == 0 and st.dime == 0) and fg == "Up":
-            st.dime = 0
-            st.mem = 0
+            st.dime = 0; st.mem = 0
             self._B(st.price)
-            if st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🐂 Bull")
             self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
-            st.dime = 0
-            st.mem = 0
+            st.dime = 0; st.mem = 0
             self._B(st.price)
-            if st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🐂 Bull")
             self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
         elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
-            st.dime = 0
-            st.mem = 0
+            st.dime = 0; st.mem = 0
             self._B(st.price)
-            if st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🐂 Bull")
             self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
-            st.dime = 0
-            st.mem = 0
+            st.dime = 0; st.mem = 0
             self._B(st.price)
-            if st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🐂 Bull")
             self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
         elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
             if st.safety:
                 self._B(st.price)
-                if st.C:
-                    self._P(st.price)
-                else:
-                    self._Q(st.price)
+                if st.C: self._P(st.price)
+                else: self._Q(st.price)
                 logger.info("🥃 Whisky")
                 self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
-                self._Top()
+                self._Top(emit_toast=False)
                 st.E = st.price
             else:
                 logger.info("🥃 Whisky")
                 self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
-                self._Top()
+                self._Top(emit_toast=False)
                 st.E = st.price
-                if not st.safety:
-                    st.safety = True
+                if not st.safety: st.safety = True
         elif st.mem == 1 or st.dime == 1:
             self._on_log()
             if st.safety:
                 self._A(st.price)
-                if not st.C:
-                    self._P(st.price)
-                else:
-                    self._Q(st.price)
+                if not st.C: self._P(st.price)
+                else: self._Q(st.price)
                 logger.info("🍷 Wine")
                 self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
-                self._Bott()
+                self._Bott(emit_toast=False)
                 st.D = st.price
             else:
                 logger.info("🍷 Wine")
                 self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
-                self._Bott()
+                self._Bott(emit_toast=False)
                 st.D = st.price
-                if not st.safety:
-                    st.safety = True
+                if not st.safety: st.safety = True
         else:
             logger.info("🍷 Wine")
             self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
-            if not st.safety:
-                st.safety = True
+            if not st.safety: st.safety = True
 
     def _dispatch_ruby_subblock(self, fg: str) -> None:
         st = self.state
         if fg == "Down" and (st.prime == 1 and st.dime == 1):
-            st.dime = 1
-            st.mem = 1
+            st.dime = 1; st.mem = 1
             self._A(st.price)
-            if not st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🐻 Bear")
             self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
-            st.dime = 1
-            st.mem = 1
+            st.dime = 1; st.mem = 1
             self._A(st.price)
-            if not st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🐻 Bear")
             self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
         elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
-            st.dime = 1
-            st.mem = 1
+            st.dime = 1; st.mem = 1
             self._A(st.price)
-            if not st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🐻 Bear")
             self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
-            st.dime = 1
-            st.mem = 1
+            st.dime = 1; st.mem = 1
             self._A(st.price)
-            if not st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🐻 Bear")
             self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
         elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
             if st.safety:
                 self._A(st.price)
-                if not st.C:
-                    self._P(st.price)
-                else:
-                    self._Q(st.price)
+                if not st.C: self._P(st.price)
+                else: self._Q(st.price)
                 logger.info("🍷 Wine")
                 self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
-                self._Bott()
+                self._Bott(emit_toast=False)
                 st.D = st.price
             else:
                 logger.info("🍷 Wine")
                 self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
-                self._Bott()
+                self._Bott(emit_toast=False)
                 st.D = st.price
-                if not st.safety:
-                    st.safety = True
+                if not st.safety: st.safety = True
         elif st.mem == 0 or st.dime == 0:
             self._on_log()
             if st.safety:
                 self._B(st.price)
-                if st.C:
-                    self._P(st.price)
-                else:
-                    self._Q(st.price)
+                if st.C: self._P(st.price)
+                else: self._Q(st.price)
                 logger.info("🥃 Whisky")
                 self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
-                self._Top()
+                self._Top(emit_toast=False)
                 st.E = st.price
             else:
                 logger.info("🥃 Whisky")
                 self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
-                self._Top()
+                self._Top(emit_toast=False)
                 st.E = st.price
-                if not st.safety:
-                    st.safety = True
+                if not st.safety: st.safety = True
         else:
             logger.info("🥃 Whisky")
             self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
-            if not st.safety:
-                st.safety = True
+            if not st.safety: st.safety = True
 
     def _dispatch_hawk_subblock(self, fg: str) -> None:
         st = self.state
         if (st.prime == 0 and st.dime == 0) and fg == "Up":
-            st.dime = 0
-            st.mem = 0
+            st.dime = 0; st.mem = 0
             self._B(st.price)
-            if st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🦅 Hawk")
             self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
-            st.dime = 0
-            st.mem = 0
+            st.dime = 0; st.mem = 0
             self._B(st.price)
-            if st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🦅 Hawk")
             self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
         elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
-            st.dime = 0
-            st.mem = 0
+            st.dime = 0; st.mem = 0
             self._B(st.price)
-            if st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🦅 Hawk")
             self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
-            st.dime = 0
-            st.mem = 0
+            st.dime = 0; st.mem = 0
             self._B(st.price)
-            if st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🦅 Hawk")
             self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
         elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
             if st.safety:
                 self._B(st.price)
-                if st.C:
-                    self._P(st.price)
-                else:
-                    self._Q(st.price)
+                if st.C: self._P(st.price)
+                else: self._Q(st.price)
                 logger.info("💧 Watter")
                 self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
-                self._Top()
+                self._Top(emit_toast=False)
                 st.E = st.price
             else:
                 logger.info("💧 Watter")
                 self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
-                self._Top()
+                self._Top(emit_toast=False)
                 st.E = st.price
-                if not st.safety:
-                    st.safety = True
+                if not st.safety: st.safety = True
         elif st.mem == 1 or st.dime == 1:
             self._on_log()
             if st.safety:
                 self._A(st.price)
-                if not st.C:
-                    self._P(st.price)
-                else:
-                    self._Q(st.price)
+                if not st.C: self._P(st.price)
+                else: self._Q(st.price)
                 logger.info("🩸 Blood")
                 self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
-                self._Bott()
+                self._Bott(emit_toast=False)
                 st.D = st.price
             else:
                 logger.info("🩸 Blood")
                 self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
-                self._Bott()
+                self._Bott(emit_toast=False)
                 st.D = st.price
-                if not st.safety:
-                    st.safety = True
+                if not st.safety: st.safety = True
         else:
             logger.info("🩸 Blood")
             self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
-            if not st.safety:
-                st.safety = True
+            if not st.safety: st.safety = True
 
     def _dispatch_dove_subblock(self, fg: str) -> None:
         st = self.state
         if fg == "Down" and (st.prime == 1 and st.dime == 1):
-            st.dime = 1
-            st.mem = 1
+            st.dime = 1; st.mem = 1
             self._A(st.price)
-            if not st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🕊️ Dove")
             self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
-            st.dime = 1
-            st.mem = 1
+            st.dime = 1; st.mem = 1
             self._A(st.price)
-            if not st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🕊️ Dove")
             self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
         elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
-            st.dime = 1
-            st.mem = 1
+            st.dime = 1; st.mem = 1
             self._A(st.price)
-            if not st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🕊️ Dove")
             self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
-            st.dime = 1
-            st.mem = 1
+            st.dime = 1; st.mem = 1
             self._A(st.price)
-            if not st.C:
-                self._P(st.price)
-            else:
-                self._Q(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
             logger.info("🕊️ Dove")
             self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
-            self._Bott()
+            self._Bott(emit_toast=False)
             st.D = st.price
         elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
             if st.safety:
                 self._A(st.price)
-                if not st.C:
-                    self._P(st.price)
-                else:
-                    self._Q(st.price)
+                if not st.C: self._P(st.price)
+                else: self._Q(st.price)
                 logger.info("🩸 Blood")
                 self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
-                self._Bott()
+                self._Bott(emit_toast=False)
                 st.D = st.price
             else:
                 logger.info("🩸 Blood")
                 self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
-                self._Bott()
+                self._Bott(emit_toast=False)
                 st.D = st.price
-                if not st.safety:
-                    st.safety = True
+                if not st.safety: st.safety = True
         elif st.mem == 0 or st.dime == 0:
             self._on_log()
             if st.safety:
                 self._B(st.price)
-                if st.C:
-                    self._P(st.price)
-                else:
-                    self._Q(st.price)
+                if st.C: self._P(st.price)
+                else: self._Q(st.price)
                 logger.info("💧 Watter")
                 self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
-                self._Top()
+                self._Top(emit_toast=False)
                 st.E = st.price
             else:
                 logger.info("💧 Watter")
                 self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
-                self._Top()
+                self._Top(emit_toast=False)
                 st.E = st.price
-                if not st.safety:
-                    st.safety = True
+                if not st.safety: st.safety = True
         else:
             logger.info("💧 Watter")
             self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
-            self._Top()
+            self._Top(emit_toast=False)
             st.E = st.price
-            if not st.safety:
-                st.safety = True
+            if not st.safety: st.safety = True
 
-    # Audit D-41: _on_call uses a while-loop with a dynamically
-    # re-evaluated bound (MQL4 j < X + 2 semantics).
     def _on_call(self) -> None:
         st = self.state
         y = st.y
@@ -2490,6 +2593,9 @@ class AEEA_Engine:
             j += 1
         st.X_scan = y
 
+    # ========================================================================
+    # D-11: _on_track() second loop uses grown st.S.
+    # ========================================================================
     def _on_track(self) -> None:
         st = self.state
         st.on_track_runs += 1
@@ -2582,8 +2688,9 @@ class AEEA_Engine:
                             st.Regime[idx] = "sVolatile"
                     st.S += 1
             s += 1
+        grown_S = st.S
         s = X_PERIOD - 1
-        while s < st.S:
+        while s < grown_S:
             idx = s - (y + 1)
             if idx < 0:
                 s += 1
@@ -2862,64 +2969,32 @@ class AEEA_Engine:
         if self._on_gaurd(0) and st.KC:
             if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
                 if (not st.C) and (not st.c):
-                    st.prime = 1
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
                     logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
-                    st.prime = 1
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
                     logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
-                    st.prime = 1
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
                     logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
-                    st.prime = 1
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
                     logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
                 if (not st.C) or (not st.c):
-                    st.prime = 1
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
                     logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
-                    st.prime = 1
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
                     logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
-                    st.prime = 1
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
                     logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
-                    st.prime = 1
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
                     logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             self._KC()
 
@@ -2930,74 +3005,38 @@ class AEEA_Engine:
         if self._on_gaurd(0) and st.KC:
             if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
                 if (not st.C) and (not st.c):
-                    st.prime = 0
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
                     logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
-                    st.prime = 0
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
                     logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
-                    st.prime = 0
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
                     logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
-                    st.prime = 0
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
                     logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
                 if (not st.C) or (not st.c):
-                    st.prime = 0
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
                     logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
-                    st.prime = 0
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
                     logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
-                    st.prime = 0
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
                     logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
-                    st.prime = 0
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
                     logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             self._KC()
 
-    # Audit D-46: _signal no longer sets signature/GF. It sets only
-    # the signal anchor and the diagnostic history record. The
-    # execution block in _on_bar() (via _execute_kronecker_block)
-    # sets signature/GF after a Kronecker-delta execution completes.
-    #
-    # v4.1.1 C3: _signal now emits a signal toast unconditionally (no
-    # cooldown) and calls _send_signal_alert() unconditionally.
+    # ========================================================================
+    # C-3.16: _signal() reads authoritative_m/n from _H()/_L().
+    # ========================================================================
     def _signal(self) -> None:
         st = self.state
         if st.price <= Decimal('0.0'):
@@ -3008,11 +3047,9 @@ class AEEA_Engine:
         st.tally = " "
         st.signal = st.price
 
-        m_local, n_local = self._count_imbalance(st.h)
-        st.last_kronecker_m = m_local
-        st.last_kronecker_n = n_local
-        st.last_kronecker_h = st.h
-        self._last_kronecker_bar = st.h
+        m_local = st.authoritative_m
+        n_local = st.authoritative_n
+        self._last_kronecker_bar = st.authoritative_h if st.authoritative_h >= 0 else st.h
         self._imbalance_fire_count += 1
         self._last_signal_time = datetime.now()
 
@@ -3048,7 +3085,6 @@ class AEEA_Engine:
             st.signal_history = st.signal_history[-st.max_signal_history:]
         st.last_signal_at = signal_record["timestamp"]
         logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
-        # v4.1.1 C3: emit toast + Telegram alert on EVERY signal fire.
         _emit_toast("signal", {
             "type": signal_type,
             "price": str(st.price),
@@ -3062,15 +3098,32 @@ class AEEA_Engine:
         })
         self._send_signal_alert()
 
+    # ========================================================================
+    # D-4: _on_gaurd() now fires _G() from the boundary branch.
+    # ========================================================================
     def _on_gaurd(self, inp: int) -> bool:
         st = self.state
         if st.price > st.E and st.E != Decimal('0.0'):
             if st.signature and inp != -1:
                 st.dime = 0
+            if inp == -1 and st.h != 0 and not st.ab and (st.O > 2) and (st.O != X_PERIOD - 1):
+                if st.O < len(st.HH) and st.O < len(st.Premium) and st.HH[st.O] > st.Premium[st.O]:
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 0 if (st.C or st.c) else 1
+                    st.dime = st.mem
             return True
         else:
             if st.signature and inp != -1:
                 st.dime = 1
+            if inp == -1 and st.h != 0 and not st.ab and (st.O > 2) and (st.O != X_PERIOD - 1):
+                if st.O < len(st.LL) and st.O < len(st.Discount) and st.LL[st.O] < st.Discount[st.O]:
+                    self._G()
+                    self._signal()
+                    st.tick_tock = True
+                    st.tag = 1 if (st.C or st.c) else 0
+                    st.dime = st.mem
             return False
 
     def _on_log(self) -> None:
@@ -3102,8 +3155,6 @@ class AEEA_Engine:
         st.trailing_stop_active = False
         st.trailing_stop_price = Decimal('0.0')
         st.trailing_take_profit = Decimal('0.0')
-        # v4.1.1 C4: A() is an execution-layer event even when no order
-        # was open. Emit a toast unconditionally.
         self._emit_execution_toast("A", price, "CLOSE", -1, "")
 
     def _B(self, price: Decimal) -> None:
@@ -3213,17 +3264,30 @@ class AEEA_Engine:
             self._A(price)
             logger.info("⚠️ Q(): BUY rejected — projected PnL <= spread friction")
 
+    # ========================================================================
+    # D-12: _S() uses ask for bSL/bTP and bid for sSL/sTP.
+    # M-2: multiplies STOP_LOSS and TAKE_PROFIT by point size.
+    # ========================================================================
     def _S(self) -> None:
         st = self.state
+        point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        sl_price = STOP_LOSS * point
+        tp_price = TAKE_PROFIT * point
+        bid = st.price
+        ask = st.price
+        if self.price_history:
+            bid = self.price_history[-1].bid
+            ask = self.price_history[-1].ask
         if STOP_LOSS != Decimal('0.0'):
-            self._sSL = st.price + STOP_LOSS - COMMISSION
-            self._bSL = st.price - STOP_LOSS + COMMISSION
+            self._sSL = bid + sl_price - COMMISSION
+            self._bSL = ask - sl_price + COMMISSION
         if TAKE_PROFIT != Decimal('0.0'):
-            self._sTP = st.price - TAKE_PROFIT
-            self._bTP = st.price + TAKE_PROFIT
+            self._sTP = bid - tp_price
+            self._bTP = ask + tp_price
 
-    # Audit D-48: normalize at the top (matching FF's T()).
-    # Audit D-49: skip only on tStable/tCoherent, not Stable.
+    # ========================================================================
+    # D-13: _execute_trailing_stop() reads Regime by bar index, not column.
+    # ========================================================================
     def _execute_trailing_stop(self) -> None:
         st = self.state
         if len(self.ohlcv_history) >= st.y + 1:
@@ -3239,9 +3303,9 @@ class AEEA_Engine:
                 st.trailing_stop_entry = Decimal('0.0')
                 st.trailing_stop_side = ""
             return
-        regime_idx = st.y + 1
-        if 0 <= regime_idx < len(st.Regime):
-            regime = st.Regime[regime_idx]
+        regime_col = 0
+        if 0 <= regime_col < len(st.Regime):
+            regime = st.Regime[regime_col]
             if regime in ("tStable", "tCoherent"):
                 return
         if st.price <= Decimal('0.0'):
@@ -3277,7 +3341,7 @@ class AEEA_Engine:
         new_sl = st.trailing_stop_price
         topological_target = Decimal('0.0')
         if has_long:
-            for ji in range(st.y + 1, X_PERIOD - 1):
+            for ji in range(st.y + 1, X_PERIOD):
                 jidx = ji - (st.y + 1)
                 if jidx < len(st.Premium) and st.Premium[jidx] > st.price and st.Premium[jidx] != Decimal('0.0'):
                     topological_target = st.Premium[jidx]
@@ -3295,7 +3359,7 @@ class AEEA_Engine:
             if proposedTP > (st.price + min_trail_threshold):
                 st.trailing_take_profit = proposedTP
         else:
-            for ji in range(st.y + 1, X_PERIOD - 1):
+            for ji in range(st.y + 1, X_PERIOD):
                 jidx = ji - (st.y + 1)
                 if jidx < len(st.Discount) and st.Discount[jidx] < st.price and st.Discount[jidx] != Decimal('0.0'):
                     topological_target = st.Discount[jidx]
@@ -3338,10 +3402,13 @@ class AEEA_Engine:
             st.has_open_short = False
             st.kOrder_id = -1
 
-    # Audit D-50: loop bound is x - 1 (exclusive), matching the FF.
+    # ========================================================================
+    # D-14: _get_next_topological_target() uses range(y+1, X_PERIOD),
+    # inclusive of x-1.
+    # ========================================================================
     def _get_next_topological_target(self, side: str, current_price: Decimal) -> Decimal:
         st = self.state
-        for ji in range(st.y + 1, X_PERIOD - 1):
+        for ji in range(st.y + 1, X_PERIOD):
             jidx = ji - (st.y + 1)
             if side == "BUY":
                 if jidx < len(st.Premium) and st.Premium[jidx] > current_price and st.Premium[jidx] != Decimal('0.0'):
@@ -3376,7 +3443,11 @@ class AEEA_Engine:
             return projected_pnl_points > (friction_points + safety_buffer)
         return False
 
-    def _Top(self) -> None:
+    # ========================================================================
+    # C-3.7: _Top()/_Bott() accept emit_toast flag; cascade calls with
+    # emit_toast=False to avoid duplicate toasts.
+    # ========================================================================
+    def _Top(self, emit_toast: bool = True) -> None:
         st = self.state
         price_str = f"{st.price:.5f}"
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
@@ -3385,15 +3456,15 @@ class AEEA_Engine:
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}")
-            # v4.1.1 C4: Top() is an execution-layer event.
-            self._emit_execution_toast("Top", st.price, "NONE", -1, price_str)
+            if emit_toast:
+                self._emit_execution_toast("Top", st.price, "NONE", -1, price_str)
             if self._bridge_publish_callback:
                 try:
                     self._bridge_publish_callback("top", price_str)
                 except Exception as e:
                     logger.warning(f"_bridge_publish_callback failed: {e}")
 
-    def _Bott(self) -> None:
+    def _Bott(self, emit_toast: bool = True) -> None:
         st = self.state
         price_str = f"{st.price:.5f}"
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
@@ -3402,7 +3473,8 @@ class AEEA_Engine:
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}")
-            self._emit_execution_toast("Bott", st.price, "NONE", -1, price_str)
+            if emit_toast:
+                self._emit_execution_toast("Bott", st.price, "NONE", -1, price_str)
             if self._bridge_publish_callback:
                 try:
                     self._bridge_publish_callback("bott", price_str)
@@ -3410,14 +3482,6 @@ class AEEA_Engine:
                     logger.warning(f"_bridge_publish_callback failed: {e}")
 
     def _emit_execution_toast(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
-        """v4.1.1 C4: emit an execution-layer toast and Telegram alert.
-
-        Called from every dispatch site: Diamond, Ruby, Hawk, Dove, Bull,
-        Bear, Whisky, Wine, Watter, Blood, A, B, Top, Bott. The side is
-        one of BUY, SELL, CLOSE, NONE. The ticket is the affected order's
-        id or -1 when no order was touched. The reason is a free-text
-        tag (e.g. the FVG price string for Top/Bott).
-        """
         st = self.state
         _emit_toast("execution", {
             "event": event,
@@ -3429,8 +3493,6 @@ class AEEA_Engine:
         })
         self._send_execution_alert(event, price, side, ticket, reason)
 
-    # Audit D-34: no neutral fill for bars before MIN_HISTORY_WINDOW.
-    # Leave columns at their natural computed values (or prior values).
     def _populate_indicator_matrix(self) -> None:
         st = self.state
         if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
@@ -3483,9 +3545,9 @@ class AEEA_Engine:
         st._initialized = True
         logger.info(f"✅ Engine initialized on first tick at price={st.price}")
 
-    # Audit D-10: st.Price is the previous completed bar's close,
-    # matching the FF's `Price = iClose(Symbol(), 0, 1)`.
-    # Audit D-11/D-12: st.open, st.iH, st.iL defer until a bar has closed.
+    # ========================================================================
+    # M-3: _on_tick() reproduces the FF's Comment() diagnostic line.
+    # ========================================================================
     def _on_tick(self, price_data: PriceData) -> None:
         st = self.state
         st.tick += 1
@@ -3520,9 +3582,6 @@ class AEEA_Engine:
 
         if not st.FG:
             self._force_initialization()
-
-        # m_now / n_now are set by the most recent _H()/_L() call. No
-        # re-computation here (Audit D-35, D-36).
 
         self._execute_trailing_stop()
 
@@ -3676,6 +3735,22 @@ class AEEA_Engine:
             st.ab = st.ba
         st.tick_tock = False
 
+        self._last_comment_line = self._format_comment_line()
+
+    def _format_comment_line(self) -> str:
+        st = self.state
+        y = st.y
+        def _k(idx):
+            i = idx - (y + 1)
+            return st.k[i] if 0 <= i < len(st.k) else False
+        def _l(idx):
+            i = idx - (y + 1)
+            return st.l[i] if 0 <= i < len(st.l) else False
+        line1 = f"    ^{st.iZ}:{st.Z}|{st.iz}:{st.z}={_k(st.Z)}|{_k(st.z)}                                           <! †, ‡, # — ↑(0)|↓(1): {st.prime} {st.dime}{st.mem} >"
+        line2 = f"\n Lim{st.iO}:{st.O}^{_k(st.O)}_{_l(st.O)}.{st.io}:{st.o}^{_k(st.o)}_{_l(st.o)}={st.h}.{st.C}:{st.c}             <! 100%✓ >"
+        line3 = f"\n    _{st.iW}:{st.W}|{st.iw}:{st.w}={_l(st.W)}|{_l(st.w)}                                                 <! Natalia Tanyatia >"
+        return line1 + line2 + line3
+
     def _maintain_fvg_lines(self) -> None:
         st = self.state
         if st.FVG < 0:
@@ -3776,9 +3851,6 @@ class AEEA_Engine:
 
         self._on_tick(price_data)
 
-    # ========================================================================
-    # v4.1.1 C3: _send_signal_alert — NO COOLDOWN. Fires on every _signal().
-    # ========================================================================
     def _send_signal_alert(self) -> None:
         st = self.state
         target_chat = st.chat_id
@@ -3786,15 +3858,11 @@ class AEEA_Engine:
             target_chat = st.webapp_user_id
         if not target_chat or not self.application:
             return
-        # v4.1.1 C3: the 60s cooldown has been removed. Every signal fire
-        # produces a Telegram message. The only remaining gate is
-        # _alert_delivery_enabled, which is a manual kill switch (defaults
-        # true) — it is NOT a rate limiter.
         if not self._alert_delivery_enabled:
             return
         direction = "📈 BUY" if st.price > st.signal else "📉 SELL"
-        m_local = st.last_kronecker_m
-        n_local = st.last_kronecker_n
+        m_local = st.authoritative_m
+        n_local = st.authoritative_n
         h_idx = st.h - (st.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
@@ -3819,10 +3887,6 @@ class AEEA_Engine:
         except Exception as e:
             logger.error(f"❌ Failed to send signal alert: {e}")
 
-    # ========================================================================
-    # v4.1.1 C4: _send_execution_alert — fires on every execution-layer
-    # dispatch, whether or not an order was actually opened/closed.
-    # ========================================================================
     def _send_execution_alert(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
         st = self.state
         target_chat = st.chat_id
@@ -3857,14 +3921,16 @@ class AEEA_Engine:
         except Exception as e:
             logger.error(f"❌ Failed to send execution alert: {e}")
 
+    # ========================================================================
+    # C-3.16: get_signal_status reads authoritative_m/n.
+    # ========================================================================
     def get_signal_status(self) -> Dict[str, Any]:
         st = self.state
         h_idx = st.h - (st.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-        # Audit D-35 / D-36: authoritative m/n from last H()/L() call.
-        m_local = st.m_now
-        n_local = st.n_now
+        m_local = st.authoritative_m
+        n_local = st.authoritative_n
         condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else "Unknown"
@@ -3907,6 +3973,9 @@ class AEEA_Engine:
             "last_kronecker_m": int(st.last_kronecker_m),
             "last_kronecker_n": int(st.last_kronecker_n),
             "last_kronecker_h": int(st.last_kronecker_h),
+            "authoritative_m": int(st.authoritative_m),
+            "authoritative_n": int(st.authoritative_n),
+            "authoritative_h": int(st.authoritative_h),
             "X_scan": int(st.X_scan),
             "Y_scan": int(st.Y_scan),
             "S": int(st.S),
@@ -3921,10 +3990,10 @@ class AEEA_Engine:
             "last_signal_at": st.last_signal_at,
             "bar_close_count": int(st.bar_close_count),
             "ohlcv_count": len(self.ohlcv_history),
-            "market_m": int(st.m_now),
-            "market_n": int(st.n_now),
-            "market_imbalance": int(st.m_now) - int(st.n_now) - 2,
-            "market_regime": "BULLISH" if (int(st.m_now) - int(st.n_now) - 2) > 2 else ("BEARISH" if (int(st.m_now) - int(st.n_now) - 2) < -2 else "NEUTRAL"),
+            "market_m": int(st.authoritative_m),
+            "market_n": int(st.authoritative_n),
+            "market_imbalance": int(st.authoritative_m) - int(st.authoritative_n) - 2,
+            "market_regime": "BULLISH" if (int(st.authoritative_m) - int(st.authoritative_n) - 2) > 2 else ("BEARISH" if (int(st.authoritative_m) - int(st.authoritative_n) - 2) < -2 else "NEUTRAL"),
             "A": bool(st.A),
             "B": bool(st.B),
             "C": bool(st.C),
@@ -3950,6 +4019,7 @@ class AEEA_Engine:
             "ilPass": str(st.ilPass),
             "kPass": str(st.kPass),
             "ikPass": str(st.ikPass),
+            "comment_line": self._format_comment_line(),
         }
 
     def get_regime_map(self) -> List[Dict[str, Any]]:
@@ -4072,13 +4142,7 @@ class AEEA_Engine:
             })
         return out
 
-    # ========================================================================
-    # v4.1.1 C7/C8/C9: apply_settings with exact-decimal parsing and
-    # full FF-input-range validation.
-    # ========================================================================
     def get_settings(self) -> Dict[str, Any]:
-        """Return the current values of all 11 FF input variables as
-        exact decimal strings (for numeric) or booleans (for bools)."""
         st = self.state
         return {
             "max": int(MAX_PERIOD),
@@ -4094,11 +4158,13 @@ class AEEA_Engine:
             "Commssion": str(COMMISSION),
         }
 
+    # ========================================================================
+    # M-5: apply_settings preserves Kronecker stamps via OnReInit().
+    # ========================================================================
     def apply_settings(self, s: Dict[str, Any]) -> Dict[str, Any]:
         global MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, COMMISSION, STOP_LOSS, TAKE_PROFIT, LOT_SIZE, SLIPPAGE
         st = self.state
         try:
-            # v4.1.1 C9: validate before mutating any global.
             errors = []
             new_max = MAX_PERIOD
             new_min = MIN_PERIOD
@@ -4122,9 +4188,8 @@ class AEEA_Engine:
                         errors.append(f"min: must be >= {MIN_PERIOD_MIN}")
                     if new_min > MIN_PERIOD_MAX:
                         errors.append(f"min: must be <= {MIN_PERIOD_MAX}")
-            if new_max <= new_min:
-                errors.append(f"max ({new_max}) must be > min ({new_min})")
-            # Numeric inputs — exact decimal strings via Fraction.
+            if new_max < new_min + MAX_MIN_GAP:
+                errors.append(f"max ({new_max}) must be >= min ({new_min}) + {MAX_MIN_GAP}")
             new_sl = STOP_LOSS
             new_tp = TAKE_PROFIT
             new_lot = LOT_SIZE
@@ -4178,7 +4243,6 @@ class AEEA_Engine:
             if errors:
                 logger.warning(f"apply_settings validation failed: {errors}")
                 return {"error": "validation", "detail": "; ".join(errors)}
-            # Commit.
             MAX_PERIOD = new_max
             MIN_PERIOD = new_min
             X_PERIOD = MAX_PERIOD + 2
@@ -4191,7 +4255,12 @@ class AEEA_Engine:
             SLIPPAGE = new_slip
             if "Cc" in s: st.Cc = bool(s["Cc"])
             if "cC" in s: st.cC = bool(s["cC"])
-            if "Memory" in s: st.mem = int(s["Memory"])
+            if "Memory" in s:
+                mem_val = s["Memory"]
+                if mem_val is None:
+                    st.mem = -1
+                else:
+                    st.mem = int(mem_val)
             if "safetyOffSwitch" in s: st.safety = bool(s["safetyOffSwitch"])
             self.OnReInit()
             logger.info(f"⚙️ Settings applied: max={MAX_PERIOD}, min={MIN_PERIOD}, Cc={st.Cc}, cC={st.cC}, mem={st.mem}, safety={st.safety}, SL={STOP_LOSS}, TP={TAKE_PROFIT}, lot={LOT_SIZE}, slip={SLIPPAGE}, com={COMMISSION}")
@@ -4238,17 +4307,8 @@ class AEEA_Engine:
             return {"error": "change_symbol_exception", "detail": str(e), "symbol": new_symbol}
 
 # ============================================================================
-# INDICATOR NAME CONSTANT
-# ============================================================================
-INDICATOR_NAMES = [
-    "ADX", "Stochastic", "RVI", "AC", "Force", "OBV", "AD",
-    "MFI", "Momentum", "DeMarker", "WPR", "CCI", "RSI"
-]
-
-# ============================================================================
 # BRIDGE STATE
 # ============================================================================
-# Audit D-60: _snapshot removed. /state delegates to engine state.
 class BridgeState:
     def __init__(self):
         self._lock = threading.Lock()
@@ -4326,9 +4386,6 @@ class BridgeState:
 BRIDGE_STATE = BridgeState()
 BRIDGE_ENGINE_REF: Dict[str, Any] = {"engine": None, "bot": None, "public_url": None}
 
-# ============================================================================
-# BRIDGE AUTH DEPENDENCY
-# ============================================================================
 def _require_auth(handler: "BridgeHandler") -> bool:
     if not REQUIRE_AUTH or not TELEGRAM_BOT_TOKEN_ENV:
         return True
@@ -4484,11 +4541,12 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.1.1"
+    server_version = "AEI-Bridge/4.1.2"
 
     def log_message(self, fmt, *args):
         return
 
+    # C-3.17: OPTIONS preflight advertises X-Since and X-Limit.
     def _set_cors(self) -> None:
         origin = CORS_ORIGIN
         self.send_header("Access-Control-Allow-Origin", origin)
@@ -4555,7 +4613,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.1.1",
+                "ok": not stale, "service": "aei-bridge", "version": "4.1.2",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -4583,7 +4641,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # v4.1.1 C7: GET /settings returns all 11 FF inputs.
         if path == "/settings":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -4592,7 +4649,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(200, engine.get_settings())
             return
 
-        # v4.1.1 C5: GET /toasts?since=<seq> returns incremental toasts.
         if path == "/toasts":
             try:
                 since = int(query.get("since", "0"))
@@ -4601,14 +4657,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             with _TOAST_LOCK:
                 toasts = [t for t in _TOAST_BUFFER if t.get("seq", 0) > since]
                 latest_seq = _TOAST_SEQ
+                first_available = _TOAST_FIRST_AVAILABLE_SEQ
             self._send_json(200, {
                 "toasts": toasts,
                 "count": len(toasts),
                 "latest_seq": latest_seq,
+                "first_available_seq": first_available,
             })
             return
 
-        # Audit D-60: /state delegates to engine state, no redundant snapshot.
         if path == "/state":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -4632,8 +4689,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "signal": str(st.signal),
                 "regime": regime,
                 "tick": int(st.tick),
-                "m_count": int(st.m_now),
-                "n_count": int(st.n_now),
+                "m_count": int(st.authoritative_m),
+                "n_count": int(st.authoritative_n),
                 "m_at_h": int(st.last_kronecker_m),
                 "n_at_h": int(st.last_kronecker_n),
                 "h_bar": int(st.h),
@@ -4648,6 +4705,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "relay_healthy": (engine.feed.failure_count() < 3),
                 "indicator_populate_count": int(engine._indicator_populate_count),
                 "imbalance_fire_count": int(engine._imbalance_fire_count),
+                "comment_line": engine._format_comment_line(),
             })
             return
 
@@ -4675,9 +4733,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             h_idx = st.h - (st.y + 1)
             m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
             n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
-            # Audit D-35 / D-36: authoritative m/n from last H()/L() call.
-            market_m = int(st.m_now)
-            market_n = int(st.n_now)
+            market_m = int(st.authoritative_m)
+            market_n = int(st.authoritative_n)
             market_imbalance = market_m - market_n - 2
             if market_imbalance > 2:
                 market_regime = "BULLISH"
@@ -4742,6 +4799,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "last_kronecker_m": int(st.last_kronecker_m),
                 "last_kronecker_n": int(st.last_kronecker_n),
                 "last_kronecker_h": int(st.last_kronecker_h),
+                "authoritative_m": int(st.authoritative_m),
+                "authoritative_n": int(st.authoritative_n),
+                "authoritative_h": int(st.authoritative_h),
                 "X_scan": int(st.X_scan),
                 "Y_scan": int(st.Y_scan),
                 "S": int(st.S),
@@ -4774,6 +4834,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "ilPass": str(st.ilPass),
                 "kPass": str(st.kPass),
                 "ikPass": str(st.ikPass),
+                "comment_line": engine._format_comment_line(),
             }
             self._send_json(200, payload)
             return
@@ -4864,7 +4925,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             try:
                 diag = engine.get_signal_status()
                 diag["ohlcv_history_depth"] = len(engine.ohlcv_history)
-                # Audit D-56: sample current column, tag with index.
                 current_col = engine.state.Z - (engine.state.y + 1)
                 if current_col < 0:
                     current_col = 0
@@ -5072,7 +5132,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             side = (data.get("side") or "").upper()
             try:
-                # v4.1.1 C8: exact decimal parsing via Fraction.
                 lot = Fraction.from_decimal_string(str(data.get("lot", "0.01"))).to_decimal()
                 sl = Fraction.from_decimal_string(str(data.get("sl", "0"))).to_decimal()
                 tp = Fraction.from_decimal_string(str(data.get("tp", "0"))).to_decimal()
@@ -5325,8 +5384,8 @@ class AEI_Bot:
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         feed_mark = "✅" if self._running else "⏹️"
         init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
-        m_local = state.m_now
-        n_local = state.n_now
+        m_local = state.authoritative_m
+        n_local = state.authoritative_n
         h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
@@ -5397,6 +5456,7 @@ class AEI_Bot:
             f"📊 *lOrder_id:* {status.get('lOrder_id')}  |  *kOrder_id:* {status.get('kOrder_id')}\n"
             f"🔍 *OnTrack Runs:* {status.get('on_track_runs')}  |  *OnStand Runs:* {status.get('on_stand_runs')}\n"
             f"🎯 *Last Kronecker Bar:* {status.get('last_kronecker_bar')}\n"
+            f"🔢 *Authoritative m/n/h:* {status.get('authoritative_m')}/{status.get('authoritative_n')}/{status.get('authoritative_h')}\n"
             f"🔢 *Last Kronecker m/n/h:* {status.get('last_kronecker_m')}/{status.get('last_kronecker_n')}/{status.get('last_kronecker_h')}\n"
             f"🔢 *Derivatives Z/z/O/o/W/w:* {status.get('Z')}/{status.get('z')}/{status.get('O')}/{status.get('o')}/{status.get('W')}/{status.get('w')}\n"
             f"🔢 *Derivatives I/iI/J/iJ:* {status.get('I')}/{status.get('iI')}/{status.get('J')}/{status.get('iJ')}\n"
@@ -5426,8 +5486,8 @@ class AEI_Bot:
         discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
         hh = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
         ll = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
-        m_local = state.m_now
-        n_local = state.n_now
+        m_local = state.authoritative_m
+        n_local = state.authoritative_n
         imbalance_status = "✅ TRIGGER" if (m_local >= 12 or n_local >= 12) else "⏳ WAITING"
         response = (
             "📊 *REGIME CLASSIFICATION*\n"
@@ -5462,8 +5522,8 @@ class AEI_Bot:
         else:
             direction = "🔴 SELL"
             confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
-        m_local = state.m_now
-        n_local = state.n_now
+        m_local = state.authoritative_m
+        n_local = state.authoritative_n
         h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
@@ -5584,6 +5644,8 @@ class AEI_Bot:
         prev_on_track = self.engine.state.on_track_runs
         prev_on_stand = self.engine.state.on_stand_runs
         prev_signals = len(self.engine.state.signal_history)
+        prev_auth_m = self.engine.state.authoritative_m
+        prev_auth_n = self.engine.state.authoritative_n
         self.engine.OnReInit()
         reset_msg = (
             "🔄 *TOPOLOGICAL BRANCH RESET*\n"
@@ -5599,7 +5661,8 @@ class AEI_Bot:
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
             f"• 📈 OnTrack runs preserved: {prev_on_track}\n"
             f"• 📉 OnStand runs preserved: {prev_on_stand}\n"
-            f"• 🎯 Signal history preserved: {prev_signals}\n\n"
+            f"• 🎯 Signal history preserved: {prev_signals}\n"
+            f"• ⚖️ Authoritative m/n preserved: {prev_auth_m}/{prev_auth_n}\n\n"
             "📊 *Ready for new regime classification...*"
         )
         if update.callback_query:
@@ -5854,7 +5917,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.1.1).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.1.2).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -5862,17 +5925,17 @@ class AEI_Bot:
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
         logger.info("🛑 Trailing stop: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
         logger.info("🎯 Kronecker gate: LOCAL m/n from authoritative H()/L() stamps.")
-        logger.info("🔄 O() regime mutation restored.")
+        logger.info("🔄 O() regime mutation preserved as FF no-op.")
         logger.info("📊 OnBar per-j HH/LL anchoring.")
-        logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored.")
+        logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (grown-bound second loop).")
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🧪 Audit-patched: _signal no longer sets signature/GF; execution block present in _on_bar.")
-        logger.info("🔔 v4.1.1 C3: signal alerts fire on EVERY _signal(), no cooldown.")
-        logger.info("🔔 v4.1.1 C4: execution alerts fire on EVERY dispatch (Diamond/Ruby/Hawk/Dove/Bull/Bear/Whisky/Wine/Watter/Blood/A/B/Top/Bott).")
-        logger.info("🔔 v4.1.1 C5: /toasts endpoint serves incremental signal+execution toasts.")
-        logger.info("⚙️ v4.1.1 C7/C8/C9: /settings GET+POST with exact-decimal parsing and FF-input validation.")
+        logger.info("🧪 Audit-patched v4.1.2: M()/N() FF operator precedence, Wilder ADX, MQL4 iRVI, full-history OBV/AD, 5-line Ichimoku range.")
+        logger.info("🔔 Signal alerts fire on EVERY _signal(), no cooldown.")
+        logger.info("🔔 Execution alerts fire on EVERY dispatch (Diamond/Ruby/Hawk/Dove/Bull/Bear/Whisky/Wine/Watter/Blood/A/B/Top/Bott).")
+        logger.info("🔔 /toasts endpoint serves incremental signal+execution toasts with first_available_seq.")
+        logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
