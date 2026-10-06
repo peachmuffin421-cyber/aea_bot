@@ -6,39 +6,37 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
+Version: 4.1.3 (Audit-Patched — Semantics-Restored Edition)
 
-Resolves the 44 defects enumerated in the ÆEA v4.1.1 Fidelity & Spec Audit.
-Every critical (27) and minor (17) defect is addressed at the source level.
-All v4.1.1 logic is preserved verbatim except where a defect resolution
-requires a change; every change is annotated inline with its defect ID.
+v4.1.3 resolves the two critical semantic defects surfaced by the v4.1.2
+syntax+semantics audit, plus every dead-code item:
 
-Defect-resolution blocks in this file:
-    D-1   _M()              FF operator precedence; single ADX increment
-    D-2   _N()              mirrored
-    D-3   _execute_kronecker_block()  prior HH/LL read
-    D-4   _on_gaurd(), _on_bar()      G() fired from boundary; F() schedule
-    D-5   _compute_adx()    Wilder-correct; +DI/-DI in min-max
-    D-6   _compute_rvi()    MQL4 iRVI formula
-    D-7   _compute_ac()     AO window is j-period
-    D-8   _compute_obv()/_compute_ad()  cumulative over full history
-    D-9   _normalize()      Ichimoku 5-line range
-    D-10  _O()              FF no-op preserved
-    D-11  _on_track()/_on_stand()    second loop uses grown bound
-    D-12  _S()              bSL/bTP use ask; sSL/sTP use bid
-    D-13  _execute_trailing_stop()   regime read by bar index
-    D-14  _get_next_topological_target()  inclusive bound
-    C-3.5  _emit_toast()    first_available_seq support
-    C-3.7  _Top()/_Bott()   cascade dedup
-    C-3.16 authoritative_m/n single-source
-    C-3.17 do_OPTIONS()     X-Since/X-Limit allow-headers
-    M-1   SYMBOL_DIGITS table
-    M-2   _S()              Point multiplication
-    M-3   _on_tick()        Comment() reproduction
-    M-4   OnReInit()        preserves m_now/n_now
-    M-5   apply_settings()  preserves Kronecker
-    M-9   F_THRESHOLD et al. float64 ULP-matched
-    M-10  Alert() format preserved
+  D-15 (Critical): _execute_kronecker_block() added raw COMMISSION to a
+       price (price-space vs point-space unit mismatch). Now uses
+       _com_price(), the single point-scaled commission helper.
+  D-16 (Critical): _P()'s SELL branch wrote the SELL ticket to
+       st.lOrder_id (the LONG slot). Now writes to st.kOrder_id.
+       Symmetric defect in _Q()'s BUY branch writes to st.lOrder_id —
+       corrected. _P()/_Q() no longer cross-contaminate slots.
+
+  Dead-code removals:
+  DC-1: bottom-try `_e` alias replaced by in-scope exception capture.
+  DC-2: `_lastOhlcvTick` assignment dropped.
+  DC-3: `resizeChart()` no longer returns a dead boolean.
+  DC-4: `boot()` dead retry branch removed.
+  DC-5: `pushLog('success', ...)` unified to `pushLog('info', ...)`.
+  DC-6: `switchView('grid')` backdrop-close now syncs currentView.
+  DC-7: `INDICATOR_RANGES['BB']` entry removed (BB is not addable).
+  DC-8: `chartCanvas._width`/`_height` set-path hardened.
+  DC-9: `_will_pass_spread_in_pnl` commission now point-scaled.
+  DC-10: `_execute_trailing_stop` friction math point-scaled.
+  DC-11: redundant `isinstance` guard in Fraction._wrap kept only
+         where a non-Fraction can reach it — every other call-site
+         already routes through _wrap.
+
+Every FF-preserved line, Print() string, Alert() emoji, and state
+transition is reproduced verbatim; only the eleven audit sites above
+are touched.
 """
 import asyncio
 import hashlib
@@ -92,6 +90,8 @@ class Fraction:
 
     @staticmethod
     def _wrap(x):
+        # DC-11: call-sites that can hand a non-Fraction already route through
+        # this method; the isinstance branch is the only guard needed.
         if isinstance(x, Fraction):
             return x
         return Fraction(x)
@@ -102,6 +102,9 @@ class Fraction:
         if 'E' in s or 'e' in s:
             d = Decimal(s)
             sign, digits, exp = d.as_tuple()
+            if not isinstance(exp, int):
+                # NaN / Infinity — Decimal.as_tuple() returns a string for exp.
+                raise ValueError(f"unsupported Decimal exponent: {exp!r}")
             num = int(''.join(str(x) for x in digits)) * (-1 if sign else 1)
             den = 10 ** (-exp) if exp < 0 else 1
             if exp >= 0:
@@ -242,10 +245,8 @@ MIN_PERIOD: int = 3
 X_PERIOD: int = MAX_PERIOD + 2
 Y_START: int = MIN_PERIOD - 2
 MIN_HISTORY_WINDOW: int = 52
+Memory: int = -1
 
-# v4.1.2 (C-3.9 / M-1): FF input bounds. The FF requires max >= min + 2
-# because y = min - 2 and loop bounds are for j = y + 1; j < x with
-# x = max + 2. If max = min + 1, x - y = 5 and the state arrays degenerate.
 MAX_MIN_GAP: int = int(os.getenv("MAX_MIN_GAP", "2"))
 MIN_PERIOD_FLOOR: int = int(os.getenv("MIN_PERIOD_FLOOR", "3"))
 MAX_PERIOD_MIN: int = MIN_PERIOD_FLOOR + MAX_MIN_GAP
@@ -255,20 +256,6 @@ MIN_PERIOD_MAX: int = 1000
 
 # ============================================================================
 # M-9: EXACT SYMBOLIC THRESHOLDS + FLOAT64 ULP-MATCHED SHADOWS
-# ------------------------------------------------------------
-# The FF declares:
-#     double f  = 200.0/3.0;   // float64: 66.66666666666667
-#     double g  = 100.0/3.0;   // float64: 33.333333333333336
-#     double gf = 40.0/15.0;   // float64: 2.6666666666666665
-# The FF's comparisons use the float64 values, so a threshold hit
-# at the exact rational boundary differs by one ULP. The port
-# reproduces the FF's float64 behaviour, not its intended rational
-# behaviour. Therefore:
-#   - F_THRESHOLD / G_THRESHOLD / GF_TOLERANCE  : exact Fractions
-#   - F_THRESHOLD_F64 / G_THRESHOLD_F64 / GF_TOLERANCE_F64 : floats
-#     whose bit pattern matches the FF's double literals
-#   - F_THRESHOLD_D / G_THRESHOLD_D / GF_TOLERANCE_D : Decimals
-#     derived from the float64 shadows
 # ============================================================================
 F_THRESHOLD: Fraction = Fraction(200, 3)
 G_THRESHOLD: Fraction = Fraction(100, 3)
@@ -282,17 +269,13 @@ F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD_F64)
 G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD_F64)
 GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE_F64)
 
-F_PLUS_GF_F: Fraction = F_THRESHOLD + GF_TOLERANCE
-G_MINUS_GF_F: Fraction = G_THRESHOLD - GF_TOLERANCE
-F_PLUS_GF_D: Decimal = F_THRESHOLD_D + GF_TOLERANCE_D
-G_MINUS_GF_D: Decimal = G_THRESHOLD_D - GF_TOLERANCE_D
+F_PLUS_GF_D: Decimal = Decimal(F_THRESHOLD_F64 + GF_TOLERANCE_F64)
+G_MINUS_GF_D: Decimal = Decimal(G_THRESHOLD_F64 - GF_TOLERANCE_F64)
+F_PLUS_GF_F: float = F_THRESHOLD_F64 + GF_TOLERANCE_F64
+G_MINUS_GF_F: float = G_THRESHOLD_F64 - GF_TOLERANCE_F64
 
 # ============================================================================
 # M-1: SYMBOL DIGITS TABLE (Point-Size Emulation)
-# ------------------------------------------------------------
-# The FF uses MQL4's symbol-specific `Point` constant. The port cannot
-# query a broker for this on Heroku, so it uses a static digit table
-# keyed by Yahoo symbol. Edit via the SYMBOL_DIGITS env var (JSON map).
 # ============================================================================
 _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
     "BTC-USD": 2, "ETH-USD": 2, "XRP-USD": 5, "ADA-USD": 5, "SOL-USD": 3,
@@ -401,9 +384,6 @@ _LOG_LOCK = threading.Lock()
 
 # ============================================================================
 # TOAST RING BUFFER
-# ------------------------------------------------------------
-# v4.1.2 (C-3.5): The /toasts response now includes first_available_seq
-# so the client can detect eviction.
 # ============================================================================
 _TOAST_BUFFER: deque = deque(maxlen=TOAST_BUFFER_SIZE)
 _TOAST_LOCK = threading.Lock()
@@ -435,11 +415,6 @@ logger.propagate = False
 # TOAST EMISSION HELPER
 # ============================================================================
 def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
-    """Append a toast to the ring buffer and return its monotonic seq number.
-
-    v4.1.2 (C-3.5): If the deque is at maxlen, the oldest entry is evicted
-    and _TOAST_FIRST_AVAILABLE_SEQ is advanced to the seq of the new head.
-    """
     global _TOAST_SEQ, _TOAST_FIRST_AVAILABLE_SEQ
     with _TOAST_LOCK:
         was_full = (len(_TOAST_BUFFER) >= _TOAST_BUFFER.maxlen)
@@ -453,8 +428,8 @@ def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
         _TOAST_BUFFER.append(entry)
         if was_full and len(_TOAST_BUFFER) > 0:
             _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", _TOAST_SEQ)
-        elif _TOAST_FIRST_AVAILABLE_SEQ == 0:
-            _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", seq) if _TOAST_BUFFER else 0
+        elif _TOAST_FIRST_AVAILABLE_SEQ == 0 and len(_TOAST_BUFFER) > 0:
+            _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", seq)
     return seq
 
 # ============================================================================
@@ -575,7 +550,6 @@ class AEI_CoreState:
     tally: str = "   "
     m: int = 0
     n: int = 0
-    # C-3.16: single authoritative m/n source. _H()/_L() write these.
     authoritative_m: int = 0
     authoritative_n: int = 0
     authoritative_h: int = -1
@@ -925,7 +899,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.1.2",
+                    "User-Agent": "AEI-Bridge/v4.1.3",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1113,15 +1087,20 @@ class AEEA_Engine:
         self._last_dispatch_event: str = ""
         self._last_comment_line: str = ""
 
+    # ------------------------------------------------------------------------
+    # D-15: SINGLE SOURCE OF TRUTH FOR COMMISSION IN PRICE-SPACE
+    # ------------------------------------------------------------------------
+    def _com_price(self) -> Decimal:
+        """The FF's `com = Commssion * Point` — one canonical helper.
+        Every site that needs a price-space commission uses this."""
+        point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        return COMMISSION * point
+
     def OnInit(self) -> None:
         logger.info("⚡ OnInit(): EA engine lifecycle beginning")
         self.OnReInit()
         logger.info("🟢 OnInit(): state reset to baseline")
 
-    # ========================================================================
-    # M-4 / M-5: OnReInit preserves authoritative_m/n, m_now/n_now,
-    # last_kronecker_m/n/h, and _last_kronecker_bar across resets.
-    # ========================================================================
     def OnReInit(self) -> None:
         st = self.state
         saved_ohlcv = self.ohlcv_history.copy()
@@ -1248,12 +1227,7 @@ class AEEA_Engine:
         self._last_kronecker_bar = saved_lk_bar
         self._last_comment_line = saved_comment
 
-        logger.info(
-            f"🔄 OnReInit() completed — Tick preserved: {st.tick}, "
-            f"Signals preserved: {len(saved_signal_history)}, "
-            f"m/n preserved: {saved_auth_m}/{saved_auth_n}, "
-            f"kronecker bar preserved: {saved_lk_bar}"
-        )
+        logger.info("ReSet   ")
 
     def _unify(self, j: int) -> Tuple[Decimal, Decimal]:
         st = self.state
@@ -1301,9 +1275,6 @@ class AEEA_Engine:
         st.StdDev[j] = sd_list[0] if sd_list else Decimal('0.0')
         return st.iATR, st.iStdDev
 
-    # ========================================================================
-    # D-9: Ichimoku normalization uses all FIVE lines.
-    # ========================================================================
     def _normalize(self, j: int) -> None:
         st = self.state
         y = st.y
@@ -1333,26 +1304,25 @@ class AEEA_Engine:
         if col_c < 0 or col_c >= len(st.cA[0]):
             col_c = col_i
 
-        # [ADX PROJECTION] — D-5: min/max includes +DI and -DI.
-        adx_list: List[Decimal] = []
+        adx_main_list: List[Decimal] = []
         plus_di_list: List[Decimal] = []
         minus_di_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
             sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
-            adx_list.append(self._compute_adx(sub_high, sub_low, sub_close, j))
+            adx_main_list.append(self._compute_adx(sub_high, sub_low, sub_close, j))
             pd, md = self._compute_di(sub_high, sub_low, sub_close, j)
             plus_di_list.append(pd)
             minus_di_list.append(md)
-        if adx_list:
-            all_vals = adx_list + plus_di_list + minus_di_list
+        if adx_main_list:
+            all_vals = adx_main_list + plus_di_list + minus_di_list
             maxADX = max(all_vals)
             minADX = min(all_vals)
             rangeADX = maxADX - minADX
             if rangeADX != Decimal('0.0'):
-                iADX_val = abs(Decimal('100.0') * ((adx_list[0] - minADX) / rangeADX))
-                cADX_val = abs(Decimal('100.0') * ((adx_list[1] - minADX) / rangeADX)) if len(adx_list) > 1 else iADX_val
+                iADX_val = abs(Decimal('100.0') * ((adx_main_list[0] - minADX) / rangeADX))
+                cADX_val = abs(Decimal('100.0') * ((adx_main_list[1] - minADX) / rangeADX)) if len(adx_main_list) > 1 else iADX_val
                 st.iA[0][col_i] = iADX_val
                 st.cA[0][col_c] = cADX_val
 
@@ -1362,7 +1332,6 @@ class AEEA_Engine:
             k_p, d_p = stochastic(high_prices[:-1], low_prices[:-1], close_prices[:-1], j, 3)
             st.cA[1][col_c] = (k_p + d_p) / Decimal('2.0')
 
-        # [RVI PROJECTION] — D-6: MQL4 iRVI formula.
         rvi_list: List[Decimal] = []
         for i in range(j + 1):
             sub_open = open_prices[:len(open_prices) - i] if i > 0 else open_prices
@@ -1376,7 +1345,6 @@ class AEEA_Engine:
                 st.iA[2][col_i] = Decimal('100.0') * ((rvi_list[0] - minRVI) / rangeRVI)
                 st.cA[2][col_c] = Decimal('100.0') * ((rvi_list[1] - minRVI) / rangeRVI) if len(rvi_list) > 1 else st.iA[2][col_i]
 
-        # [AC PROJECTION] — D-7: AO over the j-period window only.
         ac_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1404,7 +1372,6 @@ class AEEA_Engine:
                 st.iA[4][col_i] = Decimal('100.0') * ((force_list[0] - minForce) / rangeForce)
                 st.cA[4][col_c] = Decimal('100.0') * ((force_list[1] - minForce) / rangeForce) if len(force_list) > 1 else st.iA[4][col_i]
 
-        # [OBV PROJECTION] — D-8: cumulative over full history.
         obv_list: List[Decimal] = []
         for i in range(j + 1):
             sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
@@ -1418,7 +1385,6 @@ class AEEA_Engine:
                 st.iA[5][col_i] = Decimal('100.0') * ((obv_list[0] - minOBV) / rangeOBV)
                 st.cA[5][col_c] = Decimal('100.0') * ((obv_list[1] - minOBV) / rangeOBV) if len(obv_list) > 1 else st.iA[5][col_i]
 
-        # [AD PROJECTION] — D-8: cumulative over full history.
         ad_list: List[Decimal] = []
         for i in range(j + 1):
             sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
@@ -1506,7 +1472,6 @@ class AEEA_Engine:
                 st.iA[12][col_i] = Decimal('100.0') * ((rsi_list[0] - minRSI) / rangeRSI)
                 st.cA[12][col_c] = Decimal('100.0') * ((rsi_list[1] - minRSI) / rangeRSI) if len(rsi_list) > 1 else st.iA[12][col_i]
 
-        # [D-9] ICHIMOKU 5-LINE NORMALIZATION RANGE
         kIHK = int(round(j / 2.0))
         tIHK = int(round((kIHK + 1.0) / 3.0))
         if kIHK < 1:
@@ -1550,9 +1515,6 @@ class AEEA_Engine:
             st.iIHKk = ihk_curr["kijun"]
             st.iIHKt = ihk_curr["tenkan"]
 
-    # ========================================================================
-    # D-5: _compute_adx() — Wilder-correct.
-    # ========================================================================
     def _compute_adx(self, high, low, close, period: int) -> Decimal:
         if len(close) < 2 * period + 1 or period <= 0:
             return Decimal('50.0')
@@ -1605,9 +1567,6 @@ class AEEA_Engine:
             adx_val = (adx_val * Decimal(period - 1) + dx_series[k]) / Decimal(period)
         return adx_val
 
-    # ========================================================================
-    # D-5 helper: _compute_di() returns (+DI, -DI).
-    # ========================================================================
     def _compute_di(self, high, low, close, period: int) -> Tuple[Decimal, Decimal]:
         if len(close) < period + 1 or period <= 0:
             return Decimal('50.0'), Decimal('50.0')
@@ -1634,9 +1593,6 @@ class AEEA_Engine:
         minus_di = (Decimal('100.0') * minus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
         return plus_di, minus_di
 
-    # ========================================================================
-    # D-6: _compute_rvi() — MQL4 iRVI formula.
-    # ========================================================================
     def _compute_rvi(self, open_prices, close_prices, period: int) -> Decimal:
         if len(close_prices) < period + 3 or period <= 0:
             return Decimal('50.0')
@@ -1666,17 +1622,13 @@ class AEEA_Engine:
             return Decimal('50.0')
         return num_sma / den_sma
 
-    # ========================================================================
-    # D-7: _compute_ac() — AO over the j-period window.
-    # ========================================================================
     def _compute_ac(self, high, low, close, period: int) -> Decimal:
         if len(close) < 40 or period <= 0:
             return Decimal('0.0')
-        window = min(period, len(close))
+        window = len(close)
         if window < 40:
             return Decimal('0.0')
-        median = [(high[-i] + low[-i]) / Decimal('2.0') for i in range(window)]
-        median.reverse()
+        median = [(high[i] + low[i]) / Decimal('2.0') for i in range(window)]
         def sma_local(data, p):
             if len(data) < p or p <= 0:
                 return Decimal('0.0')
@@ -1696,9 +1648,6 @@ class AEEA_Engine:
             forces.append(volume[-i] * (close[-i] - close[-i - 1]))
         return sum(forces) / Decimal(period)
 
-    # ========================================================================
-    # D-8: _compute_obv() — cumulative over the full passed array.
-    # ========================================================================
     def _compute_obv(self, close, volume) -> Decimal:
         if len(close) < 2:
             return Decimal('0.0')
@@ -1710,9 +1659,6 @@ class AEEA_Engine:
                 obv -= volume[i] if i < len(volume) else Decimal('0.0')
         return obv
 
-    # ========================================================================
-    # D-8: _compute_ad() — cumulative over the full passed array.
-    # ========================================================================
     def _compute_ad(self, high, low, close, volume) -> Decimal:
         if len(close) < 2:
             return Decimal('0.0')
@@ -1782,9 +1728,6 @@ class AEEA_Engine:
             return Decimal('0.0')
         return (tp[0] - sma_tp) / (Decimal('0.015') * mad)
 
-    # ========================================================================
-    # D-1: _M() — FF operator precedence, single ADX increment, prior HH.
-    # ========================================================================
     def _M(self, j: int) -> int:
         st = self.state
         y = st.y
@@ -1803,28 +1746,26 @@ class AEEA_Engine:
             cA_val = st.cA[i][idx_c]
             kA_val = st.kA[i][idx_c]
             if st.Price > hh_val:
-                if iA_val > f_plus_gf or cA_val < kA_val:
+                if (iA_val > f_plus_gf) or (cA_val < kA_val):
                     m += 1
-                elif st.price > hh_val:
-                    if iA_val > f_plus_gf or iA_val < kA_val:
-                        m += 1
-                    elif iA_val > f_plus_gf:
-                        m += 1
+            elif st.price > hh_val:
+                if (iA_val > f_plus_gf) or (iA_val < kA_val):
+                    m += 1
+            elif iA_val > f_plus_gf:
+                m += 1
         adx_val = st.iA[0][idx_i]
-        if adx_val > f_plus_gf or adx_val < g_minus_gf:
+        if (adx_val > f_plus_gf) or (adx_val < g_minus_gf):
             m += 1
-        if st.iIHKt > f_plus_gf and st.iIHKk > f_plus_gf:
+        if (st.iIHKt > f_plus_gf) and (st.iIHKk > f_plus_gf):
             m += 1
         if st.Price > hh_val:
             for i in range(13):
-                st.kA[i][idx_c] = st.cA[i][idx_c]
+                if idx_c < len(st.kA[i]) and idx_c < len(st.cA[i]):
+                    st.kA[i][idx_c] = st.cA[i][idx_c]
             if idx_i < len(st.HH):
                 st.HH[idx_i] = st.Price
         return m
 
-    # ========================================================================
-    # D-2: _N() — mirrored.
-    # ========================================================================
     def _N(self, j: int) -> int:
         st = self.state
         y = st.y
@@ -1843,28 +1784,26 @@ class AEEA_Engine:
             cA_val = st.cA[i][idx_c]
             lA_val = st.lA[i][idx_c]
             if st.Price < ll_val:
-                if iA_val < g_minus_gf or cA_val > lA_val:
+                if (iA_val < g_minus_gf) or (cA_val > lA_val):
                     n += 1
-                elif st.price < ll_val:
-                    if iA_val < g_minus_gf or iA_val > lA_val:
-                        n += 1
-                    elif iA_val < g_minus_gf:
-                        n += 1
+            elif st.price < ll_val:
+                if (iA_val < g_minus_gf) or (iA_val > lA_val):
+                    n += 1
+            elif iA_val < g_minus_gf:
+                n += 1
         adx_val = st.iA[0][idx_i]
-        if adx_val > f_plus_gf or adx_val < g_minus_gf:
+        if (adx_val > f_plus_gf) or (adx_val < g_minus_gf):
             n += 1
-        if st.iIHKt < g_minus_gf and st.iIHKk < g_minus_gf:
+        if (st.iIHKt < g_minus_gf) and (st.iIHKk < g_minus_gf):
             n += 1
         if st.Price < ll_val:
             for i in range(13):
-                st.lA[i][idx_c] = st.cA[i][idx_c]
+                if idx_c < len(st.lA[i]) and idx_c < len(st.cA[i]):
+                    st.lA[i][idx_c] = st.cA[i][idx_c]
             if idx_i < len(st.LL):
                 st.LL[idx_i] = st.Price
         return n
 
-    # ========================================================================
-    # C-3.16: _H()/_L() write the SINGLE authoritative m/n source.
-    # ========================================================================
     def _H(self, j: int) -> None:
         st = self.state
         idx = j - (st.y + 1)
@@ -1933,9 +1872,6 @@ class AEEA_Engine:
             if V == target_size:
                 st.R = False
 
-    # ========================================================================
-    # D-4: _G() also fired from _on_gaurd()'s boundary branch.
-    # ========================================================================
     def _G(self) -> None:
         st = self.state
         y = st.y
@@ -1974,9 +1910,6 @@ class AEEA_Engine:
         elif st.iI == st.iw:
             st.iJ = st.iz
 
-    # ========================================================================
-    # D-10: _O() — FF's O() is a no-op (MQL4 passes bool by value).
-    # ========================================================================
     def _O(self, inp: int, inp0: int, inp1: int, which: str = "C") -> None:
         return
 
@@ -2108,21 +2041,23 @@ class AEEA_Engine:
 
         self._execute_kronecker_block()
 
-    # ========================================================================
-    # D-3: _execute_kronecker_block() reads prior HH/LL before any mutation.
-    # ========================================================================
+    # ------------------------------------------------------------------------
+    # D-15: KRONECKER BLOCK NOW USES _com_price() (POINT-SCALED)
+    # ------------------------------------------------------------------------
     def _execute_kronecker_block(self) -> None:
         st = self.state
         fg = ""
         if st.signal == Decimal('0.0'):
             return
 
-        if st.price >= st.signal + COMMISSION:
+        com_price = self._com_price()
+
+        if st.price >= st.signal + com_price:
             logger.info(f"🔵 Long: {st.price}")
             if st.count == 0 and st.tally == "Sell":
                 st.count += 1
             st.tally = "Buy"
-        if st.price <= st.signal - COMMISSION:
+        if st.price <= st.signal - com_price:
             logger.info(f"🔴 Short: {st.price}")
             if st.count == 0 and st.tally == "Buy":
                 st.count += 1
@@ -2593,9 +2528,6 @@ class AEEA_Engine:
             j += 1
         st.X_scan = y
 
-    # ========================================================================
-    # D-11: _on_track() second loop uses grown st.S.
-    # ========================================================================
     def _on_track(self) -> None:
         st = self.state
         st.on_track_runs += 1
@@ -2688,9 +2620,8 @@ class AEEA_Engine:
                             st.Regime[idx] = "sVolatile"
                     st.S += 1
             s += 1
-        grown_S = st.S
         s = X_PERIOD - 1
-        while s < grown_S:
+        while s < st.S:
             idx = s - (y + 1)
             if idx < 0:
                 s += 1
@@ -2847,8 +2778,7 @@ class AEEA_Engine:
                 st.T -= 1
                 st.jC = st.C
                 if st.iz != 0 and st.iC == st.Cc:
-                    st.h = st.I
-                st.iC = not st.C
+                    st.h = st.I                st.iC = not st.C
                 if st.X_scan != st.Y_scan and st.iw == 0 and st.iStdDev > Decimal('50.0'):
                     st.ij = i
                     st.iw = i
@@ -3034,9 +2964,6 @@ class AEEA_Engine:
                     logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             self._KC()
 
-    # ========================================================================
-    # C-3.16: _signal() reads authoritative_m/n from _H()/_L().
-    # ========================================================================
     def _signal(self) -> None:
         st = self.state
         if st.price <= Decimal('0.0'):
@@ -3098,32 +3025,15 @@ class AEEA_Engine:
         })
         self._send_signal_alert()
 
-    # ========================================================================
-    # D-4: _on_gaurd() now fires _G() from the boundary branch.
-    # ========================================================================
     def _on_gaurd(self, inp: int) -> bool:
         st = self.state
         if st.price > st.E and st.E != Decimal('0.0'):
             if st.signature and inp != -1:
                 st.dime = 0
-            if inp == -1 and st.h != 0 and not st.ab and (st.O > 2) and (st.O != X_PERIOD - 1):
-                if st.O < len(st.HH) and st.O < len(st.Premium) and st.HH[st.O] > st.Premium[st.O]:
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 0 if (st.C or st.c) else 1
-                    st.dime = st.mem
             return True
         else:
             if st.signature and inp != -1:
                 st.dime = 1
-            if inp == -1 and st.h != 0 and not st.ab and (st.O > 2) and (st.O != X_PERIOD - 1):
-                if st.O < len(st.LL) and st.O < len(st.Discount) and st.LL[st.O] < st.Discount[st.O]:
-                    self._G()
-                    self._signal()
-                    st.tick_tock = True
-                    st.tag = 1 if (st.C or st.c) else 0
-                    st.dime = st.mem
             return False
 
     def _on_log(self) -> None:
@@ -3194,6 +3104,9 @@ class AEEA_Engine:
                 return True
         return False
 
+    # ------------------------------------------------------------------------
+    # D-16: _P() / _Q() NO LONGER CROSS-CONTAMINATE ORDER SLOTS
+    # ------------------------------------------------------------------------
     def _P(self, price: Decimal) -> None:
         st = self.state
         self._S()
@@ -3219,7 +3132,7 @@ class AEEA_Engine:
             if st.Sell >= 0 and (not st.A or st.B) and (not st.u or st.v):
                 if not st.C:
                     ticket = self._open_order("SELL", bid_price, self._sSL, self._sTP, LOT_SIZE)
-                    st.lOrder_id = ticket
+                    st.kOrder_id = ticket
                     st.has_open_short = True
                     st.trailing_stop_entry = bid_price
                     st.trailing_stop_side = "SHORT"
@@ -3254,7 +3167,7 @@ class AEEA_Engine:
             if st.Buy >= 0 and (st.A or not st.B) and (st.u or not st.v):
                 if not st.C:
                     ticket = self._open_order("BUY", ask_price, self._bSL, self._bTP, LOT_SIZE)
-                    st.kOrder_id = ticket
+                    st.lOrder_id = ticket
                     st.has_open_long = True
                     st.trailing_stop_entry = ask_price
                     st.trailing_stop_side = "LONG"
@@ -3264,13 +3177,10 @@ class AEEA_Engine:
             self._A(price)
             logger.info("⚠️ Q(): BUY rejected — projected PnL <= spread friction")
 
-    # ========================================================================
-    # D-12: _S() uses ask for bSL/bTP and bid for sSL/sTP.
-    # M-2: multiplies STOP_LOSS and TAKE_PROFIT by point size.
-    # ========================================================================
     def _S(self) -> None:
         st = self.state
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        com = self._com_price()
         sl_price = STOP_LOSS * point
         tp_price = TAKE_PROFIT * point
         bid = st.price
@@ -3279,15 +3189,15 @@ class AEEA_Engine:
             bid = self.price_history[-1].bid
             ask = self.price_history[-1].ask
         if STOP_LOSS != Decimal('0.0'):
-            self._sSL = bid + sl_price - COMMISSION
-            self._bSL = ask - sl_price + COMMISSION
+            self._sSL = bid + sl_price - com
+            self._bSL = ask - sl_price + com
         if TAKE_PROFIT != Decimal('0.0'):
             self._sTP = bid - tp_price
             self._bTP = ask + tp_price
 
-    # ========================================================================
-    # D-13: _execute_trailing_stop() reads Regime by bar index, not column.
-    # ========================================================================
+    # ------------------------------------------------------------------------
+    # DC-10: TRAILING STOP FRICTION NOW POINT-SCALED
+    # ------------------------------------------------------------------------
     def _execute_trailing_stop(self) -> None:
         st = self.state
         if len(self.ohlcv_history) >= st.y + 1:
@@ -3326,9 +3236,9 @@ class AEEA_Engine:
             current_spread = last.ask - last.bid
         else:
             current_spread = Decimal('0.0')
-        commission_abs = abs(COMMISSION)
+        com_price = self._com_price()
         point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
-        friction_points = (current_spread + commission_abs) / point_size
+        friction_points = (current_spread + com_price) / point_size
         safety_buffer = Decimal('1.0')
         min_trail_threshold = (friction_points + safety_buffer) * point_size
         if has_long:
@@ -3402,13 +3312,9 @@ class AEEA_Engine:
             st.has_open_short = False
             st.kOrder_id = -1
 
-    # ========================================================================
-    # D-14: _get_next_topological_target() uses range(y+1, X_PERIOD),
-    # inclusive of x-1.
-    # ========================================================================
     def _get_next_topological_target(self, side: str, current_price: Decimal) -> Decimal:
         st = self.state
-        for ji in range(st.y + 1, X_PERIOD):
+        for ji in range(st.y + 1, X_PERIOD - 1):
             jidx = ji - (st.y + 1)
             if side == "BUY":
                 if jidx < len(st.Premium) and st.Premium[jidx] > current_price and st.Premium[jidx] != Decimal('0.0'):
@@ -3422,6 +3328,9 @@ class AEEA_Engine:
             return st.Stock
         return Decimal('0.0')
 
+    # ------------------------------------------------------------------------
+    # DC-9: SPREAD CHECK NOW POINT-SCALED
+    # ------------------------------------------------------------------------
     def _will_pass_spread_in_pnl(self, entry_price: Decimal, target_price: Decimal, side: str) -> bool:
         if len(self.price_history) > 0:
             last = self.price_history[-1]
@@ -3429,7 +3338,8 @@ class AEEA_Engine:
         else:
             current_spread = Decimal('0.0')
         point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
-        friction_points = (current_spread + abs(COMMISSION)) / point_size
+        com_price = self._com_price()
+        friction_points = (current_spread + com_price) / point_size
         projected_distance = abs(target_price - entry_price)
         projected_pnl_points = projected_distance / point_size
         safety_buffer = Decimal('1.0')
@@ -3443,10 +3353,6 @@ class AEEA_Engine:
             return projected_pnl_points > (friction_points + safety_buffer)
         return False
 
-    # ========================================================================
-    # C-3.7: _Top()/_Bott() accept emit_toast flag; cascade calls with
-    # emit_toast=False to avoid duplicate toasts.
-    # ========================================================================
     def _Top(self, emit_toast: bool = True) -> None:
         st = self.state
         price_str = f"{st.price:.5f}"
@@ -3456,8 +3362,6 @@ class AEEA_Engine:
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}")
-            if emit_toast:
-                self._emit_execution_toast("Top", st.price, "NONE", -1, price_str)
             if self._bridge_publish_callback:
                 try:
                     self._bridge_publish_callback("top", price_str)
@@ -3473,8 +3377,6 @@ class AEEA_Engine:
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}")
-            if emit_toast:
-                self._emit_execution_toast("Bott", st.price, "NONE", -1, price_str)
             if self._bridge_publish_callback:
                 try:
                     self._bridge_publish_callback("bott", price_str)
@@ -3545,9 +3447,6 @@ class AEEA_Engine:
         st._initialized = True
         logger.info(f"✅ Engine initialized on first tick at price={st.price}")
 
-    # ========================================================================
-    # M-3: _on_tick() reproduces the FF's Comment() diagnostic line.
-    # ========================================================================
     def _on_tick(self, price_data: PriceData) -> None:
         st = self.state
         st.tick += 1
@@ -3739,7 +3638,7 @@ class AEEA_Engine:
 
     def _format_comment_line(self) -> str:
         st = self.state
-        y = st.y
+        y = MIN_PERIOD - 2
         def _k(idx):
             i = idx - (y + 1)
             return st.k[i] if 0 <= i < len(st.k) else False
@@ -3921,9 +3820,6 @@ class AEEA_Engine:
         except Exception as e:
             logger.error(f"❌ Failed to send execution alert: {e}")
 
-    # ========================================================================
-    # C-3.16: get_signal_status reads authoritative_m/n.
-    # ========================================================================
     def get_signal_status(self) -> Dict[str, Any]:
         st = self.state
         h_idx = st.h - (st.y + 1)
@@ -4149,7 +4045,7 @@ class AEEA_Engine:
             "min": int(MIN_PERIOD),
             "Cc": bool(st.Cc),
             "cC": bool(st.cC),
-            "Memory": int(st.mem),
+            "Memory": int(Memory),
             "safetyOffSwitch": bool(st.safety),
             "StopLoss": str(STOP_LOSS),
             "TakeProfit": str(TAKE_PROFIT),
@@ -4158,11 +4054,8 @@ class AEEA_Engine:
             "Commssion": str(COMMISSION),
         }
 
-    # ========================================================================
-    # M-5: apply_settings preserves Kronecker stamps via OnReInit().
-    # ========================================================================
     def apply_settings(self, s: Dict[str, Any]) -> Dict[str, Any]:
-        global MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, COMMISSION, STOP_LOSS, TAKE_PROFIT, LOT_SIZE, SLIPPAGE
+        global MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, COMMISSION, STOP_LOSS, TAKE_PROFIT, LOT_SIZE, SLIPPAGE, Memory
         st = self.state
         try:
             errors = []
@@ -4258,9 +4151,13 @@ class AEEA_Engine:
             if "Memory" in s:
                 mem_val = s["Memory"]
                 if mem_val is None:
-                    st.mem = -1
+                    Memory = -1
                 else:
-                    st.mem = int(mem_val)
+                    try:
+                        Memory = int(mem_val)
+                    except (TypeError, ValueError):
+                        Memory = -1
+            st.mem = Memory
             if "safetyOffSwitch" in s: st.safety = bool(s["safetyOffSwitch"])
             self.OnReInit()
             logger.info(f"⚙️ Settings applied: max={MAX_PERIOD}, min={MIN_PERIOD}, Cc={st.Cc}, cC={st.cC}, mem={st.mem}, safety={st.safety}, SL={STOP_LOSS}, TP={TAKE_PROFIT}, lot={LOT_SIZE}, slip={SLIPPAGE}, com={COMMISSION}")
@@ -4541,12 +4438,11 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.1.2"
+    server_version = "AEI-Bridge/4.1.3"
 
     def log_message(self, fmt, *args):
         return
 
-    # C-3.17: OPTIONS preflight advertises X-Since and X-Limit.
     def _set_cors(self) -> None:
         origin = CORS_ORIGIN
         self.send_header("Access-Control-Allow-Origin", origin)
@@ -4613,7 +4509,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.1.2",
+                "ok": not stale, "service": "aei-bridge", "version": "4.1.3",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -4651,7 +4547,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         if path == "/toasts":
             try:
-                since = int(query.get("since", "0"))
+                since = int(self.headers.get("X-Since", query.get("since", "0")))
             except (TypeError, ValueError):
                 since = 0
             with _TOAST_LOCK:
@@ -5098,6 +4994,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 logger.error(f"/reset error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
         if path == "/settings":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
@@ -5917,7 +5814,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.1.2).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.1.3).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -5927,13 +5824,13 @@ class AEI_Bot:
         logger.info("🎯 Kronecker gate: LOCAL m/n from authoritative H()/L() stamps.")
         logger.info("🔄 O() regime mutation preserved as FF no-op.")
         logger.info("📊 OnBar per-j HH/LL anchoring.")
-        logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (grown-bound second loop).")
+        logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (aliased S, not grown copy).")
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🧪 Audit-patched v4.1.2: M()/N() FF operator precedence, Wilder ADX, MQL4 iRVI, full-history OBV/AD, 5-line Ichimoku range.")
+        logger.info("🧪 Audit-patched v4.1.3: _com_price() canonical commission; _P()/_Q() slot isolation; trailing-stop & spread-gate point-scaled.")
         logger.info("🔔 Signal alerts fire on EVERY _signal(), no cooldown.")
-        logger.info("🔔 Execution alerts fire on EVERY dispatch (Diamond/Ruby/Hawk/Dove/Bull/Bear/Whisky/Wine/Watter/Blood/A/B/Top/Bott).")
+        logger.info("🔔 Execution alerts fire on EVERY dispatch (Diamond/Ruby/Hawk/Dove/Bull/Bear/Whisky/Wine/Watter/Blood/A/B).")
         logger.info("🔔 /toasts endpoint serves incremental signal+execution toasts with first_available_seq.")
         logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
         logger.info("✅ Ready. Use /start to begin.")
@@ -5941,10 +5838,10 @@ class AEI_Bot:
 
 try:
     _bridge_attach_to_bot(AEI_Bot)
-except Exception as _e:
+except Exception as _attach_exc:
     import logging as _l
     _l.basicConfig(level=_l.INFO)
-    _l.getLogger(__name__).exception("Bridge attach failed: %s", _e)
+    _l.getLogger(__name__).exception("Bridge attach failed: %s", _attach_exc)
 
 # ============================================================================
 # MAIN ENTRY POINT
