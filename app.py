@@ -2778,7 +2778,8 @@ class AEEA_Engine:
                 st.T -= 1
                 st.jC = st.C
                 if st.iz != 0 and st.iC == st.Cc:
-                    st.h = st.I                st.iC = not st.C
+                    st.h = st.I
+                    st.iC = not st.C
                 if st.X_scan != st.Y_scan and st.iw == 0 and st.iStdDev > Decimal('50.0'):
                     st.ij = i
                     st.iw = i
