@@ -3291,7 +3291,8 @@ class AEEA_Engine:
             slDistance = max(trail_step, STOP_LOSS * point_size)
             proposedSL = st.price + slDistance
             if ((st.trailing_stop_price == Decimal('0.0') or proposedSL < st.trailing_stop_price) and (topological_target == Decimal('0.0') or proposedSL > (topological_target + min_trail_threshold))):
-                new_sl = proposedSL            tpDistance = Decimal('0.0')
+                new_sl = proposedSL
+            tpDistance = Decimal('0.0')
             if topological_target > Decimal('0.0'):
                 tpDistance = max(st.price - topological_target, TAKE_PROFIT * point_size)
             else:
