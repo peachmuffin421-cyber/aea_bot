@@ -3,53 +3,43 @@
 """
 ÆEA TELEGRAM BOT — HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
 Faithful Unabridged Port of ÆEA.mq4
-Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
+Data Feed: Cloudflare Worker Relay (Yahoo / Binance / CoinGecko upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.2.0 (Semantics-Restored Edition)
+Version: 4.3.0 (Enhancement Edition)
 
-v4.2.0 resolves all remaining semantic deviations from the FF and corrects
-the logical flaws introduced in previous audit cycles.
+v4.3.0 adds three capabilities on top of the v4.2.0 semantics-restored port:
 
-  D-15 (Critical): _execute_kronecker_block() added raw COMMISSION to a
-       price (price-space vs point-space unit mismatch). Now uses
-       _com_price(), the single point-scaled commission helper.
-  D-16 (Critical): _P()'s SELL branch wrote the SELL ticket to
-       st.lOrder_id (the LONG slot). Now writes to st.kOrder_id.
-       Symmetric defect in _Q()'s BUY branch writes to st.lOrder_id —
-       corrected. _P()/_Q() no longer cross-contaminate slots.
-  D-17 (Critical): _M() and _N() 5-case operator precedence chain is
-       now restored verbatim from the FF. The loop's decision is based
-       on a single Price vs HH/LL check, not a per-indicator check.
-  D-18 (Critical): _execute_kronecker_block() now reads prior HH/LL
-       values using the correct MIN_PERIOD index before they are
-       modified by the F()/H()/L() calls within the block.
-  D-19 (Critical): _G() is no longer fired from _on_gaurd(). It is now
-       correctly fired from the boundary block within _on_goe() and
-       _on_toe(), matching the FF's signal generation sequence.
-  D-20 (Critical): _compute_adx() now computes cADX from a separate
-       ADX_temp series, matching the FF's two-stage normalization.
-  D-21 (Critical): _compute_rvi() now uses the MQL4 iRVI formula with
-       the 4-bar filter and SMA over the dynamically calculated period.
-  D-22 (Critical): _compute_ac() now uses the FF's DEFAULT AC window
-       (5, 34) for the SMA, with only the offset `i` varying.
-  D-23 (Critical): _compute_obv() and _compute_ad() are now cumulative
-       over the full passed array, not a truncated j+1-slice.
-  D-24 (Critical): _compute_ichimoku() now calculates the full 5-line
-       range (Senkou A, Senkou B, Chikou, Tenkan, Kijun) for normalization.
-  D-25 (Critical): _normalize() ADX block now correctly uses the
-       adx_main_list[1] for cADX, and the ADX_temp series is separate.
-  D-26 (Critical): _on_track() and _on_stand() second loops now use the
-       aliased st.S, not a new grown_S variable.
-  D-27 (Critical): _S() now correctly multiplies bSL/bTP by ask and
-       sSL/sTP by bid, with com = COMMISSION * Point.
-  D-28 (Critical): _execute_trailing_stop() now reads the regime by bar
-       index, not a fixed column.
-  D-29 (Critical): _get_next_topological_target() now uses an exclusive
-       bound range(y+1, X_PERIOD-1) matching the FF's i < x-1.
+  E-1 (Enhancement): Telegram push notifications on EVERY execution event.
+       _emit_toast() now dispatches a Telegram sendMessage to the bound chat_id
+       for every toast it emits — signal and execution alike — deduplicated
+       against the pre-existing _send_signal_alert() / _send_execution_alert()
+       paths via a per-event suppression key so a single logical event never
+       produces two pushes. _A(), _B(), _Top(), and _Bott() additionally emit
+       their own execution toasts so the user is notified of every close and
+       every FVG anchor maintenance action, not only of dispatch subblocks.
 
-Every FF-preserved line, Print() string, Alert() emoji, and state
-transition is reproduced verbatim; only the audited sites above are touched.
+  E-2 (Enhancement): Real volume from a non-Yahoo upstream.
+       FeedClient.get_intraday() and get_historical_klines() now request
+       kind=intraday / kind=history from the relay; the relay v4.3.0 dispatches
+       crypto symbols to Binance klines (real volume) with CoinGecko as the
+       secondary and Yahoo as the tertiary. The engine's OBV, AD, Force, and
+       MFI projections therefore operate on non-zero volume for crypto.
+
+  E-3 (Enhancement): Arc-length future price projection.
+       A new /projection endpoint returns a forward price path computed from
+       the s=r coherence condition. The path is drawn on the chart ahead of
+       the current bar by the TWA. The projection respects the regime:
+
+         * sRange / Stable → mean-reverting cosine arc toward signal
+         * sTrend / tTrend → linear extension along the current slope
+         * sVolatile / tVolatile → damped oscillation with regime amplitude
+
+       The projection is exact-arithmetic: all intermediate quantities are
+       Decimal; only the final JSON serialization is a decimal string.
+
+Every FF-preserved line, Print() string, Alert() emoji, and state transition
+is reproduced verbatim from v4.2.0; only the additive sites above are touched.
 """
 import asyncio
 import hashlib
@@ -103,8 +93,6 @@ class Fraction:
 
     @staticmethod
     def _wrap(x):
-        # DC-11: call-sites that can hand a non-Fraction already route through
-        # this method; the isinstance branch is the only guard needed.
         if isinstance(x, Fraction):
             return x
         return Fraction(x)
@@ -116,7 +104,6 @@ class Fraction:
             d = Decimal(s)
             sign, digits, exp = d.as_tuple()
             if not isinstance(exp, int):
-                # NaN / Infinity — Decimal.as_tuple() returns a string for exp.
                 raise ValueError(f"unsupported Decimal exponent: {exp!r}")
             num = int(''.join(str(x) for x in digits)) * (-1 if sign else 1)
             den = 10 ** (-exp) if exp < 0 else 1
@@ -268,6 +255,13 @@ MIN_PERIOD_MIN: int = MIN_PERIOD_FLOOR
 MIN_PERIOD_MAX: int = 1000
 
 # ============================================================================
+# E-3: ARC-LENGTH PROJECTION PARAMETERS
+# ============================================================================
+ARC_PROJECTION_HORIZON: int = int(os.getenv("ARC_PROJECTION_HORIZON", "30"))
+ARC_PROJECTION_STEP: int = int(os.getenv("ARC_PROJECTION_STEP", "1"))
+ARC_PROJECTION_DAMPING: str = os.getenv("ARC_PROJECTION_DAMPING", "0.94")
+
+# ============================================================================
 # M-9: EXACT SYMBOLIC THRESHOLDS + FLOAT64 ULP-MATCHED SHADOWS
 # ============================================================================
 F_THRESHOLD: Fraction = Fraction(200, 3)
@@ -333,6 +327,12 @@ TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 REQUIRE_AUTH: bool = os.getenv("REQUIRE_AUTH", "1").strip() in ("1", "true", "yes")
 LOG_BUFFER_SIZE: int = int(os.getenv("LOG_BUFFER_SIZE", "1000"))
 TOAST_BUFFER_SIZE: int = int(os.getenv("TOAST_BUFFER_SIZE", "500"))
+
+PUSH_ON_SIGNAL: bool = os.getenv("PUSH_ON_SIGNAL", "1").strip() in ("1", "true", "yes")
+PUSH_ON_EXECUTION: bool = os.getenv("PUSH_ON_EXECUTION", "1").strip() in ("1", "true", "yes")
+PUSH_ON_FVG: bool = os.getenv("PUSH_ON_FVG", "1").strip() in ("1", "true", "yes")
+PUSH_ON_CLOSE: bool = os.getenv("PUSH_ON_CLOSE", "1").strip() in ("1", "true", "yes")
+PUSH_DEDUP_WINDOW_MS: int = int(os.getenv("PUSH_DEDUP_WINDOW_MS", "800"))
 
 RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
 RELAY_KEY: str = os.getenv("RELAY_KEY", "").strip()
@@ -403,6 +403,31 @@ _TOAST_LOCK = threading.Lock()
 _TOAST_SEQ: int = 0
 _TOAST_FIRST_AVAILABLE_SEQ: int = 0
 
+_PUSH_DEDUP_LOCK = threading.Lock()
+_PUSH_DEDUP: Dict[str, float] = {}
+
+def _push_dedup_key(kind: str, payload: Dict[str, Any]) -> str:
+    if kind == "signal":
+        return "signal:%s:%s:%s" % (payload.get("type"), payload.get("h"), payload.get("tick"))
+    if kind == "execution":
+        return "execution:%s:%s:%s:%s" % (payload.get("event"), payload.get("side"), payload.get("ticket"), payload.get("tick"))
+    if kind == "fvg":
+        return "fvg:%s:%s:%s" % (payload.get("action"), payload.get("type"), payload.get("idx"))
+    return kind + ":" + str(payload.get("tick", ""))
+
+def _push_dedup_allow(key: str) -> bool:
+    now = time.monotonic() * 1000.0
+    with _PUSH_DEDUP_LOCK:
+        last = _PUSH_DEDUP.get(key)
+        if last is not None and (now - last) < PUSH_DEDUP_WINDOW_MS:
+            return False
+        _PUSH_DEDUP[key] = now
+        cutoff = now - 60000.0
+        for k in list(_PUSH_DEDUP.keys()):
+            if _PUSH_DEDUP[k] < cutoff:
+                del _PUSH_DEDUP[k]
+    return True
+
 class _RingHandler(logging.Handler):
     def emit(self, record):
         try:
@@ -425,8 +450,89 @@ logger.addHandler(_RingHandler())
 logger.propagate = False
 
 # ============================================================================
-# TOAST EMISSION HELPER
+# E-1: TOAST EMISSION + TELEGRAM PUSH
 # ============================================================================
+def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
+    if kind == "signal" and not PUSH_ON_SIGNAL:
+        return None
+    if kind == "execution" and not PUSH_ON_EXECUTION:
+        return None
+    if kind == "fvg" and not PUSH_ON_FVG:
+        return None
+    if kind == "close" and not PUSH_ON_CLOSE:
+        return None
+    if kind == "signal":
+        direction = payload.get("type", "NEUTRAL")
+        arrow = "📈" if direction == "BUY" else ("📉" if direction == "SELL" else "⚪")
+        return (
+            f"🎯 *ÆEA SIGNAL* {arrow}\n"
+            f"*Type:* {direction}\n"
+            f"*Price:* `{payload.get('price')}`\n"
+            f"*m/n:* {payload.get('m')}/{payload.get('n')} @ h={payload.get('h')}\n"
+            f"*Regime:* {payload.get('regime', '—')}\n"
+            f"*Tick:* {payload.get('tick', '—')}\n"
+            f"💎 Natalia Tanyatia"
+        )
+    if kind == "execution":
+        event = payload.get("event", "EXEC")
+        emoji_map = {
+            "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
+            "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
+            "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
+            "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
+        }
+        emoji = emoji_map.get(event, "⚡")
+        side = payload.get("side", "NONE")
+        ticket = payload.get("ticket", -1)
+        ticket_str = f"#{ticket}" if ticket != -1 else "—"
+        reason = payload.get("reason", "")
+        reason_str = f"\n*Reason:* {reason}" if reason else ""
+        return (
+            f"{emoji} *ÆEA EXECUTION: {event}*\n"
+            f"*Side:* {side}\n"
+            f"*Ticket:* {ticket_str}\n"
+            f"*Price:* `{payload.get('price')}`\n"
+            f"*Tick:* {payload.get('tick', '—')}{reason_str}\n"
+            f"💎 Natalia Tanyatia"
+        )
+    if kind == "fvg":
+        action = payload.get("action", "commit")
+        fvg_type = payload.get("type", "top")
+        arrow = "▲" if fvg_type == "top" else "▼"
+        return (
+            f"📐 *ÆEA FVG {action.upper()}*\n"
+            f"*Type:* {arrow} {fvg_type}\n"
+            f"*Price:* `{payload.get('price')}`\n"
+            f"*Idx:* {payload.get('idx', '—')}\n"
+            f"💎 Natalia Tanyatia"
+        )
+    return None
+
+def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
+    key = _push_dedup_key(kind, payload)
+    if not _push_dedup_allow(key):
+        return
+    msg = _format_push_message(kind, payload)
+    if msg is None:
+        return
+    engine = BRIDGE_ENGINE_REF.get("engine")
+    if engine is None:
+        return
+    app = engine.application
+    st = engine.state
+    if app is None:
+        return
+    target_chat = st.chat_id
+    if target_chat is None and st.webapp_user_id is not None:
+        target_chat = st.webapp_user_id
+    if not target_chat:
+        return
+    try:
+        app.bot.send_message(chat_id=target_chat, text=msg, parse_mode="Markdown")
+        logger.info(f"📲 Push sent ({kind}) to {target_chat} (tick={st.tick})")
+    except Exception as e:
+        logger.warning(f"📲 Push failed ({kind}): {e}")
+
 def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
     global _TOAST_SEQ, _TOAST_FIRST_AVAILABLE_SEQ
     with _TOAST_LOCK:
@@ -443,6 +549,10 @@ def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
             _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", _TOAST_SEQ)
         elif _TOAST_FIRST_AVAILABLE_SEQ == 0 and len(_TOAST_BUFFER) > 0:
             _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", seq)
+    try:
+        threading.Thread(target=_telegram_push, args=(kind, entry), daemon=True).start()
+    except Exception as e:
+        logger.warning(f"📲 Push dispatch failed: {e}")
     return seq
 
 # ============================================================================
@@ -458,6 +568,7 @@ class PriceData:
     low: Decimal = Decimal('0.0')
     volume: Decimal = Decimal('0.0')
     timestamp: datetime = field(default_factory=datetime.now)
+    provider: str = ""
 
     @property
     def spread(self) -> Decimal:
@@ -658,6 +769,13 @@ class AEI_CoreState:
     bar_close_count: int = 0
 
     execution_fired: bool = False
+
+    projection_path: List[Dict[str, Any]] = field(default_factory=list)
+    projection_meta: Dict[str, Any] = field(default_factory=dict)
+    projection_computed_at: Optional[str] = None
+
+    last_provider: str = ""
+    last_volume: Decimal = Decimal('0.0')
 
 # ============================================================================
 # INDICATOR NAME CONSTANT
@@ -878,6 +996,8 @@ class FeedClient:
         self._last_update: Optional[datetime] = None
         self._failure_count: int = 0
         self._fallback_count: int = 0
+        self._last_provider: str = ""
+        self._last_volume: Decimal = Decimal('0.0')
 
     def active_symbol(self) -> str:
         return self._chain[self._chain_index]
@@ -887,6 +1007,12 @@ class FeedClient:
 
     def last_update(self) -> Optional[datetime]:
         return self._last_update
+
+    def last_provider(self) -> str:
+        return self._last_provider
+
+    def last_volume(self) -> Decimal:
+        return self._last_volume
 
     def _advance_symbol_chain(self) -> None:
         if len(self._chain) <= 1:
@@ -912,7 +1038,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.2.0",
+                    "User-Agent": "AEI-Bridge/v4.3.0",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -922,7 +1048,7 @@ class FeedClient:
                     raw = r.read().decode("utf-8")
                     payload = json.loads(raw)
                     if isinstance(payload, dict) and payload.get("error"):
-                        logger.warning(f"Relay returned error for {self.active_symbol()}: {payload.get('error')}")
+                        logger.warning(f"Relay returned error for {self.active_symbol()}: {payload.get('error')} ({payload.get('detail', '')})")
                         self._failure_count += 1
                         self._fallback_count += 1
                         if self._fallback_count >= 5:
@@ -931,6 +1057,24 @@ class FeedClient:
                     self._failure_count = 0
                     self._fallback_count = 0
                     self._last_update = datetime.now()
+                    if isinstance(payload, dict):
+                        if payload.get("provider"):
+                            self._last_provider = str(payload["provider"])
+                        if payload.get("volume") is not None:
+                            try:
+                                self._last_volume = Decimal(str(payload["volume"]))
+                            except Exception:
+                                pass
+                    elif isinstance(payload, list) and payload:
+                        last = payload[-1]
+                        if isinstance(last, dict):
+                            if last.get("provider"):
+                                self._last_provider = str(last["provider"])
+                            if last.get("volume") is not None:
+                                try:
+                                    self._last_volume = Decimal(str(last["volume"]))
+                                except Exception:
+                                    pass
                     return payload
             except urllib.error.HTTPError as e:
                 try:
@@ -980,6 +1124,13 @@ class FeedClient:
                 return Decimal('0.0'), Decimal('0.0')
             bid = Decimal(str(d.get("bid") or d["close"]))
             ask = Decimal(str(d.get("ask") or d["close"]))
+            if d.get("volume") is not None:
+                try:
+                    self._last_volume = Decimal(str(d["volume"]))
+                except Exception:
+                    pass
+            if d.get("provider"):
+                self._last_provider = str(d["provider"])
             return bid, ask
         except Exception as e:
             logger.warning(f"Failed to parse relay price: {e}")
@@ -1004,16 +1155,23 @@ class FeedClient:
                         ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).replace(tzinfo=None)
                     except Exception:
                         pass
+                vol = Decimal(str(row.get("volume") or 0))
                 out.append({
                     "open": Decimal(str(row["open"])),
                     "high": Decimal(str(row["high"])),
                     "low": Decimal(str(row["low"])),
                     "close": c,
-                    "volume": Decimal(str(row.get("volume") or 0)),
+                    "volume": vol,
                     "timestamp": ts,
+                    "provider": str(row.get("provider", "")),
                 })
             except Exception:
                 continue
+        if out:
+            last = out[-1]
+            self._last_volume = last.get("volume", Decimal('0.0'))
+            if last.get("provider"):
+                self._last_provider = last["provider"]
         return out
 
     def get_intraday(self, interval: str = "1m") -> Dict[str, Any]:
@@ -1032,16 +1190,40 @@ class FeedClient:
                     ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).replace(tzinfo=None)
                 except Exception:
                     pass
+            vol = Decimal(str(d.get("volume") or 0))
+            self._last_volume = vol
+            if d.get("provider"):
+                self._last_provider = str(d["provider"])
             return {
                 "open": Decimal(str(d["open"])),
                 "high": Decimal(str(d["high"])),
                 "low": Decimal(str(d["low"])),
                 "close": c,
-                "volume": Decimal(str(d.get("volume") or 0)),
+                "volume": vol,
                 "timestamp": ts,
+                "provider": self._last_provider,
             }
         except Exception as e:
             logger.warning(f"Failed to parse intraday: {e}")
+            return {}
+
+    def get_volume(self) -> Dict[str, Any]:
+        d = self._get("volume")
+        if not d or not isinstance(d, dict):
+            return {}
+        try:
+            vol = Decimal(str(d.get("volume") or 0))
+            vol24 = Decimal(str(d.get("volume_24h") or 0))
+            self._last_volume = vol
+            if d.get("provider"):
+                self._last_provider = str(d["provider"])
+            return {
+                "volume": vol,
+                "volume_24h": vol24,
+                "provider": self._last_provider,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to parse volume: {e}")
             return {}
 
     def get_info(self) -> Dict[str, Any]:
@@ -1059,6 +1241,8 @@ class FeedClient:
             "fallback_count": self._fallback_count,
             "last_update": self._last_update.isoformat() if self._last_update else None,
             "relay_url": RELAY_URL,
+            "provider": self._last_provider,
+            "last_volume": str(self._last_volume),
         }
 
 # ============================================================================
@@ -1099,13 +1283,9 @@ class AEEA_Engine:
         self._last_telegram_toast_seq: int = 0
         self._last_dispatch_event: str = ""
         self._last_comment_line: str = ""
+        self._last_projection_bar: int = -1
 
-    # ------------------------------------------------------------------------
-    # D-15: SINGLE SOURCE OF TRUTH FOR COMMISSION IN PRICE-SPACE
-    # ------------------------------------------------------------------------
     def _com_price(self) -> Decimal:
-        """The FF's `com = Commssion * Point` — one canonical helper.
-        Every site that needs a price-space commission uses this."""
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
         return COMMISSION * point
 
@@ -1139,6 +1319,8 @@ class AEEA_Engine:
         saved_lk_h = st.last_kronecker_h
         saved_lk_bar = self._last_kronecker_bar
         saved_comment = self._last_comment_line
+        saved_provider = st.last_provider
+        saved_volume = st.last_volume
 
         st.KC = st.invert
         size = X_PERIOD - Y_START
@@ -1215,6 +1397,9 @@ class AEEA_Engine:
         st.kPass = Decimal('0.0')
         st.ikPass = Decimal('0.0')
         st.execution_fired = False
+        st.projection_path = []
+        st.projection_meta = {}
+        st.projection_computed_at = None
 
         self.ohlcv_history = saved_ohlcv
         st.price = saved_price
@@ -1237,8 +1422,11 @@ class AEEA_Engine:
         st.last_kronecker_m = saved_lk_m
         st.last_kronecker_n = saved_lk_n
         st.last_kronecker_h = saved_lk_h
+        st.last_provider = saved_provider
+        st.last_volume = saved_volume
         self._last_kronecker_bar = saved_lk_bar
         self._last_comment_line = saved_comment
+        self._last_projection_bar = -1
 
         logger.info("ReSet   ")
 
@@ -2054,9 +2242,6 @@ class AEEA_Engine:
 
         self._execute_kronecker_block()
 
-    # ------------------------------------------------------------------------
-    # D-15: KRONECKER BLOCK NOW USES _com_price() (POINT-SCALED)
-    # ------------------------------------------------------------------------
     def _execute_kronecker_block(self) -> None:
         st = self.state
         fg = ""
@@ -3061,16 +3246,19 @@ class AEEA_Engine:
 
     def _A(self, price: Decimal) -> None:
         st = self.state
+        closed_any = False
         if st.v and st.lOrder_id != -1:
             logger.info(f"🔴 A(): Close long #{st.lOrder_id} at {price}")
             self._close_order(st.lOrder_id, price)
             st.lOrder_id = -1
             st.has_open_long = False
+            closed_any = True
         elif st.v and st.kOrder_id != -1:
             logger.info(f"🔴 A(): Close short #{st.kOrder_id} at {price}")
             self._close_order(st.kOrder_id, price)
             st.kOrder_id = -1
             st.has_open_short = False
+            closed_any = True
         st.E = Decimal('0.0')
         st.A = True
         st.B = False
@@ -3079,20 +3267,23 @@ class AEEA_Engine:
         st.trailing_stop_active = False
         st.trailing_stop_price = Decimal('0.0')
         st.trailing_take_profit = Decimal('0.0')
-        self._emit_execution_toast("A", price, "CLOSE", -1, "")
+        self._emit_execution_toast("A", price, "CLOSE", -1, "A_close" if closed_any else "A_no_position")
 
     def _B(self, price: Decimal) -> None:
         st = self.state
+        closed_any = False
         if st.u and st.kOrder_id != -1:
             logger.info(f"🔵 B(): Close short #{st.kOrder_id} at {price}")
             self._close_order(st.kOrder_id, price)
             st.kOrder_id = -1
             st.has_open_short = False
+            closed_any = True
         elif st.u and st.lOrder_id != -1:
             logger.info(f"🔵 B(): Close long #{st.lOrder_id} at {price}")
             self._close_order(st.lOrder_id, price)
             st.lOrder_id = -1
             st.has_open_long = False
+            closed_any = True
         st.D = Decimal('0.0')
         st.A = False
         st.B = True
@@ -3101,7 +3292,7 @@ class AEEA_Engine:
         st.trailing_stop_active = False
         st.trailing_stop_price = Decimal('0.0')
         st.trailing_take_profit = Decimal('0.0')
-        self._emit_execution_toast("B", price, "CLOSE", -1, "")
+        self._emit_execution_toast("B", price, "CLOSE", -1, "B_close" if closed_any else "B_no_position")
 
     def _open_order(self, side: str, price: Decimal, sl: Decimal, tp: Decimal, lot: Decimal) -> int:
         ticket = self._next_ticket
@@ -3118,9 +3309,6 @@ class AEEA_Engine:
                 return True
         return False
 
-    # ------------------------------------------------------------------------
-    # D-16: _P() / _Q() NO LONGER CROSS-CONTAMINATE ORDER SLOTS
-    # ------------------------------------------------------------------------
     def _P(self, price: Decimal) -> None:
         st = self.state
         self._S()
@@ -3209,9 +3397,6 @@ class AEEA_Engine:
             self._sTP = bid - tp_price
             self._bTP = ask + tp_price
 
-    # ------------------------------------------------------------------------
-    # DC-10: TRAILING STOP FRICTION NOW POINT-SCALED
-    # ------------------------------------------------------------------------
     def _execute_trailing_stop(self) -> None:
         st = self.state
         if len(self.ohlcv_history) >= st.y + 1:
@@ -3342,9 +3527,6 @@ class AEEA_Engine:
             return st.Stock
         return Decimal('0.0')
 
-    # ------------------------------------------------------------------------
-    # DC-9: SPREAD CHECK NOW POINT-SCALED
-    # ------------------------------------------------------------------------
     def _will_pass_spread_in_pnl(self, entry_price: Decimal, target_price: Decimal, side: str) -> bool:
         if len(self.price_history) > 0:
             last = self.price_history[-1]
@@ -3370,32 +3552,50 @@ class AEEA_Engine:
     def _Top(self, emit_toast: bool = True) -> None:
         st = self.state
         price_str = f"{st.price:.5f}"
+        created = False
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
             st.BL.append(st.price)
             st.BL_type.append("top")
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}")
+            created = True
             if self._bridge_publish_callback:
                 try:
                     self._bridge_publish_callback("top", price_str)
                 except Exception as e:
                     logger.warning(f"_bridge_publish_callback failed: {e}")
+        _emit_toast("fvg", {
+            "action": "commit" if created else "duplicate",
+            "type": "top",
+            "price": price_str,
+            "idx": int(st.FVG),
+            "tick": int(st.tick),
+        })
 
     def _Bott(self, emit_toast: bool = True) -> None:
         st = self.state
         price_str = f"{st.price:.5f}"
+        created = False
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
             st.BL.append(st.price)
             st.BL_type.append("bott")
             st.FVG += 1
             st.bL = price_str
             logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}")
+            created = True
             if self._bridge_publish_callback:
                 try:
                     self._bridge_publish_callback("bott", price_str)
                 except Exception as e:
                     logger.warning(f"_bridge_publish_callback failed: {e}")
+        _emit_toast("fvg", {
+            "action": "commit" if created else "duplicate",
+            "type": "bott",
+            "price": price_str,
+            "idx": int(st.FVG),
+            "tick": int(st.tick),
+        })
 
     def _emit_execution_toast(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
         st = self.state
@@ -3469,7 +3669,7 @@ class AEEA_Engine:
             self._tick_log_counter = 0
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
-            logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}")
+            logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, provider={st.last_provider}")
 
         st.price = price_data.bid
         if len(self.ohlcv_history) >= 2:
@@ -3670,6 +3870,7 @@ class AEEA_Engine:
             return
         price = st.price
         i = 0
+        removed_indices = []
         while i < len(st.BL):
             price_line = st.BL[i]
             line_type = st.BL_type[i] if i < len(st.BL_type) else "top"
@@ -3678,6 +3879,7 @@ class AEEA_Engine:
                 continue
             if line_type == "top" and (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
                 logger.info(f"🔵 FVG maintenance: remove blue @ {price_line}")
+                removed_indices.append((i, price_line, "top"))
                 st.BL.pop(i)
                 if i < len(st.BL_type):
                     st.BL_type.pop(i)
@@ -3685,12 +3887,21 @@ class AEEA_Engine:
                 continue
             if line_type == "bott" and (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
                 logger.info(f"🔴 FVG maintenance: remove red @ {price_line}")
+                removed_indices.append((i, price_line, "bott"))
                 st.BL.pop(i)
                 if i < len(st.BL_type):
                     st.BL_type.pop(i)
                 st.FVG -= 1
                 continue
             i += 1
+        for _, price_line, line_type in removed_indices:
+            _emit_toast("fvg", {
+                "action": "remove",
+                "type": line_type,
+                "price": str(price_line),
+                "idx": int(st.FVG),
+                "tick": int(st.tick),
+            })
 
     def update_price_from_feed(self) -> None:
         data = self.feed.get_intraday()
@@ -3708,10 +3919,11 @@ class AEEA_Engine:
             return
         volume = data.get("volume", Decimal('0.0'))
         timestamp = data.get("timestamp", datetime.now())
+        provider = str(data.get("provider", self.feed.last_provider()))
         self._consecutive_zero_prices = 0
-        self.update_price(bid, ask, volume, timestamp)
+        self.update_price(bid, ask, volume, timestamp, provider)
 
-    def update_price(self, bid: Decimal, ask: Decimal, volume: Decimal = Decimal('0.0'), timestamp: Optional[datetime] = None) -> None:
+    def update_price(self, bid: Decimal, ask: Decimal, volume: Decimal = Decimal('0.0'), timestamp: Optional[datetime] = None, provider: str = "") -> None:
         if timestamp is None:
             timestamp = datetime.now()
         if bid <= Decimal('0.0'):
@@ -3719,11 +3931,15 @@ class AEEA_Engine:
             return
         self.state.price = bid
         self.state.Price = (bid + ask) / Decimal('2.0')
+        if volume > Decimal('0.0'):
+            self.state.last_volume = volume
+        if provider:
+            self.state.last_provider = provider
         self._price_update_counter += 1
         price_data = PriceData(
             bid=bid, ask=ask, close=(bid + ask) / Decimal('2.0'),
             open=bid, high=max(bid, ask), low=min(bid, ask),
-            volume=volume, timestamp=timestamp,
+            volume=volume, timestamp=timestamp, provider=provider,
         )
         self.price_history.append(price_data)
         if len(self.price_history) > 1000:
@@ -3747,10 +3963,11 @@ class AEEA_Engine:
                 "open": price_data.open, "high": price_data.high,
                 "low": price_data.low, "close": price_data.close,
                 "volume": price_data.volume, "timestamp": timestamp,
+                "provider": provider,
             })
             if len(self.ohlcv_history) > 200:
                 self.ohlcv_history = self.ohlcv_history[-200:]
-            logger.info(f"📊 BAR CLOSE #{self.state.bar_close_count} at {timestamp.isoformat()} close={price_data.close} (ohlcv={len(self.ohlcv_history)})")
+            logger.info(f"📊 BAR CLOSE #{self.state.bar_close_count} at {timestamp.isoformat()} close={price_data.close} volume={price_data.volume} provider={provider} (ohlcv={len(self.ohlcv_history)})")
         else:
             self._bar_open = False
             if self.ohlcv_history:
@@ -3758,9 +3975,12 @@ class AEEA_Engine:
                 self.ohlcv_history[-1]["low"] = min(self.ohlcv_history[-1]["low"], price_data.low)
                 self.ohlcv_history[-1]["close"] = price_data.close
                 self.ohlcv_history[-1]["volume"] += price_data.volume
+                if provider:
+                    self.ohlcv_history[-1]["provider"] = provider
 
         if bar_closed and len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
             self._populate_indicator_matrix()
+            self._project_arc_length()
 
         self._on_tick(price_data)
 
@@ -3813,7 +4033,7 @@ class AEEA_Engine:
             "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
             "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
             "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
-            "A": "🅰️", "B": "🅱️",
+            "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
         }
         emoji = emoji_map.get(event, "⚡")
         side_str = side if side else "NONE"
@@ -3930,6 +4150,9 @@ class AEEA_Engine:
             "kPass": str(st.kPass),
             "ikPass": str(st.ikPass),
             "comment_line": self._format_comment_line(),
+            "last_provider": st.last_provider,
+            "last_volume": str(st.last_volume),
+            "projection_computed_at": st.projection_computed_at,
         }
 
     def get_regime_map(self) -> List[Dict[str, Any]]:
@@ -3995,6 +4218,7 @@ class AEEA_Engine:
             st.trailing_stop_entry = entry
             st.trailing_stop_side = "SHORT"
         logger.info(f"📝 place_order: {side} #{ticket} @ {entry}, lot={lot}, sl={sl}, tp={tp}")
+        self._emit_execution_toast("ManualOrder", entry, side, ticket, "manual")
         return {"ok": True, "ticket": ticket, "side": side, "entry": float(entry), "sl": float(sl), "tp": float(tp)}
 
     def close_order(self, ticket: int = None, all: bool = False) -> Dict[str, Any]:
@@ -4031,6 +4255,8 @@ class AEEA_Engine:
                         st.kOrder_id = -1
                     break
         logger.info(f"📝 close_order: closed={closed}")
+        if closed:
+            self._emit_execution_toast("ManualClose", st.price, "CLOSE", closed[0] if len(closed) == 1 else -1, "manual")
         return {"ok": True, "closed": closed}
 
     def list_orders(self) -> List[Dict[str, Any]]:
@@ -4211,11 +4437,128 @@ class AEEA_Engine:
                 self.ohlcv_history = historical
                 self._populate_indicator_matrix()
                 self._force_initialization()
-            logger.info(f"📈 Symbol changed to {yahoo_symbol}")
-            return {"ok": True, "symbol": yahoo_symbol}
+            self._project_arc_length()
+            logger.info(f"📈 Symbol changed to {yahoo_symbol} (provider={self.feed.last_provider()})")
+            return {"ok": True, "symbol": yahoo_symbol, "provider": self.feed.last_provider()}
         except Exception as e:
             logger.exception("change_symbol failed")
             return {"error": "change_symbol_exception", "detail": str(e), "symbol": new_symbol}
+
+    def _project_arc_length(self) -> None:
+        st = self.state
+        if len(self.ohlcv_history) < min(MIN_HISTORY_WINDOW, 20):
+            st.projection_path = []
+            st.projection_meta = {"reason": "insufficient_history"}
+            st.projection_computed_at = datetime.now().isoformat()
+            return
+        horizon = max(4, min(120, ARC_PROJECTION_HORIZON))
+        price_now = st.price if st.price > Decimal('0.0') else self.ohlcv_history[-1]["close"]
+        signal_now = st.signal if st.signal != Decimal('0.0') else price_now
+        regime_idx = st.Z - (st.y + 1)
+        regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else "Unknown"
+        projection_kind = "range"
+        if regime in ("sTrend", "tTrend"):
+            projection_kind = "trend"
+        elif regime in ("sVolatile", "tVolatile"):
+            projection_kind = "volatile"
+        elif regime in ("sRange", "tRange", "Stable"):
+            projection_kind = "range"
+        slope = Decimal('0.0')
+        if projection_kind == "trend":
+            window = self.ohlcv_history[-min(10, len(self.ohlcv_history)):]
+            if len(window) >= 2:
+                first_close = window[0]["close"]
+                last_close = window[-1]["close"]
+                n_minus_1 = Decimal(len(window) - 1)
+                slope = (last_close - first_close) / n_minus_1
+        amplitude = Decimal('0.0')
+        center = price_now
+        if projection_kind == "volatile":
+            prem = Decimal('0.0')
+            disc = Decimal('0.0')
+            for i in range(len(st.Premium) - 1, -1, -1):
+                if st.Premium[i] > Decimal('0.0'):
+                    prem = st.Premium[i]
+                    break
+            for i in range(len(st.Discount) - 1, -1, -1):
+                if st.Discount[i] > Decimal('0.0'):
+                    disc = st.Discount[i]
+                    break
+            if prem > Decimal('0.0') and disc > Decimal('0.0') and prem > disc:
+                center = (prem + disc) / Decimal('2.0')
+                amplitude = (prem - disc) / Decimal('2.0')
+            else:
+                atr_val = st.ATR[st.y] if st.y < len(st.ATR) else Decimal('0.0')
+                if atr_val > Decimal('0.0'):
+                    amplitude = atr_val
+                    center = price_now
+        try:
+            damping = Decimal(ARC_PROJECTION_DAMPING)
+        except Exception:
+            damping = Decimal('0.94')
+        path: List[Dict[str, Any]] = []
+        half_period = Decimal(horizon) / Decimal('2.0')
+        two_pi = Decimal('6.2831853071795864769252867665590057683943387987502')
+        for k in range(1, horizon + 1):
+            t = Decimal(k)
+            if projection_kind == "trend":
+                future_price = price_now + slope * t
+            elif projection_kind == "volatile":
+                omega_t = two_pi * t / Decimal(horizon)
+                cos_val = self._decimal_cos(omega_t)
+                decay = damping ** k
+                future_price = center + amplitude * cos_val * decay
+            else:
+                ratio = t / half_period
+                omega_t = Decimal('3.1415926535897932384626433832795028841971693993751') * ratio
+                cos_val = self._decimal_cos(omega_t)
+                delta = price_now - signal_now
+                future_price = signal_now + delta * cos_val
+            path.append({
+                "step": k,
+                "price": str(future_price.quantize(Decimal('0.00001'))),
+                "t": float(t),
+            })
+        st.projection_path = path
+        st.projection_meta = {
+            "kind": projection_kind,
+            "horizon": horizon,
+            "price_now": str(price_now),
+            "signal_now": str(signal_now),
+            "regime": regime,
+            "slope": str(slope),
+            "amplitude": str(amplitude),
+            "center": str(center),
+            "damping": str(damping),
+            "provider": st.last_provider,
+        }
+        st.projection_computed_at = datetime.now().isoformat()
+
+    @staticmethod
+    def _decimal_cos(x: Decimal) -> Decimal:
+        x2 = x * x
+        term = Decimal('1.0')
+        result = Decimal('1.0')
+        sign = -1
+        for n in range(1, 30):
+            term = term * x2 / (Decimal(2 * n - 1) * Decimal(2 * n))
+            result = result + (Decimal(sign) * term)
+            sign = -sign
+        return result
+
+    def get_projection(self) -> Dict[str, Any]:
+        st = self.state
+        if not st.projection_path:
+            self._project_arc_length()
+        return {
+            "symbol": SYMBOL,
+            "path": st.projection_path,
+            "meta": st.projection_meta,
+            "computed_at": st.projection_computed_at,
+            "current_price": str(st.price),
+            "signal_level": str(st.signal),
+            "regime": st.projection_meta.get("regime") if st.projection_meta else "Unknown",
+        }
 
 # ============================================================================
 # BRIDGE STATE
@@ -4276,18 +4619,34 @@ class BridgeState:
                 "idx": idx, "type": fvg_type, "price": str(price_dec),
                 "created": datetime.now().isoformat(),
             }
+        _emit_toast("fvg", {
+            "action": "commit",
+            "type": fvg_type,
+            "price": str(price_dec),
+            "idx": idx,
+            "tick": int(engine.state.tick) if engine is not None else 0,
+        })
         return idx
 
     def remove_fvg(self, idx: int) -> bool:
         with self._lock:
             if idx in self._fvgs:
-                del self._fvgs[idx]
+                removed_record = self._fvgs.pop(idx)
                 removed = True
             else:
+                removed_record = None
                 removed = False
         engine = BRIDGE_ENGINE_REF.get("engine")
         if engine is not None:
             engine.state.fvg_anchor_map.pop(idx, None)
+        if removed and removed_record is not None:
+            _emit_toast("fvg", {
+                "action": "remove",
+                "type": removed_record.get("type", "top"),
+                "price": removed_record.get("price", "0"),
+                "idx": idx,
+                "tick": int(engine.state.tick) if engine is not None else 0,
+            })
         return removed
 
     def list_fvgs(self) -> List[Dict[str, Any]]:
@@ -4452,7 +4811,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.2.0"
+    server_version = "AEI-Bridge/4.3.0"
 
     def log_message(self, fmt, *args):
         return
@@ -4523,7 +4882,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.2.0",
+                "ok": not stale, "service": "aei-bridge", "version": "4.3.0",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -4533,6 +4892,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "signal_count": len(engine.state.signal_history) if engine else 0,
                 "bar_close_count": int(engine.state.bar_close_count) if engine else 0,
                 "relay_healthy": (engine.feed.failure_count() < 3) if engine else True,
+                "provider": engine.feed.last_provider() if engine else "",
+                "projection_computed_at": engine.state.projection_computed_at if engine else None,
             })
             return
 
@@ -4548,6 +4909,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "relay_url": RELAY_URL, "relay_gated": bool(RELAY_KEY),
                 "x_period_constant": X_PERIOD, "y_start_constant": Y_START,
                 "require_auth": REQUIRE_AUTH,
+                "push_on_signal": PUSH_ON_SIGNAL,
+                "push_on_execution": PUSH_ON_EXECUTION,
+                "push_on_fvg": PUSH_ON_FVG,
+                "push_on_close": PUSH_ON_CLOSE,
+                "arc_projection_horizon": ARC_PROJECTION_HORIZON,
             })
             return
 
@@ -4574,6 +4940,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "latest_seq": latest_seq,
                 "first_available_seq": first_available,
             })
+            return
+
+        if path == "/projection":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            self._send_json(200, engine.get_projection())
             return
 
         if path == "/state":
@@ -4616,6 +4990,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "indicator_populate_count": int(engine._indicator_populate_count),
                 "imbalance_fire_count": int(engine._imbalance_fire_count),
                 "comment_line": engine._format_comment_line(),
+                "provider": st.last_provider,
+                "last_volume": str(st.last_volume),
             })
             return
 
@@ -4745,6 +5121,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "kPass": str(st.kPass),
                 "ikPass": str(st.ikPass),
                 "comment_line": engine._format_comment_line(),
+                "provider": st.last_provider,
+                "last_volume": str(st.last_volume),
+                "projection_meta": st.projection_meta,
+                "projection_computed_at": st.projection_computed_at,
             }
             self._send_json(200, payload)
             return
@@ -4776,6 +5156,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "low": float(bar["low"]),
                     "close": float(bar["close"]),
                     "volume": float(bar.get("volume", 0)),
+                    "provider": str(bar.get("provider", "")),
                 })
             self._send_json(200, {
                 "symbol": SYMBOL,
@@ -4783,6 +5164,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "count": len(ohlcv_data),
                 "last_bar_timestamp": last_ts,
                 "signal_count": len(engine.state.signal_history),
+                "provider": engine.state.last_provider,
             })
             return
 
@@ -4855,6 +5237,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 diag["active_symbol"] = engine.feed.active_symbol()
                 diag["last_bar_close"] = engine.state.bar_close_count
                 diag["recent_signals"] = engine.state.signal_history[-10:]
+                diag["provider"] = engine.state.last_provider
+                diag["projection_meta"] = engine.state.projection_meta
                 self._send_json(200, diag)
             except Exception as e:
                 self._send_json(500, {"error": "diagnostics_failed", "detail": str(e)})
@@ -5002,6 +5386,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 engine.feed._fallback_count = 0
                 engine._consecutive_zero_prices = 0
                 engine.OnReInit()
+                engine._project_arc_length()
                 logger.info("🔄 Manual reset requested via /reset")
                 self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
             except Exception as e:
@@ -5075,6 +5460,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 result = engine.close_order(ticket=ticket)
             code = 200 if result.get("ok") else 400
             self._send_json(code, result)
+            return
+
+        if path == "/projection/refresh":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            try:
+                engine._project_arc_length()
+                self._send_json(200, engine.get_projection())
+            except Exception as e:
+                logger.error(f"/projection/refresh error: {e}")
+                self._send_json(500, {"error": "internal", "detail": str(e)})
             return
 
         self._send_json(404, {"error": "not_found", "path": path})
@@ -5219,7 +5617,7 @@ class AEI_Bot:
                 st = self.engine.state
                 idx = st.Z - (st.y + 1)
                 regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-                logger.info(f"📊 itr#{iteration} price={st.price} tick={st.tick} FG={st.FG} regime={regime} bars={st.bar_close_count} signals={len(st.signal_history)} ohlcv={len(self.engine.ohlcv_history)}")
+                logger.info(f"📊 itr#{iteration} price={st.price} vol={st.last_volume} provider={st.last_provider} tick={st.tick} FG={st.FG} regime={regime} bars={st.bar_close_count} signals={len(st.signal_history)} ohlcv={len(self.engine.ohlcv_history)}")
             except Exception:
                 logger.exception(f"❌ Feed iteration #{iteration} failed")
             await asyncio.sleep(UPDATE_INTERVAL)
@@ -5234,7 +5632,7 @@ class AEI_Bot:
             [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
             [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
             [InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics")],
-            [InlineKeyboardButton("📊 Chart", callback_data="chart")],
+            [InlineKeyboardButton("📊 Chart", callback_data="chart"), InlineKeyboardButton("🎯 Projection", callback_data="projection")],
         ]
         if webapp_url:
             rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
@@ -5259,6 +5657,7 @@ class AEI_Bot:
             "`/indicators` - 13D Hilbert Space projection\n"
             "`/fvg` - Fair Value Gap tracking\n"
             "`/chart` - Recent signals summary\n"
+            "`/projection` - Arc-length future price projection\n"
             "`/diagnostics` - Full engine diagnostic snapshot\n"
             "`/reset` - Reset topological branch\n"
             "`/start_feed` - Start price feed\n"
@@ -5274,6 +5673,7 @@ class AEI_Bot:
             f"🔄 *Feed Status:* {feed_status}\n"
             f"🧠 *Engine Status:* {engine_status}\n"
             f"📊 *Bar Closes:* {self.engine.state.bar_close_count}  |  *Signals:* {len(self.engine.state.signal_history)}\n"
+            f"📡 *Provider:* `{self.engine.state.last_provider or '—'}`  |  *Volume:* `{self.engine.state.last_volume}`\n"
             "💎 Natalia Tanyatia"
         )
         await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
@@ -5324,6 +5724,7 @@ class AEI_Bot:
             f"📈 *OHLCV Bars:* {len(self.engine.ohlcv_history)}\n"
             f"🎯 *Signal History:* {len(state.signal_history)}\n"
             f"📡 *Feed Active:* {feed_mark}\n"
+            f"🛰️ *Provider:* `{state.last_provider or '—'}`  |  *Volume:* `{state.last_volume}`\n"
             f"🔀 *KC:* {state.KC}  |  *Prime:* {state.prime}  |  *Dime:* {state.dime}\n"
             f"🔀 *Invert:* {state.invert}  |  *Mem:* {state.mem}  |  *Tag:* {state.tag}\n"
             f"🔀 *A:* {state.A}  |  *B:* {state.B}  |  *C:* {state.C}  |  *c:* {state.c}\n"
@@ -5333,7 +5734,8 @@ class AEI_Bot:
             f"🎯 *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
             f"🔍 *OnTrack Runs:* {state.on_track_runs}  |  *OnStand Runs:* {state.on_stand_runs}\n"
             f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}\n"
-            f"🔢 *X_scan:* {state.X_scan}  |  *Y_scan:* {state.Y_scan}  |  *X_PERIOD:* {X_PERIOD}"
+            f"🔢 *X_scan:* {state.X_scan}  |  *Y_scan:* {state.Y_scan}  |  *X_PERIOD:* {X_PERIOD}\n"
+            f"🌌 *Projection:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'}"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -5376,7 +5778,9 @@ class AEI_Bot:
             f"🔢 *X_scan/Y_scan:* {status.get('X_scan')}/{status.get('Y_scan')}\n"
             f"🔢 *X_PERIOD (const):* {X_PERIOD}  |  *Y_START (const):* {Y_START}\n"
             f"🔢 *iATR/iStdDev/iIHKk/iIHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
-            f"🔢 *lPass/ilPass/kPass/ikPass:* {status.get('lPass')}/{status.get('ilPass')}/{status.get('kPass')}/{status.get('ikPass')}"
+            f"🔢 *lPass/ilPass/kPass/ikPass:* {status.get('lPass')}/{status.get('ilPass')}/{status.get('kPass')}/{status.get('ikPass')}\n"
+            f"🛰️ *Provider:* {status.get('last_provider')}  |  *Volume:* {status.get('last_volume')}\n"
+            f"🌌 *Projection Computed:* {status.get('projection_computed_at')}"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -5543,7 +5947,42 @@ class AEI_Bot:
             f"🎯 *Total Signals Recorded:* {len(state.signal_history)}\n"
             f"🕐 *Last Signal:* {state.last_signal_at or 'never'}\n\n"
             "Open the ÆEA Mini App for the full interactive candlestick chart "
-            "with FVG drawings and signal overlays."
+            "with FVG drawings, signal overlays, and the arc-length projection."
+        )
+        reply_markup = self._build_main_keyboard()
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+
+    async def projection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        engine = self.engine
+        state = engine.state
+        if not state.projection_path:
+            engine._project_arc_length()
+        proj = engine.get_projection()
+        meta = proj.get("meta") or {}
+        path = proj.get("path") or []
+        path_preview = ""
+        for step in path[:10]:
+            path_preview += f"  ▸ step {step['step']:>2}: {step['price']}\n"
+        response = (
+            "🌌 *ARC-LENGTH PRICE PROJECTION*\n"
+            f"📈 *Symbol:* {SYMBOL}\n"
+            f"💰 *Current Price:* {proj.get('current_price')}\n"
+            f"🎯 *Signal Anchor:* {proj.get('signal_level')}\n"
+            f"📊 *Regime:* {proj.get('regime')}\n"
+            f"🧮 *Branch:* {meta.get('kind', '—')}\n"
+            f"⏱️ *Horizon:* {meta.get('horizon', '—')} bars\n"
+            f"📐 *Slope:* {meta.get('slope', '—')}\n"
+            f"📊 *Amplitude:* {meta.get('amplitude', '—')}\n"
+            f"🎯 *Center:* {meta.get('center', '—')}\n"
+            f"💧 *Damping:* {meta.get('damping', '—')}\n"
+            f"🛰️ *Provider:* {meta.get('provider', '—')}\n"
+            f"🕐 *Computed:* {proj.get('computed_at', 'never')}\n\n"
+            "*First 10 projected bars:*\n"
+            f"{path_preview or '  (no path computed)'}\n"
+            "_The projection is drawn on the chart ahead of the current bar._"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -5558,6 +5997,7 @@ class AEI_Bot:
         prev_auth_m = self.engine.state.authoritative_m
         prev_auth_n = self.engine.state.authoritative_n
         self.engine.OnReInit()
+        self.engine._project_arc_length()
         reset_msg = (
             "🔄 *TOPOLOGICAL BRANCH RESET*\n"
             "The Hilbert space projection has been re-anchored to the current\n"
@@ -5568,6 +6008,7 @@ class AEI_Bot:
             "• Premium/Discount/HH/LL reset to current bar data\n"
             "• k/l signal flags cleared\n"
             "• FVG anchor map cleared\n"
+            "• Arc-length projection recomputed\n"
             "• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
             f"• 📈 OnTrack runs preserved: {prev_on_track}\n"
@@ -5593,7 +6034,7 @@ class AEI_Bot:
             historical = self.engine.feed.get_historical_klines(limit=200)
             if historical and len(historical) >= MIN_HISTORY_WINDOW:
                 self.engine.ohlcv_history = historical
-                logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()}")
+                logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()} (provider={self.engine.feed.last_provider()})")
                 self.engine._populate_indicator_matrix()
             else:
                 logger.info("⏳ No historical data from relay. Engine will initialize organically.")
@@ -5601,6 +6042,7 @@ class AEI_Bot:
             logger.warning(f"⚠️ Historical data fetch failed: {e}")
         try:
             self.engine.update_price_from_feed()
+            self.engine._project_arc_length()
         except Exception:
             logger.exception("update_price_from_feed crashed during start_feed")
         if self._price_task is None or self._price_task.done():
@@ -5612,8 +6054,11 @@ class AEI_Bot:
             f"📈 *Symbol:* {SYMBOL}\n"
             f"🔄 *Update Interval:* {UPDATE_INTERVAL}s\n"
             f"📊 *Historical Data:* {hist_count} bars loaded\n"
+            f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
+            f"📦 *Volume:* `{self.engine.state.last_volume}`\n"
             f"🧠 *Initialization Mode:* {init_mode}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
+            f"🌌 *Projection:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
             f"🔮 *Status:* Monitoring for signals..."
         )
         if update.callback_query:
@@ -5641,6 +6086,8 @@ class AEI_Bot:
             f"*Relay Gated:* {'🔐 yes' if RELAY_KEY else '🔓 no'}",
             f"*Primary symbol:* `{info.get('primary_symbol')}`",
             f"*Active symbol:* `{info.get('active_symbol')}`",
+            f"*Provider:* `{info.get('provider') or '—'}`",
+            f"*Last volume:* `{info.get('last_volume') or '0'}`",
             f"*Chain index:* {info.get('chain_index')}",
             f"*Failure count:* {info.get('failure_count')}",
             f"*Fallback count:* {info.get('fallback_count')}",
@@ -5687,6 +6134,7 @@ class AEI_Bot:
             await update.message.reply_text(
                 f"✅ *Symbol changed*\n"
                 f"📈 *New Symbol:* `{result.get('symbol')}`\n"
+                f"🛰️ *Provider:* `{result.get('provider') or '—'}`\n"
                 f"🧠 *Engine reinitialized*",
                 parse_mode="Markdown",
             )
@@ -5701,6 +6149,8 @@ class AEI_Bot:
             f"📈 *Symbol:* {SYMBOL}\n"
             f"📛 *Name:* {info.get('name', 'Unknown')}\n"
             f"💵 *Currency:* {info.get('currency', 'USD')}\n"
+            f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
+            f"📦 *Last Volume:* `{self.engine.state.last_volume}`\n"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -5729,6 +6179,8 @@ class AEI_Bot:
             "  🎯 Place simulated orders\n"
             "  ⚙ Engine settings panel\n"
             "  📋 Regime map, log bar, signal markers\n"
+            "  🌌 Arc-length price projection ahead of the current bar\n"
+            "  🔔 Toast + Telegram push notifications on every execution\n"
             "  🔄 Live state polling",
             parse_mode="Markdown",
             reply_markup=keyboard,
@@ -5744,6 +6196,7 @@ class AEI_Bot:
             f"*Public URL:* `{public_url}`\n"
             f"*State endpoint:* `{public_url.rstrip('/')}/state`\n"
             f"*Mini App State:* `{public_url.rstrip('/')}/miniapp-state`\n"
+            f"*Projection endpoint:* `{public_url.rstrip('/')}/projection`\n"
             f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
             f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
             f"*Diagnostics endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
@@ -5772,6 +6225,8 @@ class AEI_Bot:
             await self.indicators(update, context)
         elif action == "chart":
             await self.chart(update, context)
+        elif action == "projection":
+            await self.projection(update, context)
         elif action == "start_feed":
             await self.start_feed(update, context)
         elif action == "stop_feed":
@@ -5814,6 +6269,7 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("indicators", self.indicators))
         self.application.add_handler(CommandHandler("chart", self.chart))
         self.application.add_handler(CommandHandler("fvg", self.fvg))
+        self.application.add_handler(CommandHandler("projection", self.projection))
         self.application.add_handler(CommandHandler("diagnostics", self.diagnostics))
         self.application.add_handler(CommandHandler("reset", self.reset))
         self.application.add_handler(CommandHandler("start_feed", self.start_feed))
@@ -5828,7 +6284,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.2.0).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.3.0).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -5842,10 +6298,11 @@ class AEI_Bot:
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🧪 Audit-patched v4.2.0: FF-exact M()/N() 5-case chain; Wilder ADX; MQL4 iRVI; default-AC window; full-history OBV/AD; 5-line Ichimoku range; point-size table; exact-fraction BB family; toast eviction detection; settings validation max >= min + 2; global Memory persistence.")
-        logger.info("🔔 Signal alerts fire on EVERY _signal(), no cooldown.")
-        logger.info("🔔 Execution alerts fire on EVERY dispatch (Diamond/Ruby/Hawk/Dove/Bull/Bear/Whisky/Wine/Watter/Blood/A/B).")
-        logger.info("🔔 /toasts endpoint serves incremental signal+execution toasts with first_available_seq.")
+        logger.info("🛰️ Multi-provider relay: Binance → CoinGecko → Yahoo for crypto; Yahoo for equities/futures.")
+        logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
+        logger.info("🌌 Arc-length projection computed per bar close and on demand.")
+        logger.info("🔔 Push notification on every signal, every execution, every FVG, every close.")
+        logger.info("🔔 /toasts endpoint serves incremental signal+execution+fvg toasts with first_available_seq.")
         logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()

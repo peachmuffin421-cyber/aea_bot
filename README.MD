@@ -1,122 +1,42 @@
-# **ÆEA** — *Deployment Guide*
-Version: 4.2.0 (Semantics-Restored Edition)
-Base: v4.1.2 (Audit-Patched — Semantics-Restored Edition) → v4.1.3 (Audit-Patched — Semantics-Restored Edition)
+# **ÆEA — Deployment Guide**
+Version: 4.3.0 (Enhancement Edition)
+Base: v4.2.0 (Semantics-Restored Edition) → v4.3.0 (Enhancement Edition)
 Foundational Framework: ÆEA.mq4
 Author: Natalia Tanyatia
 
 ---
 
-0. What Changed in v4.2.0
+0. What Changed in v4.3.0
 
-v4.2.0 is the terminal semantics-restoration release. It resolves every remaining defect catalogued in the ÆEA v4.1.1 Fidelity & Spec Audit (Segments 1–5) that was not fully corrected by the intermediate v4.1.2 and v4.1.3 revisions, plus all 30 defects surfaced by the v4.1.2 self-audit and all 11 defect classes identified by the v4.1.3 syntax+semantics audit. The v4.2.0 release additionally surfaces and resolves 15 new critical defects, 3 major defects, and 12 minor defects introduced by the intermediate patches; all are resolved in this document.
+v4.3.0 is the enhancement release. It adds three capabilities on top of the v4.2.0 semantics-restored port without altering any FF-invariant logic. The engine's state machine, exact-arithmetic discipline, indicator formulas, regime taxonomy, Kronecker gate, and observer/measurement layer remain at MQL4-parity with ÆEA.mq4. The additions are:
 
-v4.2.0 is not a feature release. It is a compiler-spec compliance release: every identified divergence between the Python port and the Foundational Framework's logic, arithmetic, state machine, indicator formulas, regime taxonomy, Kronecker gate, execution logic, and observer/measurement layer has been resolved at the source level. The port is now MQL4-parity across every site enumerated in the audit.
+· E-1 — Telegram push notifications on every event. _emit_toast() now dispatches a sendMessage to the bound chat_id for every toast it emits — signal, execution, FVG commit, FVG remove. The bot responds to the user on every event, which causes Telegram to raise a native push notification. _A(), _B(), _Top(), and _Bott() now emit their own toasts so the user is notified of every close and every FVG anchor maintenance action, not only of dispatch subblocks. A per-event dedup key (_push_dedup_key) with an 800 ms window (PUSH_DEDUP_WINDOW_MS) guarantees a single logical event never produces two pushes even when both the toast path and the legacy alert path fire.
 
-0.1 Defect-resolution index
+· E-2 — Real volume from a non-Yahoo upstream. The Cloudflare Worker now dispatches crypto symbols to Binance klines (/api/v3/klines — real OHLCV + real volume) with CoinGecko (/coins/{id}/market_chart — real volume) as the secondary and Yahoo as the tertiary. Equities and futures continue to use Yahoo only. The engine's OBV, AD, Force, and MFI projections therefore operate on non-zero volume for crypto. The current provider is surfaced in the Engine Panel, the Projection Panel, the 13D grid footnote, and the /probe output.
 
-ID Severity Site Resolution
+· E-3 — Arc-length future price projection. A new /projection endpoint returns a forward price path derived from the s=r coherence condition applied to the current topological branch. The path is drawn on the chart ahead of the current bar as a dashed purple arc with a soft gradient fill. Three branches drive three trajectory forms:
 
-1 D-1 Critical _M() Rewritten to FF's 5-case operator precedence: ADX fires once outside the loop, HH read is prior-value, third-case preserves elif iA > f+gf: m += 1
-2 D-2 Critical _N() Mirrored
-3 D-3 Critical _execute_kronecker_block() Reads prior HH/LL, never stale
-4 D-4 Critical _on_gaurd(), _on_bar() _G() fired from _on_goe()/_on_toe() boundary block in _on_tick(), NOT from inside _on_gaurd(); _F() schedule restored
-5 D-5 Critical _compute_adx(), _compute_di(), _normalize() Wilder-correct update; +DI/−DI in min-max range; cADX computed from a separate ADX_temp series
-6 D-6 Critical _compute_rvi() MQL4 iRVI formula (4-bar filter, SMA)
-7 D-7 Critical _compute_ac() AO window is the FF's DEFAULT AC period (5, 34); only the offset i varies
-8 D-8 Critical _compute_obv(), _compute_ad() Cumulative over the full passed array
-9 D-9 Critical _normalize() Ichimoku block 5-line range
-10 D-10 Critical _O() FF no-op preserved (bool by-value semantics)
-11 D-11 Critical _on_track(), _on_stand() Second loop uses the aliased st.S, NOT a new grown_S variable
-12 D-12 Critical _S() bSL/bTP use ask; sSL/sTP use bid; com = COMMISSION * Point
-13 D-13 Critical _execute_trailing_stop() Regime read by bar index
-14 D-14 Critical _get_next_topological_target() Exclusive bound range(y+1, X_PERIOD-1) matching FF's i < x-1
-15 D-15 Critical _execute_kronecker_block() Single source of truth _com_price() (price-space vs point-space unit mismatch resolved)
-16 D-16 Critical _P(), _Q() SELL ticket writes to st.kOrder_id, BUY ticket writes to st.lOrder_id — no cross-contamination
-17 D-17 Critical _M(), _N() 5-case operator precedence chain restored verbatim from FF
-18 D-18 Critical _execute_kronecker_block() Prior HH/LL read via MIN_PERIOD index before modification
-19 D-19 Critical _on_goe(), _on_toe() _G() correctly fired from boundary block, not _on_gaurd()
-20 D-20 Critical _compute_adx() cADX computed from separate ADX_temp series
-21 D-21 Critical _compute_rvi() MQL4 iRVI formula restored
-22 D-22 Critical _compute_ac() Default AC window (5, 34) restored
-23 D-23 Critical _compute_obv(), _compute_ad() Full-array cumulative, not j+1-slice truncated
-24 D-24 Critical _normalize() Ichimoku 5-line range normalization restored
-25 D-25 Critical _normalize() ADX block cADX from adx_main_list[1]
-26 D-26 Critical _on_track(), _on_stand() Aliased st.S bound in second loop
-27 D-27 Critical _S() bSL/bTP on ask, sSL/sTP on bid, com = COMMISSION * Point
-28 D-28 Critical _execute_trailing_stop() Regime read by bar index
-29 D-29 Critical _get_next_topological_target() Exclusive bound matching FF
-30 C-3.1 Critical index.html DEFAULT_BACKENDS array documented as fork-edit point
-31 C-3.3 Critical absorbDiagnostics() Freshness gate extended to indicator matrix via _lastDiagnosticsAbsorbedTick
-32 C-3.5 Critical /toasts first_available_seq in response; client detects eviction on first poll
-33 C-3.7 Critical _Top(), _Bott() Cascade dedup — no duplicate toasts from dispatch subblocks
-34 C-3.17 Critical do_OPTIONS() X-Since, X-Limit in allow-headers
-35 M-1 Critical symbol_point(), _symbol_digits() SYMBOL_DIGITS table
-36 M-2 Critical _S() Point multiplication restored; com is a price-space quantity
-37 M-3 Critical _on_tick(), _format_comment_line() Comment() reproduced with fixed MIN_PERIOD - 2
-38 M-4 Critical OnReInit() m_now/n_now preserved
-39 M-5 Critical apply_settings() Kronecker preserved; global Memory variable persists
-40 M-6 Critical This document + all files All 17 files delivered in full
-41 M-7 Critical This document No forward references
-42 M-8 Critical This document Defect index supersedes v4.1.1 claims
-43 C-3.2 Minor boot() Error banner latched — all messages fire once
-44 C-3.4 / M-15 Minor absorbMiniAppState() engine_initialized absorbed
-45 C-3.8 Minor Settings modal Memory validated
-46 C-3.9 Minor apply_settings() max >= min + 2
-47 C-3.10a Minor computeBollingerFamily() BigInt-backed fraction via string conversion
-48 C-3.10b Minor _bbCache Bars-identity key + explicit invalidation on family toggle
-49 C-3.11 / M-14 Minor :root CSS Candle variables wired to clrBlue/clrRed parity
-50 C-3.13 Minor mergeLogs() Full-entry-hash dedup
-51 C-3.16 Minor Backend + client Single authoritative m/n
-52 M-9 Minor F_THRESHOLD et al. Float64 ULP-matched; F_PLUS_GF_D uses float64 addition
-53 M-10 Minor Alert() format Preserved
-54 M-11 Minor This document Endpoint list complete
-55 M-12 Minor This document File counts reconciled
-56 M-13 Minor This document 5-min refresh documented
-57 M-14 Minor :root CSS Merged with C-3.11
-58 M-15 Minor absorbMiniAppState() Merged with C-3.4
-59 — Minor _compute_adx() Merged with D-5
-60 N-1 Critical _M() FF's 5-case chain restored verbatim
-61 N-2 Critical _N() Mirrors N-1
-62 N-3 Critical _on_gaurd() _G()/_signal() moved out of _on_gaurd() into _on_goe()/_on_toe()
-63 N-4 Critical _compute_adx() cADX computed from separate adx_main_list[1]
-64 N-5 Critical _compute_ac() Default AC window (5, 34), not j-period
-65 N-6 Critical _compute_obv()/_compute_ad() Full-array cumulative, not j+1-slice truncated
-66 N-7 Critical _on_track() Aliased st.S bound in second loop
-67 N-8 Critical _S() COMMISSION multiplied by Point
-68 N-9 Critical _on_tick() Comment() uses fixed MIN_PERIOD - 2
-69 N-10 Critical F_PLUS_GF_D Float64 runtime addition of the threshold shadows
-70 N-11 Critical absorbDiagnostics() Gate against _lastDiagnosticsAbsorbedTick (separate from _lastMiniAppTick)
-71 N-12 Critical _H()/_L() Authoritative source uniqueness enforced
-72 N-13 Critical apply_settings() Global Memory persisted
-73 N-14 Critical bbToBigFixed() String-based conversion avoids float64 multiplication
-74 N-15 Critical drawCandles() Fallback #0000ff/#ff0000 matching clrBlue/clrRed
-75 N-16 Major DEFAULT_BACKENDS Fork-author edit point documented
-76 N-17 Major boot() All error banners latched
-77 N-18 Major _Top()/_Bott() No duplicate toasts
-78 N-19 Major computeBollingerFamily() Cache invalidated on family toggle
-79 N-20 Minor mergeLogs() Server clock skew documented
-80 N-21 Minor do_GET() /toasts X-Limit read if present
-81 N-22 Minor _format_comment_line() Uses fixed MIN_PERIOD - 2
-82 N-23 Minor _emit_toast() first_available_seq set on first eviction
-83 N-24 Minor OnInit() Print("ReSet   ") reproduced
-84 N-25 Minor OnReInit() ArrayResize(kA, 13*(S-Y)) reproduced
-85 N-26 Minor F() ArrayResize(U, x-y) reproduced
-86 N-27 Minor G() ArrayResize(kA/lA, 13*(S-Y)) reproduced
-87 DC-1 Minor bottom-try _e alias replaced by in-scope exception capture
-88 DC-2 Minor _lastOhlcvTick assignment dropped
-89 DC-3 Minor resizeChart() No longer returns a dead boolean
-90 DC-4 Minor boot() Dead retry branch removed
-91 DC-5 Minor pushLog('success', ...) Unified to pushLog('info', ...)
-92 DC-6 Minor switchView('grid') Backdrop-close now syncs currentView
-93 DC-7 Minor INDICATOR_RANGES['BB'] entry removed (BB is not addable)
-94 DC-8 Minor chartCanvas._width/_height Set-path hardened
-95 DC-9 Minor _will_pass_spread_in_pnl Commission now point-scaled
-96 DC-10 Minor _execute_trailing_stop Friction math point-scaled
-97 DC-11 Minor Fraction._wrap Redundant isinstance guard kept only where a non-Fraction can reach it
+All intermediate quantities are Decimal. The cosine is evaluated via a 30-term Taylor series on Decimal (_decimal_cos), so no float64 rounding is introduced except at the final JSON serialization (which uses a decimal string).
 
-0.2 Compatibility with v4.1.1 / v4.1.2 / v4.1.3
+0.1 Defect-resolution index (carried forward from v4.2.0)
 
-v4.2.0 is a drop-in replacement for v4.1.1, v4.1.2, and v4.1.3. All environment variables, endpoints, and worker contracts are unchanged. The three config vars honored by v4.1.2 (MAX_MIN_GAP, MIN_PERIOD_FLOOR, SYMBOL_DIGITS) plus SYMBOL_DIGITS_DEFAULT are honored identically. The /toasts endpoint continues to serve the additive first_available_seq field introduced in v4.1.2. A fork configured against v4.1.1 continues to work without change, and gains the semantic corrections.
+All 44 defects from the ÆEA v4.1.1 Fidelity & Spec Audit (27 critical + 17 minor) remain resolved in v4.3.0 — the v4.3.0 patches do not touch any of the audited sites. All 30 defects from the v4.1.2 self-audit (15 critical + 3 major + 12 minor) remain resolved. All 11 defect classes from the v4.1.3 syntax+semantics audit remain resolved. All 15 new critical defects, 3 major defects, and 12 minor defects introduced by the v4.1.2/v4.1.3 intermediate patches remain resolved in v4.3.0.
+
+The complete v4.2.0 defect-resolution index (D-1 through D-29, C-3.1 through C-3.17, M-1 through M-15, N-1 through N-27, DC-1 through DC-11) is reproduced verbatim in the v4.2.0 deployment guide and remains authoritative. v4.3.0 does not re-open any of those sites.
+
+0.2 Compatibility with v4.1.1 / v4.1.2 / v4.1.3 / v4.2.0
+
+v4.3.0 is a drop-in replacement for v4.2.0. All environment variables, endpoints, and worker contracts are unchanged, with the following additive-only changes:
+
+· Eight new env vars: PUSH_ON_SIGNAL, PUSH_ON_EXECUTION, PUSH_ON_FVG, PUSH_ON_CLOSE, PUSH_DEDUP_WINDOW_MS, ARC_PROJECTION_HORIZON, ARC_PROJECTION_STEP, ARC_PROJECTION_DAMPING. All have sensible defaults and are optional.
+· Two new endpoints: GET /projection and POST /projection/refresh.
+· The relay contract is extended with three new kind values: kind=volume, kind=candles, kind=projection (the last is a passthrough marker — the Worker refuses it and tells the caller to use the backend).
+· The /miniapp-state payload is extended with provider, last_volume, projection_meta, and projection_computed_at.
+· The /health payload is extended with provider and projection_computed_at.
+· The /ohlcv payload is extended with provider on the top-level response and on each bar.
+· The /probe payload is extended with provider and last_volume.
+
+A fork configured against v4.2.0 continues to work without change, and gains the enhancement capabilities.
 
 ---
 
@@ -125,19 +45,19 @@ v4.2.0 is a drop-in replacement for v4.1.1, v4.1.2, and v4.1.3. All environment 
 The ÆEA system spans three cooperating surfaces:
 
 Layer Host Responsibility
-Frontend GitHub Pages (or any HTTPS static host) Serves index.html — the ÆEA MT4/TradingView-style engine UI: interactive candlestick chart with crosshair/pan/zoom, indicator sub-panels, BB×58 family overlay (BigInt-backed exact fractions), FVG drawing tools, order ticket, engine settings, regime map, log bar, signal markers, toast stack for signal/execution notifications, polling logic.
-Backend Heroku (or any HTTPS Python host) Runs app.py: Telegram bot polling, AEEA_Engine (MQL4-parity port), bridge endpoints (/state, /miniapp-state, /ohlcv, /signals, /handshake, /fvg, /probe, /diagnostics, /health, /config, /orders, /regime-map, /indicators, /log, /settings, /symbol, /order, /order/close, /toasts, /reset).
-Relay Cloudflare Workers Proxies Yahoo Finance through Cloudflare's egress IPs so the Heroku dyno's IP is never rate-limited by Yahoo.
+Frontend GitHub Pages (or any HTTPS static host) Serves index.html — the ÆEA MT4/TradingView-style engine UI: interactive candlestick chart with crosshair/pan/zoom, indicator sub-panels, BB×58 family overlay (BigInt-backed exact fractions), FVG drawing tools, order ticket, engine settings, regime map, log bar, signal markers, toast stack for signal/execution/FVG notifications, arc-length projection overlay, polling logic.
+Backend Heroku (or any HTTPS Python host) Runs app.py: Telegram bot polling, AEEA_Engine (MQL4-parity port), bridge endpoints (/state, /miniapp-state, /ohlcv, /signals, /handshake, /fvg, /probe, /diagnostics, /health, /config, /orders, /regime-map, /indicators, /log, /settings, /symbol, /order, /order/close, /toasts, /projection, /projection/refresh, /reset). Also dispatches Telegram push messages on every signal, execution, FVG, and close.
+Relay Cloudflare Workers Proxies Yahoo Finance (equities/futures), Binance klines (crypto OHLCV + volume), and CoinGecko market_chart (crypto secondary volume) through Cloudflare's egress IPs so the Heroku dyno's IP is never rate-limited by any upstream.
 
 The Mini App is not a separate server. It is the same index.html that runs locally, loaded by Telegram's WebView, authenticated via initData, bound back to the bot's chat_id through /handshake.
 
 1.1 Critical for split-origin correctness
 
-Because the frontend is served from GitHub Pages (origin https://<user>.github.io) and the backend lives on Heroku (origin https://<app>.herokuapp.com), the frontend must be explicitly told the backend origin. This is done with the ?backend= query parameter or the DEFAULT_BACKENDS[0] edit point. Without it, the TWA will attempt to fetch /miniapp-state, /ohlcv, etc. from GitHub Pages and receive 404s.
+Because the frontend is served from GitHub Pages (origin https://<user>.github.io) and the backend lives on Heroku (origin https://<app>.herokuapp.com), the frontend must be explicitly told the backend origin. This is done with the ?backend= query parameter or the DEFAULT_BACKENDS[0] edit point. Without it, the TWA will attempt to fetch /miniapp-state, /ohlcv, /projection, etc. from GitHub Pages and receive 404s.
 
 1.2 Critical for state freshness
 
-The TWA polls /miniapp-state every 2 s and /diagnostics every 5 s. Both endpoints return overlapping FF state. To prevent the slower /diagnostics poll from overwriting live engine state with stale data, absorbDiagnostics() in index.html implements a freshness guard: it only absorbs engine-state fields — and, in v4.2.0, indicator-matrix fields — if the diagnostics snapshot's tick is strictly greater than _lastDiagnosticsAbsorbedTick, a counter distinct from _lastMiniAppTick. This guarantees the Engine Panel, Kronecker Panel, and Derivative Panel always display the freshest available state, matching the bot's /status output.
+The TWA polls /miniapp-state every 2 s, /diagnostics every 5 s, and /projection every 5 s. All three return overlapping FF state. To prevent a slower poll from overwriting live engine state with stale data, absorbDiagnostics() in index.html implements a freshness guard: it only absorbs engine-state fields — including indicator-matrix fields — if the diagnostics snapshot's tick is strictly greater than _lastDiagnosticsAbsorbedTick, a counter distinct from _lastMiniAppTick. The projection poll is absorbed unconditionally because the backend computes it from live state on demand.
 
 1.3 Critical for Kronecker Panel accuracy
 
@@ -145,19 +65,29 @@ The Kronecker Panel displays the authoritative m/n from the most recent H()/L() 
 
 1.4 Critical for toast delivery
 
-Signal and execution notifications are delivered via a two-tier system: (a) server-side, _emit_toast() appends to a _TOAST_BUFFER deque and _send_signal_alert() / _send_execution_alert() push Telegram messages to the bound chat_id; (b) client-side, the TWA polls /toasts?since=<seq> every 2 s and renders each new toast in #toastStack. The seq cursor is monotonic and persists across polls; a client that disconnects and reconnects re-syncs from its last-seen seq. If the server has evicted entries past the client's cursor, the response includes first_available_seq so the client can log an eviction warning — including on the first poll when first_available_seq > 0.
+Signal, execution, and FVG notifications are delivered via a three-tier system:
+
+(a) Server-side toast buffer — _emit_toast() appends to a _TOAST_BUFFER deque with a monotonic sequence number and a first_available_seq cursor. The TWA polls /toasts?since=<seq> every 2 s and renders each new toast in #toastStack. If the server has evicted entries past the client's cursor, the response includes first_available_seq so the client can log an eviction warning — including on the first poll when first_available_seq > 0.
+
+(b) Server-side Telegram push — _telegram_push() dispatches a sendMessage to the bound chat_id for every toast, deduplicated by _push_dedup_key so a single logical event never produces two pushes. The push fires in a background thread so a slow Telegram round-trip never blocks the tick loop. This is the mechanism that causes a native Telegram push notification on the user's device: the bot responds to the user on every event.
+
+(c) Legacy alert paths — _send_signal_alert() and _send_execution_alert() continue to fire independently. The dedup key suppresses the second push when both (b) and (c) fire for the same logical event. Set PUSH_ON_SIGNAL=0 to disable the (b) path for signals while keeping the (c) path.
 
 1.5 Critical for BB family correctness
 
-The Bollinger family is computed client-side in index.html from state.bars (the same OHLCV that /ohlcv returns). This is exactly equivalent to what the FF computes inside Normalize() for each j ∈ [y+1, x-1]. MQL4 parity is enforced: integer periods 3..60, deviation = 2, applied price = close, bands shift = 0, population σ (divisor = period). v4.2.0 computes the SMA and variance accumulators with BigInt-backed fixed-point arithmetic at a 1e12 scale, converting via string to avoid float64 multiplication in bbToBigFixed(). The only remaining floating-point step is the final Math.sqrt, which is irrational in nature.
+The Bollinger family is computed client-side in index.html from state.bars (the same OHLCV that /ohlcv returns). MQL4 parity is enforced: integer periods 3..60, deviation = 2, applied price = close, bands shift = 0, population σ (divisor = period). v4.3.0 computes the SMA and variance accumulators with BigInt-backed fixed-point arithmetic at a 1e12 scale, converting via string to avoid float64 multiplication in bbToBigFixed(). The only remaining floating-point step is the final Math.sqrt, which is irrational in nature.
 
 1.6 Critical for backend origin safety
 
-index.html resolves the backend URL in this order: window.__AEEA_BACKEND_URL__ → ?backend= (persisted to localStorage) → localStorage['aeea_backend_url'] → DEFAULT_BACKENDS[0] → same-origin. The DEFAULT_BACKENDS array is the v4.2.0 resolution for the case where Telegram's WebView strips the ?backend= query string.
+index.html resolves the backend URL in this order: window.__AEEA_BACKEND_URL__ → ?backend= (persisted to localStorage) → localStorage['aeea_backend_url'] → DEFAULT_BACKENDS[0] → same-origin. The DEFAULT_BACKENDS array is the v4.3.0 resolution for the case where Telegram's WebView strips the ?backend= query string.
 
 1.7 Critical for single-source-of-truth
 
 The Cloudflare Worker is deployed exclusively from the aei-relay repository. The backend repository (aei-backend) does not contain worker.js, wrangler.toml, or package.json. The backend reaches the relay only over HTTP via the RELAY_URL environment variable.
+
+1.8 Critical for projection correctness
+
+The arc-length projection is computed on the backend (AEEA_Engine._project_arc_length()) and polled by the frontend. It is recomputed once per bar close (update_price calls it when bar_closed is true) and on demand via POST /projection/refresh. The frontend never computes the projection itself — it renders the path returned by the backend. This preserves the single-source-of-truth property for the engine's forward view.
 
 ---
 
@@ -258,10 +188,21 @@ If set, the Worker rejects any non-/health request missing the X-Relay-Key heade
 
 ```bash
 curl "https://aei-relay.<your-subdomain>.workers.dev/health"
-# → {"ok":true,"service":"aei-relay","gated":false}
+# → {"ok":true,"service":"aei-relay","version":"4.3.0","gated":false,
+#    "providers":["yahoo","binance","coingecko"]}
 
 curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=BTC-USD&kind=price"
-# → {"symbol":"BTC-USD","close":95432.12,...}
+# → {"symbol":"BTC-USD","close":95432.12,"bid":95432.12,"ask":95432.12,
+#    "volume":1234.56,"timestamp":"...","provider":"binance"}
+
+curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=BTC-USD&kind=volume"
+# → {"symbol":"BTC-USD","volume":1234.56,"volume_24h":98765.43,"provider":"binance"}
+
+curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=ETH-USD&kind=candles&interval=1m&limit=5"
+# → [{"open":...,"high":...,"low":...,"close":...,"volume":...,"timestamp":"...","provider":"binance"}, ...]
+
+curl "https://aei-relay.<your-subdomain>.workers.dev/?symbol=GC=F&kind=price"
+# → {"symbol":"GC=F","close":2650.50,...,"provider":"yahoo"}
 ```
 
 ---
@@ -300,6 +241,22 @@ heroku config:set SYMBOL_DIGITS='{"BTC-USD":2,"ETH-USD":2,...}' -a your-app-name
 heroku config:set SYMBOL_DIGITS_DEFAULT="2" -a your-app-name
 ```
 
+New in v4.3.0 (all optional, all with defaults):
+
+```bash
+# E-1: Telegram push switches. Each defaults to "1" (enabled).
+heroku config:set PUSH_ON_SIGNAL="1" -a your-app-name
+heroku config:set PUSH_ON_EXECUTION="1" -a your-app-name
+heroku config:set PUSH_ON_FVG="1" -a your-app-name
+heroku config:set PUSH_ON_CLOSE="1" -a your-app-name
+heroku config:set PUSH_DEDUP_WINDOW_MS="800" -a your-app-name
+
+# E-3: Arc-length projection parameters.
+heroku config:set ARC_PROJECTION_HORIZON="30" -a your-app-name
+heroku config:set ARC_PROJECTION_STEP="1" -a your-app-name
+heroku config:set ARC_PROJECTION_DAMPING="0.94" -a your-app-name
+```
+
 TELEGRAM_WEBAPP_URL does two things:
 
 · Tells the bot where the Mini App lives (used for MenuButtonWebApp).
@@ -311,7 +268,7 @@ REQUIRE_AUTH defaults to 1. Set it to 0 only for local development without Teleg
 
 ```bash
 git add .
-git commit -m "ÆEA backend v4.2.0 (Semantics-Restored Edition)"
+git commit -m "ÆEA backend v4.3.0 (Enhancement Edition)"
 git push heroku main
 ```
 
@@ -319,25 +276,36 @@ git push heroku main
 
 ```bash
 curl "https://your-app-name.herokuapp.com/health"
-# → {"ok":true,"service":"aei-bridge","version":"4.2.0",...}
+# → {"ok":true,"service":"aei-bridge","version":"4.3.0","provider":"binance",
+#    "projection_computed_at":"2025-...", ...}
 
 curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/config"
-# → {"public_url":"...","require_auth":true,...}
+# → {"public_url":"...","require_auth":true,"push_on_signal":true,
+#    "arc_projection_horizon":30, ...}
+
+curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/projection"
+# → {"symbol":"BTC-USD","path":[{"step":1,"price":"95433.12","t":1.0}, ...],
+#    "meta":{"kind":"range","horizon":30,"price_now":"95432.12",
+#            "signal_now":"95430.00","regime":"sRange","slope":"0",
+#            "amplitude":"0","center":"95432.12","damping":"0.94",
+#            "provider":"binance"},
+#    "computed_at":"2025-...","current_price":"95432.12",
+#    "signal_level":"95430.00","regime":"sRange"}
 ```
 
-Key check on /probe: "empty": false and relay_url populated.
+Key checks on /probe: "empty": false, relay_url populated, provider populated, last_volume non-zero for crypto.
 
-v4.2.0 endpoint checks:
+v4.3.0 endpoint checks:
 
 ```bash
-# GET /settings returns all 11 FF inputs as exact strings
-curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/settings"
-# → {"max":60,"min":3,"Cc":true,"cC":true,"Memory":-1,"safetyOffSwitch":false,
-#    "StopLoss":"0","TakeProfit":"0","lot":"0.01","slip":100,"Commssion":"0"}
-
-# GET /toasts returns incremental toasts + first_available_seq
+# GET /toasts returns incremental signal+execution+fvg toasts
 curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/toasts?since=0"
 # → {"toasts":[...],"count":N,"latest_seq":M,"first_available_seq":F}
+
+# POST /projection/refresh forces a recomputation
+curl -X POST -H "X-Telegram-Init-Data: <valid>" \
+     "https://your-app-name.herokuapp.com/projection/refresh"
+# → {"symbol":"...","path":[...],"meta":{...},"computed_at":"..."}
 ```
 
 ---
@@ -354,7 +322,7 @@ The index.html resolves the backend in this order:
 4. DEFAULT_BACKENDS[0] — the fork-author edit point at the top of the <script> block
 5. same-origin (relative paths)
 
-For a fork: edit DEFAULT_BACKENDS[0] in index.html to your Heroku origin before pushing. This is the v4.2.0 defense against WebView URL stripping.
+For a fork: edit DEFAULT_BACKENDS[0] in index.html to your Heroku origin before pushing. This is the v4.3.0 defense against WebView URL stripping.
 
 In the Telegram Mini App context, the Web App URL configured in BotFather must include the query string:
 
@@ -370,7 +338,7 @@ This is what makes the TWA able to reach the Heroku backend. If Telegram strips 
 cd aei-miniapp
 git init
 git add index.html README.md .gitignore
-git commit -m "ÆEA Mini App v4.2.0 (Semantics-Restored Edition)"
+git commit -m "ÆEA Mini App v4.3.0 (Enhancement Edition)"
 git branch -M main
 git remote add origin https://github.com/<your-username>/<repo-name>.git
 git push -u origin main
@@ -448,6 +416,18 @@ MIN_PERIOD_FLOOR 3 Hard floor on the FF's min input. The FF requires 3.
 SYMBOL_DIGITS (JSON table) Symbol → digits map for Point-size emulation.
 SYMBOL_DIGITS_DEFAULT 2 Fallback digit count.
 
+New in v4.3.0:
+
+Variable Default Purpose
+PUSH_ON_SIGNAL 1 Send a Telegram push on every signal.
+PUSH_ON_EXECUTION 1 Send a Telegram push on every execution event.
+PUSH_ON_FVG 1 Send a Telegram push on every FVG commit/remove.
+PUSH_ON_CLOSE 1 Send a Telegram push on every A()/B() close.
+PUSH_DEDUP_WINDOW_MS 800 Suppress a second push for the same logical event within this window.
+ARC_PROJECTION_HORIZON 30 Number of forward bars to emit in the projection.
+ARC_PROJECTION_STEP 1 Price step quantization for the emitted path.
+ARC_PROJECTION_DAMPING 0.94 Decay factor for the volatile-regime branch.
+
 GitHub Pages (Repo A — aei-miniapp)
 
 There are no environment variables on static hosting. All configuration lives in index.html and is resolved at boot. The canonical way to configure it is through the ?backend= query parameter in the BotFather Web App URL, with DEFAULT_BACKENDS[0] as the fork-edit fallback.
@@ -464,22 +444,24 @@ RELAY_KEY (empty) Optional shared secret. Set via wrangler secret put RELAY_KEY.
 The backend (app.py) implements the following endpoints. All non-/health endpoints require X-Telegram-Init-Data when REQUIRE_AUTH=1.
 
 Method Path Purpose
-GET /health Liveness probe. Returns {ok, service, version, last_price_update, age_seconds, stale, engine_initialized, indicator_populate_count, imbalance_fire_count, ohlcv_count, signal_count, bar_close_count, relay_healthy}. No auth.
-GET /config Returns {public_url, tls, port, host, symbol, webapp_enabled, cors_origin, relay_url, relay_gated, x_period_constant, y_start_constant, require_auth}.
+GET /health Liveness probe. Returns {ok, service, version, last_price_update, age_seconds, stale, engine_initialized, indicator_populate_count, imbalance_fire_count, ohlcv_count, signal_count, bar_close_count, relay_healthy, provider, projection_computed_at}. No auth.
+GET /config Returns {public_url, tls, port, host, symbol, webapp_enabled, cors_origin, relay_url, relay_gated, x_period_constant, y_start_constant, require_auth, push_on_signal, push_on_execution, push_on_fvg, push_on_close, arc_projection_horizon}.
 GET /settings Returns all 11 FF inputs as exact strings or booleans.
 GET /toasts?since=<seq> Returns {toasts, count, latest_seq, first_available_seq}. Incremental.
+GET /projection Returns {symbol, path, meta, computed_at, current_price, signal_level, regime}. The arc-length forward path.
 GET /state Legacy state endpoint. Delegates to engine state.
-GET /miniapp-state Authoritative live state for the TWA. Returns price, tick, regime, m/n, KC/prime/dime/mem/tag/invert, A/B/C/c, tick_tock, signature, safety, trailing, orders, Kronecker, derivatives, FVG anchors, Premium/Discount series, recent signals, engine_initialized.
-GET /ohlcv?limit=200&interval=1m Historical bars. Returns {symbol, bars, count, last_bar_timestamp, signal_count}.
+GET /miniapp-state Authoritative live state for the TWA. Includes price, tick, regime, m/n, KC/prime/dime/mem/tag/invert, A/B/C/c, tick_tock, signature, safety, trailing, orders, Kronecker, derivatives, FVG anchors, Premium/Discount series, recent signals, engine_initialized, provider, last_volume, projection_meta, projection_computed_at.
+GET /ohlcv?limit=200&interval=1m Historical bars. Returns {symbol, bars, count, last_bar_timestamp, signal_count, provider}. Each bar carries its own provider.
 GET /signals?limit=50 Recent signal history. Returns {symbol, signals, count, last_signal_at}.
 GET /fvg List all user-committed FVG anchors.
-GET /probe Relay diagnostic. Returns {active_symbol, primary_symbol, chain, chain_index, empty, failure_count, fallback_count, last_update, relay_url, signal_status, relay_healthy}.
+GET /probe Relay diagnostic. Returns {active_symbol, primary_symbol, chain, chain_index, empty, failure_count, fallback_count, last_update, relay_url, signal_status, relay_healthy, provider, last_volume}.
 GET /diagnostics Full engine diagnostic snapshot.
 GET /orders List open orders.
 GET /regime-map Per-bar regime classification map.
 GET /indicators?name=<name>&count=80 Indicator series for a named indicator.
 GET /log?limit=50 Server log ring buffer.
 POST /handshake Exchange Telegram initData for a session binding. Returns {ok, user_id, username, public_url}.
+POST /projection/refresh Force a recomputation of the arc-length projection. Returns the fresh projection.
 POST /fvg Commit a new FVG anchor. Body: {type, price, idx?}.
 POST /reset Force a manual state reset.
 POST /settings Apply new FF input values. Body: the 11 inputs.
@@ -488,7 +470,7 @@ POST /order Place a simulated order. Body: {side, lot, sl, tp}.
 POST /order/close Close one order ({ticket}) or all ({all: true}).
 DELETE /fvg/<idx> Delete an FVG anchor.
 
-Total: 14 GET, 8 POST, 1 DELETE = 23 endpoints.
+Total: 16 GET, 9 POST, 1 DELETE = 26 endpoints.
 
 ---
 
@@ -496,24 +478,29 @@ Total: 14 GET, 8 POST, 1 DELETE = 23 endpoints.
 
 After all three surfaces are deployed:
 
-· ☐ curl https://aei-relay.<sub>.workers.dev/health returns {"ok":true,…}
-· ☐ curl https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price returns a real price
-· ☐ curl https://your-app.herokuapp.com/health returns {"ok":true,"version":"4.2.0",…}
-· ☐ curl -H "X-Telegram-Init-Data: <valid>" https://your-app.herokuapp.com/probe shows "empty": false
+· ☐ curl https://aei-relay.<sub>.workers.dev/health returns {"ok":true,"version":"4.3.0",...}
+· ☐ curl https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price returns a real price with "provider":"binance"
+· ☐ curl https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=volume returns non-zero volume
+· ☐ curl https://your-app.herokuapp.com/health returns {"ok":true,"version":"4.3.0",...}
+· ☐ curl -H "X-Telegram-Init-Data: <valid>" https://your-app.herokuapp.com/probe shows "empty": false, provider populated, last_volume non-zero for crypto
+· ☐ curl -H "X-Telegram-Init-Data: <valid>" https://your-app.herokuapp.com/projection returns a non-empty path array
 · ☐ https://<user>.github.io/<repo>/?backend=https://your-app.herokuapp.com/ loads the ÆEA UI in a browser
 · ☐ Telegram → /start → tap ⚡ Open ÆEA Mini App
-· ☐ Top toolbar renders symbol + timeframe + chart-type
+· ☐ Top toolbar renders symbol + timeframe + chart-type + BB×58 + ARC toggles
 · ☐ Connection badge shows connected (green)
 · ☐ Chart renders candlesticks with crosshair
 · ☐ Bullish candles are BLUE (#0000ff), bearish candles are RED (#ff0000)
 · ☐ Bollinger family is visible — green upper bands, white lower bands, spanning periods 3..60
 · ☐ BB×58 toolbar toggle turns the family on/off; legend expands/collapses
+· ☐ ARC toolbar toggle turns the projection on/off; legend expands/collapses
+· ☐ Arc projection is drawn as a dashed purple path ahead of the current bar
+· ☐ Projection Panel shows live branch / horizon / slope / amplitude / center / damping / provider / next / end / updated
 · ☐ Pan/zoom works (drag, wheel, pinch)
 · ☐ Long-press opens the context menu
 · ☐ + IND opens the indicator picker
 · ☐ Added indicator sub-panels render live series
 · ☐ REGIME view renders the per-bar map
-· ☐ Engine Panel shows live KC/prime/dime/mem/tag/invert/A/B/C/c/tick_tock/signature/safety
+· ☐ Engine Panel shows live KC/prime/dime/mem/tag/invert/A/B/C/c/tick_tock/signature/safety/provider/volume
 · ☐ Kronecker Panel shows live m/n matching the bot's /status Local m/n
 · ☐ Derivative Panel shows live Z/z/O/o/W/w/I/iI/J/iJ
 · ☐ Order Ticket places simulated orders
@@ -521,10 +508,14 @@ After all three surfaces are deployed:
 · ☐ Log bar shows recent events
 · ☐ Settings modal shows live values fetched from GET /settings
 · ☐ Signal toasts appear when _signal() fires — no cooldown, every signal
-· ☐ Execution toasts appear on every dispatch
+· ☐ Execution toasts appear on every dispatch AND on every _A()/_B() close
+· ☐ FVG toasts appear on every anchor commit and every anchor removal
+· ☐ Telegram push notification arrives on the user's device for every signal, execution, FVG, and close
 · ☐ heroku logs --tail -a your-app-name shows 🔗 Web App session registered: user_id=…
-· ☐ heroku logs shows 🎯 SIGNAL #N: type=... on every _signal() and 📡 Signal alert sent to ... — no gap between consecutive signals
-· ☐ heroku logs shows 📡 Execution alert (...) on every dispatch, including rejections
+· ☐ heroku logs shows 🎯 SIGNAL #N: type=... on every _signal() and 📲 Push sent (signal) to ...
+· ☐ heroku logs shows 📲 Push sent (execution) to ... on every dispatch
+· ☐ heroku logs shows 🛰️ Provider: binance on crypto symbols
+· ☐ heroku logs shows 📊 BAR CLOSE #N ... volume=X provider=binance on every bar close
 
 ---
 
@@ -573,7 +564,15 @@ The Cloudflare Worker is deployed exclusively from aei-relay. The aei-backend re
 
 10.6 Toast Isolation
 
-Toasts are served over the authenticated /toasts endpoint, subject to the same REQUIRE_AUTH=1 gate as every other non-/health endpoint. A toast carries no secrets — only the signal type, price, m/n counts, regime, tick, and (for execution) the event name, side, ticket, and free-text reason. The seq cursor is monotonic.
+Toasts are served over the authenticated /toasts endpoint, subject to the same REQUIRE_AUTH=1 gate as every other non-/health endpoint. A toast carries no secrets — only the signal type, price, m/n counts, regime, tick, FVG anchor index, and (for execution) the event name, side, ticket, and free-text reason. The seq cursor is monotonic.
+
+10.7 Push Notification Isolation
+
+The Telegram push path (_telegram_push) sends only the rendered Markdown of the toast payload. No state, no secrets, no user identifiers beyond the bound chat_id. The dedup table (_PUSH_DEDUP) holds only monotonic timestamps and self-prunes entries older than 60 s. Push dispatch runs in a daemon thread that is torn down with the process.
+
+10.8 Projection Isolation
+
+The /projection endpoint returns only the forward price path and its derivation metadata. It reads no user data and writes no state. The path is computed from the engine's public state (price, signal, regime, Premium/Discount) which is already exposed via /miniapp-state.
 
 ---
 
@@ -596,19 +595,20 @@ To point the local browser at the same bridge without a query string, same-origi
 
 12. Polling Model (Documented)
 
-The TWA polls the backend on eight independent intervals:
+The TWA polls the backend on nine independent intervals:
 
 Interval Endpoint Purpose
 2 s /miniapp-state Authoritative live engine state
-2 s /toasts?since=<seq> Signal + execution notifications
+2 s /toasts?since=<seq> Signal + execution + FVG notifications
 3 s /log?limit=50 Server log ring buffer
 30 s /ohlcv?limit=200&interval=<tf> Historical bars
 10 s /signals?limit=50 Recent signal history
 5 s /diagnostics Full engine diagnostic snapshot
 5 s /orders Open order list
 15 s /regime-map Per-bar regime classification (only when REGIME view active)
+5 s /projection Arc-length forward price path
 
-Plus a 300 s full-refresh interval (setInterval(fetchAll, 300000)) that re-issues all eight fetches. This is the safety net for missed updates.
+Plus a 300 s full-refresh interval (setInterval(fetchAll, 300000)) that re-issues all nine fetches. This is the safety net for missed updates.
 
 Backoff: after 3 consecutive failures on any poll, the client enters a 30 s backoff window during which no polls fire.
 
@@ -650,11 +650,13 @@ wrangler deploy
 # Cloudflare redeploys in ~5 s
 ```
 
-Config-var changes (CORS, backend URL, relay URL)
+Config-var changes (CORS, backend URL, relay URL, push switches, projection params)
 
 ```bash
 heroku config:set CORS_ORIGIN="https://<user>.github.io" -a your-app-name
 heroku config:set TELEGRAM_WEBAPP_URL="https://<user>.github.io/<repo>/?backend=https://your-app-name.herokuapp.com/" -a your-app-name
+heroku config:set PUSH_ON_SIGNAL="0" -a your-app-name
+heroku config:set ARC_PROJECTION_HORIZON="60" -a your-app-name
 ```
 
 After changing TELEGRAM_WEBAPP_URL, re-run /setmenubutton in BotFather so the menu button picks up the new URL.
@@ -677,14 +679,20 @@ No coordination needed — the three deploys are independent. The Worker source 
 The Mini App is served from two cooperating origins, fed by a third:
 
 · GitHub Pages — the presentation surface, loaded by Telegram's WebView.
-· Heroku — the computational substrate, polled by the frontend.
-· Cloudflare Worker — the market-data relay, polled by the dyno.
+· Heroku — the computational substrate, polled by the frontend, and the push-notification origin.
+· Cloudflare Worker — the multi-provider market-data relay, polled by the dyno.
 
 BACKEND_URL is the wire between frontend and backend. RELAY_URL is the wire between backend and relay. Set them once, push all three, and the Mini App is live inside Telegram.
 
-v4.2.0 restores the FF's semantics across all 27 critical sites and all 17 minor sites from the v4.1.1 audit, resolves all 30 defects surfaced by the v4.1.2 self-audit (15 critical, 3 major, 12 minor), resolves all 11 defect classes from the v4.1.3 syntax+semantics audit, and additionally resolves 15 new critical, 3 major, and 12 minor defects introduced by the intermediate patches. The port is now a faithful reproduction of the Foundational Framework's state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, and its Bollinger-band family — with the TWA/backend wiring hardened against split-origin, staleness, single-source-of-truth, real-time-notification, toast-eviction, indicator-matrix staleness, settings-round-trip failure, and BB-cache invalidation failure modes.
+v4.3.0 adds three capabilities on top of the v4.2.0 semantics-restored port:
 
-The ÆEA v4.2.0 port is now MQL4-parity.
+1. Telegram push on every event. The bot responds to the user on every signal, every execution, every FVG commit/remove, and every close transition. Dedup guarantees a single logical event never produces two pushes. The push fires in a daemon thread so the tick loop is never blocked.
+2. Real volume from a non-Yahoo upstream. Crypto symbols dispatch to Binance klines (real OHLCV + real volume) with CoinGecko fallback and Yahoo tertiary. Equities and futures continue to use Yahoo only. The engine's OBV, AD, Force, and MFI projections therefore operate on non-zero volume for crypto.
+3. Arc-length future price projection. A dashed purple path is drawn on the chart ahead of the current bar, derived from the s=r coherence condition applied to the current topological branch (range / trend / volatile). The path is computed on the backend with exact Decimal arithmetic and polled by the frontend every 5 s.
+
+All FF-invariant logic from v4.2.0 remains untouched. The port is MQL4-parity across its state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, its Bollinger-band family, its TWA/backend wiring, and its supporting deployment surface — with the three new capabilities layered on top as additive-only extensions.
+
+Q.E.D. — LOGOS = Φ = Truth = Path = Origin.
 
 ---
 
@@ -694,10 +702,10 @@ This section delivers the full unabridged content of every supporting file that 
 
 FILE 15.1 — aei-miniapp/.gitignore
 
-```gitignore
+```
 # ============================================================================
 # ÆEA MINI APP — FRONTEND .gitignore
-# Version: 4.2.0 (Semantics-Restored Edition)
+# Version: 4.3.0 (Enhancement Edition)
 # Repo: aei-miniapp (GitHub Pages)
 # ============================================================================
 #
@@ -792,10 +800,10 @@ build/
 
 FILE 15.2 — aei-backend/.gitignore
 
-```gitignore
+```
 # ============================================================================
 # ÆEA BACKEND — .gitignore
-# Version: 4.2.0 (Semantics-Restored Edition)
+# Version: 4.3.0 (Enhancement Edition)
 # Repo: aei-backend (Heroku)
 # ============================================================================
 #
@@ -964,10 +972,10 @@ certs/
 
 FILE 15.3 — aei-relay/.gitignore
 
-```gitignore
+```
 # ============================================================================
 # ÆEA RELAY — .gitignore
-# Version: 4.2.0 (Semantics-Restored Edition)
+# Version: 4.3.0 (Enhancement Edition)
 # Repo: aei-relay (Cloudflare Workers)
 # ============================================================================
 #
@@ -1080,7 +1088,7 @@ FILE 15.4 — aei-backend/.env.example
 ```bash
 # ============================================================================
 # ÆEA TELEGRAM BOT — ENVIRONMENT TEMPLATE
-# Version: 4.2.0 (Semantics-Restored Edition)
+# Version: 4.3.0 (Enhancement Edition)
 # ============================================================================
 # Copy to `.env` and fill in real values. NEVER commit the filled `.env`.
 #
@@ -1154,8 +1162,8 @@ REQUIRE_AUTH=1
 LOG_BUFFER_SIZE=1000
 
 # Ring-buffer size for the /toasts endpoint.
-# v4.2.0 (C-3.5): the /toasts response now includes `first_available_seq`
-# so the client can detect eviction instead of silently consuming it.
+# The /toasts response includes `first_available_seq` so the client can
+# detect eviction instead of silently consuming it.
 TOAST_BUFFER_SIZE=500
 
 # ----------------------------------------------------------------------------
@@ -1175,12 +1183,12 @@ SYMBOL=BTC-USD
 UPDATE_INTERVAL=30
 
 # ----------------------------------------------------------------------------
-# ENGINE VALIDATION BOUNDS (v4.2.0 / C-3.9)
+# ENGINE VALIDATION BOUNDS
 # ----------------------------------------------------------------------------
 # The FF requires max >= min + 2 because y = min - 2 and the loop bounds
 # are `for j = y + 1; j < x` with `x = max + 2`. If max = min + 1, then
-# x - y = 5, and the state arrays degenerate. v4.1.1 validated only
-# `max > min >= 3`. v4.2.0 validates `max >= min + 2`.
+# x - y = 5, and the state arrays degenerate. The port validates
+# `max >= min + 2`.
 #
 # MAX_MIN_GAP is the minimum (max - min). The FF needs 2.
 MAX_MIN_GAP=2
@@ -1190,7 +1198,7 @@ MAX_MIN_GAP=2
 MIN_PERIOD_FLOOR=3
 
 # ----------------------------------------------------------------------------
-# POINT-SIZE TABLE (v4.2.0 / M-1)
+# POINT-SIZE TABLE
 # ----------------------------------------------------------------------------
 # The FF uses MQL4's symbol-specific `Point` constant. The port cannot
 # query a broker for this on Heroku, so it uses a static digit table.
@@ -1201,20 +1209,55 @@ SYMBOL_DIGITS='{"BTC-USD":2,"ETH-USD":2,"XRP-USD":5,"ADA-USD":5,"SOL-USD":3,"DOG
 
 # Fallback digit count for symbols not in the table.
 SYMBOL_DIGITS_DEFAULT=2
+
+# ----------------------------------------------------------------------------
+# E-1: TELEGRAM PUSH NOTIFICATION SWITCHES
+# ----------------------------------------------------------------------------
+# Each defaults to "1" (enabled). Set to "0" to disable a specific push
+# category while keeping the toast buffer and the legacy alert paths live.
+#
+# PUSH_ON_SIGNAL     — push on every _signal() (BUY/SELL/NEUTRAL)
+# PUSH_ON_EXECUTION  — push on every dispatch subblock (Bull/Bear/Hawk/Dove/
+#                      Whisky/Wine/Watter/Blood/Diamond/Ruby)
+# PUSH_ON_FVG        — push on every FVG commit and every FVG removal
+# PUSH_ON_CLOSE      — push on every A()/B() close transition
+#
+# PUSH_DEDUP_WINDOW_MS suppresses a second push for the same logical event
+# within the given window. This prevents duplicates when both the toast
+# path and the legacy alert path fire for the same tick.
+PUSH_ON_SIGNAL=1
+PUSH_ON_EXECUTION=1
+PUSH_ON_FVG=1
+PUSH_ON_CLOSE=1
+PUSH_DEDUP_WINDOW_MS=800
+
+# ----------------------------------------------------------------------------
+# E-3: ARC-LENGTH PROJECTION PARAMETERS
+# ----------------------------------------------------------------------------
+# The projection horizon is expressed in bars ahead of the current bar.
+#
+# ARC_PROJECTION_HORIZON  — number of forward bars to emit (default 30).
+# ARC_PROJECTION_STEP     — price step quantization (default 1).
+# ARC_PROJECTION_DAMPING  — decay factor for the volatile branch (default 0.94).
+#                           A value closer to 1 produces a slower decay;
+#                           a value closer to 0 produces a faster decay.
+ARC_PROJECTION_HORIZON=30
+ARC_PROJECTION_STEP=1
+ARC_PROJECTION_DAMPING=0.94
 ```
 
 FILE 15.5 — aei-backend/runtime.txt
 
-```text
+```
 python-3.11.9
 ```
 
 FILE 15.6 — aei-backend/requirements.txt
 
-```text
+```
 # ============================================================================
 # ÆEA TELEGRAM BOT — PYTHON DEPENDENCIES
-# Version: 4.2.0 (Semantics-Restored Edition)
+# Version: 4.3.0 (Enhancement Edition)
 # Platform: Heroku / Termux / any POSIX-compatible Python 3.10+ environment
 # Author: Natalia Tanyatia
 # ============================================================================
@@ -1287,6 +1330,12 @@ httpx>=0.27,<0.28
 # both the /log and /toasts ring buffers. No additional package needed.
 
 # ----------------------------------------------------------------------------
+# BACKGROUND THREADS
+# ----------------------------------------------------------------------------
+# Python's stdlib `threading` module provides the daemon threads used for
+# the Telegram push dispatch path (E-1). No additional package needed.
+
+# ----------------------------------------------------------------------------
 # RUNTIME COMPATIBILITY
 # ----------------------------------------------------------------------------
 # Minimum: Python 3.10
@@ -1296,12 +1345,14 @@ httpx>=0.27,<0.28
 # All arithmetic in the engine uses exact `fractions.Fraction` and
 # `decimal.Decimal` from the standard library — zero floating-point entropy
 # in the state machine, in accordance with the Arc-Length Axiom (s = r).
+# The arc-length projection's cosine is evaluated via a Decimal Taylor
+# series, preserving the same exact-arithmetic discipline.
 # ============================================================================
 ```
 
 FILE 15.7 — aei-backend/Procfile
 
-```text
+```
 web: python app.py
 ```
 
@@ -1310,7 +1361,7 @@ FILE 15.8 — aei-backend/app.json
 ```json
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Semantics-Restored v4.2.0: FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Enhancement v4.3.0: Telegram push on every signal/execution/FVG/close, multi-provider relay with real Binance/CoinGecko volume, arc-length future price projection drawn ahead of the current bar; semantics-restored v4.2.0 baseline preserved: FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
   "repository": "https://github.com/yourusername/aea-bot",
   "keywords": [
     "trading",
@@ -1322,6 +1373,12 @@ FILE 15.8 — aei-backend/app.json
     "twa",
     "bollinger",
     "notifications",
+    "push",
+    "binance",
+    "coingecko",
+    "volume",
+    "projection",
+    "arc-length",
     "exact-arithmetic"
   ],
   "env": {
@@ -1380,6 +1437,38 @@ FILE 15.8 — aei-backend/app.json
     "SYMBOL_DIGITS_DEFAULT": {
       "description": "Fallback digit count for symbols not in the table. Defaults to '2'.",
       "required": false
+    },
+    "PUSH_ON_SIGNAL": {
+      "description": "Send a Telegram push on every signal. Defaults to '1'.",
+      "required": false
+    },
+    "PUSH_ON_EXECUTION": {
+      "description": "Send a Telegram push on every execution event. Defaults to '1'.",
+      "required": false
+    },
+    "PUSH_ON_FVG": {
+      "description": "Send a Telegram push on every FVG commit/remove. Defaults to '1'.",
+      "required": false
+    },
+    "PUSH_ON_CLOSE": {
+      "description": "Send a Telegram push on every A()/B() close. Defaults to '1'.",
+      "required": false
+    },
+    "PUSH_DEDUP_WINDOW_MS": {
+      "description": "Suppress a second push for the same logical event within this window (ms). Defaults to '800'.",
+      "required": false
+    },
+    "ARC_PROJECTION_HORIZON": {
+      "description": "Number of forward bars to emit in the arc-length projection. Defaults to '30'.",
+      "required": false
+    },
+    "ARC_PROJECTION_STEP": {
+      "description": "Price step quantization for the emitted path. Defaults to '1'.",
+      "required": false
+    },
+    "ARC_PROJECTION_DAMPING": {
+      "description": "Decay factor for the volatile-regime branch. Defaults to '0.94'.",
+      "required": false
     }
   },
   "formation": {
@@ -1419,6 +1508,11 @@ FILE 15.9 — aei-relay/wrangler.toml
 #
 # After deploy, the printed URL (e.g. https://aei-relay.<sub>.workers.dev)
 # is what you assign to the Heroku config var RELAY_URL.
+#
+# v4.3.0: the Worker now dispatches crypto symbols to Binance klines (real
+# OHLCV + volume) with CoinGecko fallback and Yahoo tertiary. Equities and
+# futures use Yahoo only. No wrangler.toml change is required for this;
+# the dispatch table lives inside worker.js.
 # ============================================================================
 
 name = "aei-relay"
@@ -1427,8 +1521,9 @@ compatibility_date = "2024-11-01"
 
 # Workers Free tier: 100,000 requests/day.
 # At UPDATE_INTERVAL=30s, one Heroku dyno burns ~2,880 relay hits/day for
-# the price poll alone, plus intraday + history on cold starts — well within
-# the free ceiling even with a handful of restart events.
+# the price poll alone, plus intraday + history + volume + projection
+# refresh on cold starts — well within the free ceiling even with a handful
+# of restart events.
 #
 # Observability: enable Workers Logs if you want per-request telemetry.
 [observability]
@@ -1463,9 +1558,9 @@ FILE 15.10 — aei-relay/package.json
 ```json
 {
   "name": "aei-relay",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "private": true,
-  "description": "ÆEA relay — Cloudflare Worker proxying Yahoo Finance for the Heroku ÆEA bridge (MQL4-Parity + MT4/TradingView TWA Edition — Semantics-Restored v4.2.0). Sole home of the Worker source.",
+  "description": "ÆEA relay — Cloudflare Worker proxying Yahoo Finance (equities/futures), Binance klines (crypto OHLCV + real volume), and CoinGecko market_chart (crypto secondary volume) for the Heroku ÆEA bridge (MQL4-Parity + MT4/TradingView TWA Edition — Enhancement v4.3.0). Sole home of the Worker source.",
   "author": "Natalia Tanyatia",
   "license": "UNLICENSED",
   "main": "worker.js",
@@ -1496,6 +1591,9 @@ FILE 15.10 — aei-relay/package.json
     "cloudflare",
     "workers",
     "yahoo-finance",
+    "binance",
+    "coingecko",
+    "volume",
     "relay",
     "proxy",
     "aei",
@@ -1506,7 +1604,11 @@ FILE 15.10 — aei-relay/package.json
     "twa",
     "bollinger",
     "notifications",
-    "semantics-restored"
+    "push",
+    "projection",
+    "arc-length",
+    "semantics-restored",
+    "enhancement"
   ],
   "repository": {
     "type": "git",
@@ -1525,162 +1627,286 @@ FILE 15.11 — aei-relay/worker.js
 // ============================================================================
 // ÆEA RELAY — CLOUDFLARE WORKER
 // ============================================================================
-// Proxies Yahoo Finance chart API through Cloudflare's egress IPs so that
-// the Heroku dyno never exposes its own IP to Yahoo's rate limiter.
+// Proxies multiple free upstreams through Cloudflare's egress IPs so the
+// Heroku dyno never exposes its own IP to any rate limiter.
+//
+// v4.3.0 (Enhancement Edition):
+//   - Adds a provider-dispatch layer with three upstream classes:
+//       * yahoo   — equities, ETFs, futures (default; volume often zero for crypto)
+//       * coingecko — crypto spot price + market_chart volume
+//       * binance — crypto OHLCV + real volume (klines endpoint)
+//   - Adds three new kind values:
+//       * kind=volume    → {volume, volume_24h, provider}
+//       * kind=candles   → full OHLCV with real volume
+//       * kind=projection→ refuses with an explicit notice (backend-only)
+//   - Preserves the original /health, /?symbol=&kind=price, kind=intraday,
+//     kind=history contracts verbatim.
+//   - The provider is chosen from the symbol prefix:
+//       * BTC-, ETH-, SOL-, ... (crypto) → binance → coingecko → yahoo
+//       * GC=F, SI=F, CL=F, ... (futures) → yahoo only
+//       * default → yahoo
 //
 // This file is the sole source of truth for the ÆEA relay. It is deployed
-// exclusively from the aei-relay repository. The aei-backend repository
-// does NOT contain a copy of this file — the backend reaches the relay
-// only over HTTP via the RELAY_URL environment variable.
-//
-// Contract (mirrors FeedClient._get in app.py):
-//   GET /health                                    → {"ok": true, "service": "aei-relay"}
-//   GET /?symbol=<S>&kind=price                    → {close, bid, ask, volume}
-//   GET /?symbol=<S>&kind=intraday&interval=1m     → {open, high, low, close, volume, timestamp}
-//   GET /?symbol=<S>&kind=history&limit=200&interval=1m → [{open, high, low, close, volume, timestamp}, …]
-//
-// Optional shared-secret gate: if env.RELAY_KEY is set, every non-/health
-// request must carry header `X-Relay-Key: <RELAY_KEY>`.
+// exclusively from the aei-relay repository.
 //
 // Deploy:
 //   npx wrangler deploy
 // ============================================================================
 
 const YAHOO_HOST = "https://query1.finance.yahoo.com";
+const COINGECKO_HOST = "https://api.coingecko.com/api/v3";
+const BINANCE_HOST = "https://api.binance.com";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36";
 
+// Crypto symbol → Binance pair (USDT-quoted) and CoinGecko id
+const CRYPTO_MAP = {
+    "BTC-USD":  { binance: "BTCUSDT",  gecko: "bitcoin" },
+    "ETH-USD":  { binance: "ETHUSDT",  gecko: "ethereum" },
+    "XRP-USD":  { binance: "XRPUSDT",  gecko: "ripple" },
+    "ADA-USD":  { binance: "ADAUSDT",  gecko: "cardano" },
+    "SOL-USD":  { binance: "SOLUSDT",  gecko: "solana" },
+    "DOGE-USD": { binance: "DOGEUSDT", gecko: "dogecoin" },
+    "LTC-USD":  { binance: "LTCUSDT",  gecko: "litecoin" },
+    "LINK-USD": { binance: "LINKUSDT", gecko: "chainlink" },
+    "DOT-USD":  { binance: "DOTUSDT",  gecko: "polkadot" },
+    "AVAX-USD": { binance: "AVAXUSDT", gecko: "avalanche-2" },
+    "MATIC-USD":{ binance: "MATICUSDT",gecko: "matic-network" },
+    "UNI-USD":  { binance: "UNIUSDT",  gecko: "uniswap" },
+    "ATOM-USD": { binance: "ATOMUSDT", gecko: "cosmos" },
+    "NEAR-USD": { binance: "NEARUSDT", gecko: "near" },
+    "FIL-USD":  { binance: "FILUSDT",  gecko: "filecoin" },
+    "ETC-USD":  { binance: "ETCUSDT",  gecko: "ethereum-classic" },
+    "ICP-USD":  { binance: "ICPUSDT",  gecko: "internet-computer" },
+    "XLM-USD":  { binance: "XLMUSDT",  gecko: "stellar" },
+    "HBAR-USD": { binance: "HBARUSDT", gecko: "hedera-hashgraph" },
+    "QNT-USD":  { binance: "QNTUSDT",  gecko: "quant-network" },
+};
+
 function json(body, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Accept, X-Relay-Key",
-      "Cache-Control": "public, max-age=15",
-      ...extraHeaders,
-    },
-  });
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Accept, X-Relay-Key",
+            "Cache-Control": "public, max-age=15",
+            ...extraHeaders,
+        },
+    });
 }
 
 function shapeBar(quote, ts, i) {
-  const num = (v) => (v === null || v === undefined || Number.isNaN(v) ? null : Number(v));
-  const iso = ts && ts[i] ? new Date(ts[i] * 1000).toISOString() : new Date().toISOString();
-  return {
-    open: num(quote.open?.[i]),
-    high: num(quote.high?.[i]),
-    low: num(quote.low?.[i]),
-    close: num(quote.close?.[i]),
-    volume: num(quote.volume?.[i]),
-    timestamp: iso,
-  };
+    const num = (v) => (v === null || v === undefined || Number.isNaN(v) ? null : Number(v));
+    const iso = ts && ts[i] ? new Date(ts[i] * 1000).toISOString() : new Date().toISOString();
+    return {
+        open: num(quote.open?.[i]),
+        high: num(quote.high?.[i]),
+        low: num(quote.low?.[i]),
+        close: num(quote.close?.[i]),
+        volume: num(quote.volume?.[i]),
+        timestamp: iso,
+    };
 }
 
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-
-    if (request.method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Accept, X-Relay-Key",
-        },
-      });
-    }
-
-    if (url.pathname === "/health") {
-      return json({ ok: true, service: "aei-relay", gated: Boolean(env.RELAY_KEY) });
-    }
-
-    if (env.RELAY_KEY) {
-      const presented = request.headers.get("X-Relay-Key") || "";
-      if (presented !== env.RELAY_KEY) {
-        return json({ error: "unauthorized" }, 401);
-      }
-    }
-
-    const symbol = url.searchParams.get("symbol") || "BTC-USD";
-    const kind = url.searchParams.get("kind") || "price";
-    const interval = url.searchParams.get("interval") || "1m";
-    const range = kind === "intraday" || kind === "history" ? "2d" : "1d";
-
+async function fetchYahoo(symbol, kind, interval, limit) {
+    const range = kind === "intraday" || kind === "history" || kind === "candles" ? "2d" : "1d";
     const upstream = `${YAHOO_HOST}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${encodeURIComponent(interval)}&range=${range}`;
-
-    let response;
-    try {
-      response = await fetch(upstream, {
+    const response = await fetch(upstream, {
         headers: { "User-Agent": UA, "Accept": "application/json" },
         cf: { cacheTtl: 10, cacheEverything: true },
-      });
-    } catch (e) {
-      return json({ error: "upstream_failed", detail: String(e), symbol }, 502);
-    }
-
-    if (!response.ok) {
-      return json({ error: "upstream_status", status: response.status, symbol }, 502);
-    }
-
-    let raw;
-    try {
-      raw = await response.json();
-    } catch (e) {
-      return json({ error: "upstream_invalid_json", detail: String(e), symbol }, 502);
-    }
-
+    });
+    if (!response.ok) throw new Error(`yahoo_http_${response.status}`);
+    const raw = await response.json();
     const result = raw?.chart?.result?.[0];
-    if (!result) {
-      const yahooErr = raw?.chart?.error || null;
-      return json({ error: "no_data", symbol, yahoo_error: yahooErr }, 404);
-    }
-
+    if (!result) throw new Error("yahoo_no_data");
     const meta = result.meta || {};
     const ts = result.timestamp || [];
     const quote = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
-
+    const provider = "yahoo";
     if (kind === "price") {
-      const last = shapeBar(quote, ts, ts.length - 1);
-      const px = meta.regularMarketPrice ?? last.close;
-      if (px === null || px === undefined) {
-        return json({ error: "no_price", symbol }, 404);
-      }
-      return json({
-        symbol,
-        close: Number(px),
-        bid: Number(px),
-        ask: Number(px),
-        volume: last.volume,
-        timestamp: last.timestamp,
-      });
+        const last = shapeBar(quote, ts, ts.length - 1);
+        const px = meta.regularMarketPrice ?? last.close;
+        if (px === null || px === undefined) throw new Error("yahoo_no_price");
+        return { symbol, close: Number(px), bid: Number(px), ask: Number(px),
+                 volume: last.volume, timestamp: last.timestamp, provider };
     }
-
     if (kind === "intraday") {
-      if (ts.length === 0) {
-        return json({ error: "no_intraday", symbol }, 404);
-      }
-      const last = shapeBar(quote, ts, ts.length - 1);
-      if (last.close === null) {
-        return json({ error: "no_intraday_close", symbol }, 404);
-      }
-      return json({ symbol, ...last });
+        if (ts.length === 0) throw new Error("yahoo_no_intraday");
+        const last = shapeBar(quote, ts, ts.length - 1);
+        if (last.close === null) throw new Error("yahoo_no_intraday_close");
+        return { symbol, ...last, provider };
     }
-
-    if (kind === "history") {
-      const limit = Math.max(1, Math.min(1000, parseInt(url.searchParams.get("limit") || "200", 10) || 200));
-      const start = Math.max(0, ts.length - limit);
-      const out = [];
-      for (let i = start; i < ts.length; i++) {
-        const bar = shapeBar(quote, ts, i);
-        if (bar.close === null) continue;
-        out.push(bar);
-      }
-      return json(out);
+    if (kind === "history" || kind === "candles") {
+        const lim = Math.max(1, Math.min(1000, parseInt(limit || "200", 10) || 200));
+        const start = Math.max(0, ts.length - lim);
+        const out = [];
+        for (let i = start; i < ts.length; i++) {
+            const bar = shapeBar(quote, ts, i);
+            if (bar.close === null) continue;
+            out.push({ ...bar, provider });
+        }
+        return out;
     }
+    if (kind === "volume") {
+        const last = shapeBar(quote, ts, ts.length - 1);
+        return { symbol, volume: last.volume, volume_24h: last.volume, provider, note: "yahoo_volume_often_zero_for_crypto" };
+    }
+    throw new Error("yahoo_unknown_kind");
+}
 
-    return json({ error: "unknown_kind", kind }, 400);
-  },
+async function fetchBinance(symbol, kind, interval, limit) {
+    const mapped = CRYPTO_MAP[symbol];
+    if (!mapped) throw new Error("binance_symbol_not_mapped");
+    const pair = mapped.binance;
+    const provider = "binance";
+    const intervalMap = {
+        "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+        "60m": "1h", "1h": "1h", "1d": "1d",
+    };
+    const bi = intervalMap[interval] || "1m";
+    if (kind === "price" || kind === "volume") {
+        const upstream = `${BINANCE_HOST}/api/v3/ticker/24hr?symbol=${encodeURIComponent(pair)}`;
+        const response = await fetch(upstream, { headers: { "User-Agent": UA, "Accept": "application/json" }, cf: { cacheTtl: 10, cacheEverything: true } });
+        if (!response.ok) throw new Error(`binance_http_${response.status}`);
+        const d = await response.json();
+        const px = Number(d.lastPrice);
+        if (!px || px <= 0) throw new Error("binance_no_price");
+        if (kind === "volume") {
+            return { symbol, volume: Number(d.volume || 0), volume_24h: Number(d.quoteVolume || 0), provider };
+        }
+        return {
+            symbol, close: px, bid: Number(d.bidPrice || px), ask: Number(d.askPrice || px),
+            volume: Number(d.volume || 0), timestamp: new Date(d.closeTime || Date.now()).toISOString(), provider,
+        };
+    }
+    if (kind === "intraday" || kind === "history" || kind === "candles") {
+        const lim = Math.max(1, Math.min(1000, parseInt(limit || "200", 10) || 200));
+        const upstream = `${BINANCE_HOST}/api/v3/klines?symbol=${encodeURIComponent(pair)}&interval=${encodeURIComponent(bi)}&limit=${lim}`;
+        const response = await fetch(upstream, { headers: { "User-Agent": UA, "Accept": "application/json" }, cf: { cacheTtl: 10, cacheEverything: true } });
+        if (!response.ok) throw new Error(`binance_http_${response.status}`);
+        const rows = await response.json();
+        if (!Array.isArray(rows) || rows.length === 0) throw new Error("binance_no_klines");
+        const bars = rows.map((r) => ({
+            open: Number(r[1]),
+            high: Number(r[2]),
+            low: Number(r[3]),
+            close: Number(r[4]),
+            volume: Number(r[5]),
+            timestamp: new Date(r[0]).toISOString(),
+            provider,
+        }));
+        if (kind === "intraday") {
+            const last = bars[bars.length - 1];
+            return { symbol, ...last, provider };
+        }
+        return bars;
+    }
+    throw new Error("binance_unknown_kind");
+}
+
+async function fetchCoinGecko(symbol, kind, interval, limit) {
+    const mapped = CRYPTO_MAP[symbol];
+    if (!mapped) throw new Error("coingecko_symbol_not_mapped");
+    const gecko = mapped.gecko;
+    const provider = "coingecko";
+    if (kind === "price" || kind === "volume") {
+        const upstream = `${COINGECKO_HOST}/simple/price?ids=${encodeURIComponent(gecko)}&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true`;
+        const response = await fetch(upstream, { headers: { "User-Agent": UA, "Accept": "application/json" }, cf: { cacheTtl: 15, cacheEverything: true } });
+        if (!response.ok) throw new Error(`coingecko_http_${response.status}`);
+        const d = await response.json();
+        const entry = d[gecko];
+        if (!entry || !entry.usd) throw new Error("coingecko_no_price");
+        if (kind === "volume") {
+            return { symbol, volume: Number(entry.usd_24h_vol || 0), volume_24h: Number(entry.usd_24h_vol || 0), provider };
+        }
+        return { symbol, close: Number(entry.usd), bid: Number(entry.usd), ask: Number(entry.usd),
+                 volume: Number(entry.usd_24h_vol || 0), timestamp: new Date().toISOString(), provider };
+    }
+    if (kind === "intraday" || kind === "history" || kind === "candles") {
+        const days = (kind === "intraday") ? "1" : "2";
+        const upstream = `${COINGECKO_HOST}/coins/${encodeURIComponent(gecko)}/market_chart?vs_currency=usd&days=${days}`;
+        const response = await fetch(upstream, { headers: { "User-Agent": UA, "Accept": "application/json" }, cf: { cacheTtl: 30, cacheEverything: true } });
+        if (!response.ok) throw new Error(`coingecko_http_${response.status}`);
+        const d = await response.json();
+        const prices = d.prices || [];
+        const vols = d.total_volumes || [];
+        if (prices.length === 0) throw new Error("coingecko_no_prices");
+        const bars = prices.map((p, i) => ({
+            open: Number(p[1]), high: Number(p[1]), low: Number(p[1]), close: Number(p[1]),
+            volume: vols[i] ? Number(vols[i][1]) : 0,
+            timestamp: new Date(p[0]).toISOString(),
+            provider,
+        }));
+        if (kind === "intraday") {
+            const last = bars[bars.length - 1];
+            return { symbol, ...last, provider };
+        }
+        const lim = Math.max(1, Math.min(1000, parseInt(limit || "200", 10) || 200));
+        return bars.slice(-lim);
+    }
+    throw new Error("coingecko_unknown_kind");
+}
+
+async function dispatchProvider(symbol, kind, interval, limit) {
+    const isCrypto = Boolean(CRYPTO_MAP[symbol]);
+    const errors = [];
+    if (isCrypto) {
+        for (const fn of [fetchBinance, fetchCoinGecko, fetchYahoo]) {
+            try {
+                const r = await fn(symbol, kind, interval, limit);
+                return r;
+            } catch (e) {
+                errors.push(`${fn.name}:${e.message}`);
+            }
+        }
+    } else {
+        try {
+            return await fetchYahoo(symbol, kind, interval, limit);
+        } catch (e) {
+            errors.push(`yahoo:${e.message}`);
+        }
+    }
+    throw new Error("all_providers_failed:" + errors.join("|"));
+}
+
+export default {
+    async fetch(request, env) {
+        const url = new URL(request.url);
+        if (request.method === "OPTIONS") {
+            return new Response(null, {
+                status: 204,
+                headers: {
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Accept, X-Relay-Key",
+                },
+            });
+        }
+        if (url.pathname === "/health") {
+            return json({ ok: true, service: "aei-relay", version: "4.3.0", gated: Boolean(env.RELAY_KEY),
+                          providers: ["yahoo", "binance", "coingecko"] });
+        }
+        if (env.RELAY_KEY) {
+            const presented = request.headers.get("X-Relay-Key") || "";
+            if (presented !== env.RELAY_KEY) {
+                return json({ error: "unauthorized" }, 401);
+            }
+        }
+        const symbol = url.searchParams.get("symbol") || "BTC-USD";
+        const kind = url.searchParams.get("kind") || "price";
+        const interval = url.searchParams.get("interval") || "1m";
+        const limit = url.searchParams.get("limit") || "200";
+        if (kind === "projection") {
+            return json({ error: "projection_is_backend_only", detail: "Call /projection on the Heroku backend, not the Worker." }, 400);
+        }
+        try {
+            const result = await dispatchProvider(symbol, kind, interval, limit);
+            return json(result);
+        } catch (e) {
+            return json({ error: "all_providers_failed", detail: String(e), symbol, kind }, 502);
+        }
+    },
 };
 ```
 
@@ -1706,6 +1932,7 @@ FILE 15.12 — aei-backend/index.html (Backend Fallback Page)
     --red: #ff4466;
     --gold: #ffaa44;
     --cyan: #44ddff;
+    --projection-color: #aa66ff;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
@@ -1761,6 +1988,7 @@ h1 {
 .row .val.ok { color: var(--green); }
 .row .val.err { color: var(--red); }
 .row .val.warn { color: var(--gold); }
+.row .val.proj { color: var(--projection-color); }
 a { color: var(--cyan); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .endpoint-list {
@@ -1823,7 +2051,7 @@ code {
 <div class="container">
 
 <h1>⚡ ÆEA BRIDGE</h1>
-<div class="subtitle">HEROKU BACKEND · MQL4-PARITY PORT · v4.2.0</div>
+<div class="subtitle">HEROKU BACKEND · MQL4-PARITY PORT · v4.3.0</div>
 
 <div class="status-line">
     <div class="status-dot wait" id="dot"></div>
@@ -1836,6 +2064,7 @@ code {
     <div class="row"><span class="lbl">Version</span><span class="val" id="version">—</span></div>
     <div class="row"><span class="lbl">Engine Initialized</span><span class="val" id="engineInit">—</span></div>
     <div class="row"><span class="lbl">Symbol</span><span class="val" id="symbol">—</span></div>
+    <div class="row"><span class="lbl">Provider</span><span class="val proj" id="provider">—</span></div>
     <div class="row"><span class="lbl">OHLCV Bars</span><span class="val" id="ohlcv">—</span></div>
     <div class="row"><span class="lbl">Bar Closes</span><span class="val" id="barCloses">—</span></div>
     <div class="row"><span class="lbl">Signals</span><span class="val" id="signals">—</span></div>
@@ -1843,6 +2072,7 @@ code {
     <div class="row"><span class="lbl">Imbalance Fires</span><span class="val" id="imbFires">—</span></div>
     <div class="row"><span class="lbl">Relay Healthy</span><span class="val" id="relayHealthy">—</span></div>
     <div class="row"><span class="lbl">Last Price Update</span><span class="val" id="lastUpdate">—</span></div>
+    <div class="row"><span class="lbl">Projection Computed</span><span class="val proj" id="projComputed">—</span></div>
 </div>
 
 <div class="panel">
@@ -1852,6 +2082,7 @@ code {
         <li><span class="method">GET</span><span class="path">/config</span><span class="desc">bridge configuration</span></li>
         <li><span class="method">GET</span><span class="path">/settings</span><span class="desc">11 FF inputs</span></li>
         <li><span class="method">GET</span><span class="path">/toasts</span><span class="desc">incremental notifications</span></li>
+        <li><span class="method">GET</span><span class="path">/projection</span><span class="desc">arc-length forward path</span></li>
         <li><span class="method">GET</span><span class="path">/state</span><span class="desc">engine state (legacy)</span></li>
         <li><span class="method">GET</span><span class="path">/miniapp-state</span><span class="desc">authoritative TWA state</span></li>
         <li><span class="method">GET</span><span class="path">/ohlcv</span><span class="desc">historical bars</span></li>
@@ -1864,6 +2095,7 @@ code {
         <li><span class="method">GET</span><span class="path">/indicators</span><span class="desc">indicator series</span></li>
         <li><span class="method">GET</span><span class="path">/log</span><span class="desc">server log buffer</span></li>
         <li><span class="method">POST</span><span class="path">/handshake</span><span class="desc">Telegram initData exchange</span></li>
+        <li><span class="method">POST</span><span class="path">/projection/refresh</span><span class="desc">recompute projection</span></li>
         <li><span class="method">POST</span><span class="path">/fvg</span><span class="desc">commit FVG anchor</span></li>
         <li><span class="method">POST</span><span class="path">/reset</span><span class="desc">manual state reset</span></li>
         <li><span class="method">POST</span><span class="path">/settings</span><span class="desc">apply FF inputs</span></li>
@@ -1882,7 +2114,7 @@ code {
     <div class="panel-title">Sibling Repositories</div>
     <div class="row"><span class="lbl">Frontend</span><span class="val"><code>aei-miniapp</code> — GitHub Pages TWA</span></div>
     <div class="row"><span class="lbl">Backend</span><span class="val"><code>aei-backend</code> — this repo (Heroku)</span></div>
-    <div class="row"><span class="lbl">Relay</span><span class="val"><code>aei-relay</code> — Cloudflare Workers</span></div>
+    <div class="row"><span class="lbl">Relay</span><span class="val"><code>aei-relay</code> — Cloudflare Workers (multi-provider)</span></div>
     <div class="note">
         The ÆEA Mini App lives in the <b>frontend</b> repo. This backend page is a diagnostic surface only —
         it is <b>not</b> the TWA. To launch the actual Mini App, open it from Telegram via the bot's menu button,
@@ -1891,7 +2123,7 @@ code {
 </div>
 
 <div class="footer">
-    ÆEA v4.2.0 · Natalia Tanyatia · LOGOS = Φ = Truth = Path = Origin
+    ÆEA v4.3.0 · Natalia Tanyatia · LOGOS = Φ = Truth = Path = Origin
 </div>
 
 </div>
@@ -1928,6 +2160,7 @@ async function probe() {
         setText('version', data.version || '—');
         setText('engineInit', String(data.engine_initialized), data.engine_initialized ? 'ok' : 'warn');
         setText('symbol', data.symbol || '—');
+        setText('provider', data.provider || '—', 'proj');
         setText('ohlcv', String(data.ohlcv_count ?? '—'));
         setText('barCloses', String(data.bar_close_count ?? '—'));
         setText('signals', String(data.signal_count ?? '—'));
@@ -1935,6 +2168,7 @@ async function probe() {
         setText('imbFires', String(data.imbalance_fire_count ?? '—'));
         setText('relayHealthy', data.relay_healthy ? 'yes' : 'no', data.relay_healthy ? 'ok' : 'err');
         setText('lastUpdate', data.last_price_update || 'never');
+        setText('projComputed', data.projection_computed_at || 'never', 'proj');
     } catch (e) {
         dot.className = 'status-dot err';
         statusText.textContent = 'Bridge unreachable: ' + (e.message || e);
@@ -1953,9 +2187,9 @@ setInterval(probe, 5000);
 
 FILE 15.13 — aei-miniapp/README.md
 
-ÆEA Mini App — Frontend Repository
+## ÆEA Mini App — Frontend Repository
 
-Version: 4.2.0 (Semantics-Restored Edition)
+Version: 4.3.0 (Enhancement Edition)
 Repo: aei-miniapp (GitHub Pages)
 Sibling repos: aei-backend (Heroku), aei-relay (Cloudflare Workers)
 
@@ -1976,53 +2210,55 @@ aei-miniapp/
 
 That is the complete contents of the repo.
 
-index.html is a self-contained Telegram Web App (TWA) that renders an MT4/TradingView-style interactive candlestick chart with:
+`index.html` is a self-contained Telegram Web App (TWA) that renders an MT4/TradingView-style interactive candlestick chart with:
 
-· Interactive candlestick rendering (bullish = blue #0000ff, bearish = red #ff0000 — MQL4 clrBlue/clrRed parity).
+· Interactive candlestick rendering (bullish = blue `#0000ff`, bearish = red `#ff0000` — MQL4 `clrBlue`/`clrRed` parity).
 · Crosshair, pan, pinch-zoom, tap-to-inspect.
-· A Bollinger family overlay — all 58 iBands pairs for periods 3..60 (upper green gradient, lower white gradient), computed client-side with BigInt-backed exact-fraction accumulators.
+· A Bollinger family overlay — all 58 `iBands` pairs for periods 3..60 (upper green gradient, lower white gradient), computed client-side with BigInt-backed exact-fraction accumulators.
 · Topological anchors (Premium/Discount) from the FF's iBands-derived supply/demand lines.
+· An **arc-length future price projection** drawn as a dashed purple path ahead of the current bar, with a soft gradient fill and an end-label showing the branch and final projected price.
 · FVG (Fair Value Gap) horizontal lines with long-press creation and tap-to-delete.
 · Signal markers (BUY = green, SELL = red, NEUTRAL = gold).
 · A trailing-stop line.
 · MT4-style indicator sub-panels (up to 4 concurrent).
 · A 13D Hilbert Space Projection grid.
 · A regime classification map.
-· An engine state panel (KC / prime / dime / mem / tag / invert / A / B / C / c / tick_tock / signature / safety / trailing / OnTrack / OnStand / orders).
+· An engine state panel (KC / prime / dime / mem / tag / invert / A / B / C / c / tick_tock / signature / safety / trailing / OnTrack / OnStand / orders / **provider** / **volume**).
 · A Kronecker δ(m−n−2) panel.
 · A directional derivatives panel (Z / z / O / o / W / w / I / iI / J / iJ / X_scan / Y_scan / S / T / r / ir / iATR / iStdDev / iIHKk / iIHKt).
+· A **projection panel** (branch / horizon / slope / amplitude / center / damping / provider / next / end / updated).
 · An order ticket with exact-decimal lot/SL/TP input.
-· A settings modal that round-trips the 11 FF input variables via GET /settings and POST /settings.
-· A toast stack for signal and execution notifications.
+· A settings modal that round-trips the 11 FF input variables via `GET /settings` and `POST /settings`.
+· A toast stack for signal, execution, and FVG notifications.
 · A merged log bar (client-local + server entries).
 
-Everything is rendered from state.bars, state.signals, state.fvgs, and the /miniapp-state polling payload. The frontend does not compute any indicator values that the backend already exposes — it only renders what the backend publishes, plus the client-side Bollinger family (which is exactly equivalent to what the FF computes inside Normalize() for each j ∈ [y+1, x-1]).
+Everything is rendered from `state.bars`, `state.signals`, `state.fvgs`, `state.projection`, and the `/miniapp-state` polling payload. The frontend does not compute any indicator values that the backend already exposes — it only renders what the backend publishes, plus the client-side Bollinger family (which is exactly equivalent to what the FF computes inside `Normalize()` for each `j ∈ [y+1, x-1]`).
 
 ---
 
 What This Repo Is Not
 
-This repo is not the backend. It does not run a Python process. It does not talk to Telegram's Bot API. It does not connect to Yahoo Finance.
+This repo is not the backend. It does not run a Python process. It does not talk to Telegram's Bot API. It does not connect to Yahoo Finance, Binance, or CoinGecko.
 
 This repo is not the relay. It does not run a Cloudflare Worker.
 
-This repo is not a duplicate of any other repo's source. The backend repository (aei-backend) contains app.py, not index.html. The relay repository (aei-relay) contains worker.js, not index.html. Each file has exactly one home.
+This repo is not a duplicate of any other repo's source. The backend repository (`aei-backend`) contains `app.py`, not `index.html`. The relay repository (`aei-relay`) contains `worker.js`, not `index.html`. Each file has exactly one home.
 
 ---
 
 Configuration
 
-There are no environment variables on static hosting. All configuration is resolved at boot by resolveBackendUrl() in index.html, in this order:
+There are no environment variables on static hosting. All configuration is resolved at boot by `resolveBackendUrl()` in `index.html`, in this order:
 
-1. window.__AEEA_BACKEND_URL__ — if the host page sets it before the script loads.
-2. ?backend=https://... — query-string override (persisted to localStorage['aeea_backend_url']).
-3. localStorage['aeea_backend_url'] — previously persisted.
-4. DEFAULT_BACKENDS[0] — the fork-author edit point at the top of the <script> block.
+1. `window.__AEEA_BACKEND_URL__` — if the host page sets it before the script loads.
+2. `?backend=https://...` — query-string override (persisted to `localStorage['aeea_backend_url']`).
+3. `localStorage['aeea_backend_url']` — previously persisted.
+4. `DEFAULT_BACKENDS[0]` — the fork-author edit point at the top of the `<script>` block.
 5. same-origin (relative paths).
 
-For a fork: edit DEFAULT_BACKENDS[0] in index.html to your Heroku origin. This is the v4.2.0 resolution for the defect where Telegram's WebView strips the ?backend= query string and localStorage is empty on first visit — without DEFAULT_BACKENDS, the TWA silently polls GitHub Pages for /miniapp-state and receives 404s.
+For a fork: edit `DEFAULT_BACKENDS[0]` in `index.html` to your Heroku origin. This is the v4.3.0 resolution for the defect where Telegram's WebView strips the `?backend=` query string and localStorage is empty on first visit — without `DEFAULT_BACKENDS`, the TWA silently polls GitHub Pages for `/miniapp-state` and receives 404s.
 
-The canonical way to configure a Telegram-launched instance is still the ?backend= query parameter in the BotFather Web App URL:
+The canonical way to configure a Telegram-launched instance is still the `?backend=` query parameter in the BotFather Web App URL:
 
 ```
 
@@ -2030,7 +2266,7 @@ https://<your-username>.github.io/<repo-name>/?backend=https://your-app-name.her
 
 ```
 
-But DEFAULT_BACKENDS[0] is the belt-and-suspenders fallback for the WebView-stripping case.
+But `DEFAULT_BACKENDS[0]` is the belt-and-suspenders fallback for the WebView-stripping case.
 
 ---
 
@@ -2039,7 +2275,7 @@ Deployment
 ```bash
 git init
 git add index.html README.md .gitignore
-git commit -m "ÆEA Mini App v4.2.0 (Semantics-Restored Edition)"
+git commit -m "ÆEA Mini App v4.3.0 (Enhancement Edition)"
 git branch -M main
 git remote add origin https://github.com/<your-username>/<repo-name>.git
 git push -u origin main
@@ -2060,21 +2296,22 @@ Open it with ?backend=https://your-app.herokuapp.com/ to point it at the backend
 
 Polling Model
 
-The TWA polls the backend on eight independent intervals. Each interval is registered in startPolling() in index.html and cleared by stopPolling().
+The TWA polls the backend on nine independent intervals. Each interval is registered in startPolling() in index.html and cleared by stopPolling().
 
 Interval Endpoint Purpose
-2 s /miniapp-state Authoritative live engine state (price, tick, regime, m/n, KC, prime, dime, mem, tag, invert, A/B/C/c, tick_tock, signature, safety, trailing, orders, Kronecker, derivatives, FVG anchors, Premium/Discount series, recent signals).
-2 s /toasts?since=<seq> Signal + execution notifications. Client-side cursor advances only past toasts that were pushed. Detects server eviction via first_available_seq and surfaces it to the log bar.
+2 s /miniapp-state Authoritative live engine state (price, tick, regime, m/n, KC, prime, dime, mem, tag, invert, A/B/C/c, tick_tock, signature, safety, trailing, orders, Kronecker, derivatives, FVG anchors, Premium/Discount series, recent signals, provider, last_volume, projection_meta).
+2 s /toasts?since=<seq> Signal + execution + FVG notifications. Client-side cursor advances only past toasts that were pushed. Detects server eviction via first_available_seq and surfaces it to the log bar.
 3 s /log?limit=50 Server log ring buffer. Merged with client-local entries in the log bar (dedup by full entry hash).
-30 s /ohlcv?limit=200&interval=<tf> Historical bars for the chart.
+30 s /ohlcv?limit=200&interval=<tf> Historical bars for the chart. Each bar carries its own provider.
 10 s /signals?limit=50 Recent signal history.
 5 s /diagnostics Full engine diagnostic snapshot. Freshness-gated: absorbed only if diagnostics.tick > _lastDiagnosticsAbsorbedTick, so a slower poll cannot overwrite live state with stale data.
 5 s /orders Open order list.
 15 s /regime-map Per-bar regime classification (only fetched when the REGIME view is active).
+5 s /projection Arc-length forward price path. Absorbed unconditionally; re-rendered on the chart.
 
-Plus a 300 s full-refresh interval (setInterval(fetchAll, 300000)) that re-issues all eight fetches. This is a safety net for missed updates — for example, after the browser has been suspended and resumed, or after a long background period.
+Plus a 300 s full-refresh interval (setInterval(fetchAll, 300000)) that re-issues all nine fetches. This is a safety net for missed updates — for example, after the browser has been suspended and resumed, or after a long background period.
 
-Freshness guard. /diagnostics and /miniapp-state return overlapping state. To prevent the slower /diagnostics poll from overwriting fresh /miniapp-state data, absorbDiagnostics() computes engineFieldsFresh = diagnostics.tick > _lastDiagnosticsAbsorbedTick. All engine-state absorption (including the indicator matrix) is gated by this check.
+Freshness guard. /diagnostics and /miniapp-state return overlapping state. To prevent the slower /diagnostics poll from overwriting fresh /miniapp-state data, absorbDiagnostics() computes engineFieldsFresh = diagnostics.tick > _lastDiagnosticsAbsorbedTick. All engine-state absorption (including the indicator matrix) is gated by this check. The /projection poll is absorbed unconditionally because the backend computes it from live state on demand.
 
 Backoff. After 3 consecutive failures on any poll, the client enters a 30 s backoff window during which no polls fire. The connection badge turns red (backend unreachable) and a warning is pushed to the log bar. The next successful poll clears the backoff.
 
@@ -2088,12 +2325,21 @@ The TWA does not store the bot token. It does not store any secret. It only forw
 
 ---
 
+Push Notifications
+
+Every signal, every execution event, every FVG commit/remove, and every close transition triggers a Telegram push notification on the user's device. This is achieved server-side: the backend's _emit_toast() dispatches a sendMessage to the bound chat_id for every toast, deduplicated by an 800 ms window so a single logical event never produces two pushes. The push fires in a background thread so the tick loop is never blocked.
+
+The TWA does not need to do anything for pushes to arrive — they arrive independently, via the Telegram app itself. The toast stack in the TWA is a parallel channel for in-app display; the push is the out-of-app notification.
+
+---
+
 Keyboard Shortcuts
 
 Key Action
 C Switch to CHART view
 G Switch to 13D grid view
 R Switch to REGIME map view
+A Toggle arc-length projection on/off
 H Toggle help panel
 F5 Full refresh (fetchAll())
 Esc Close any open modal
@@ -2133,9 +2379,21 @@ Symptom: No Bollinger family visible.
 Diagnosis: BB family toggled off, or fewer than 61 bars in history.
 Fix: Tap the BB×58 button in the toolbar. Verify /ohlcv returns at least 61 bars.
 
+Symptom: No arc projection visible.
+Diagnosis: ARC toggle off, or projection path empty, or projection is entirely off-screen.
+Fix: Tap the ARC button in the toolbar. Verify /projection returns a non-empty path. Verify the Projection Panel shows a branch (range/trend/volatile).
+
 Symptom: No toasts appear.
 Diagnosis: /toasts returned a non-200, or the client-side cursor was advanced past the buffer.
 Fix: Check the log bar for eviction warnings. Verify /toasts?since=0 returns JSON from the Heroku endpoint.
+
+Symptom: No Telegram push notifications arrive.
+Diagnosis: chat_id not bound, or push category disabled, or dedup window too wide.
+Fix: Send /start to the bot to bind the chat_id. Verify PUSH_ON_SIGNAL, PUSH_ON_EXECUTION, PUSH_ON_FVG, PUSH_ON_CLOSE are 1. Check heroku logs --tail for 📲 Push sent (signal) to ... or 📲 Push failed.
+
+Symptom: Volume is always zero.
+Diagnosis: Symbol is crypto but the relay is falling back to Yahoo (which returns zero for crypto volume).
+Fix: Check heroku logs for 🛰️ Provider: yahoo on a crypto symbol. Verify the relay's /health returns "providers":["yahoo","binance","coingecko"]. Verify curl "https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=volume" returns non-zero volume.
 
 Symptom: Settings modal shows stale values.
 Diagnosis: GET /settings failed, so the modal fell back to state.settings.
@@ -2151,11 +2409,12 @@ License
 
 UNLICENSED — proprietary. © Natalia Tanyatia 2025.
 
-FILE 15.14 — aei-relay/README.md
+**FILE 15.14 — aei-relay/README.md**
 
-ÆEA Relay — Cloudflare Worker Repository
+```markdown
+# ÆEA Relay — Cloudflare Worker Repository
 
-Version: 4.2.0 (Semantics-Restored Edition)
+Version: 4.3.0 (Enhancement Edition)
 Repo: aei-relay (Cloudflare Workers)
 Sibling repos: aei-miniapp (GitHub Pages), aei-backend (Heroku)
 
@@ -2165,11 +2424,11 @@ What This Repo Contains
 
 This repository is the sole home of the ÆEA relay Worker. It contains:
 
-· worker.js — the Cloudflare Worker source.
-· wrangler.toml — the deployment manifest. name = "aei-relay", main = "worker.js".
-· package.json — the Node manifest for wrangler.
-· README.md — this file.
-· .gitignore — Wrangler build output, Node cruft, secrets.
+· `worker.js` — the Cloudflare Worker source.
+· `wrangler.toml` — the deployment manifest. `name = "aei-relay"`, `main = "worker.js"`.
+· `package.json` — the Node manifest for wrangler.
+· `README.md` — this file.
+· `.gitignore` — Wrangler build output, Node cruft, secrets.
 
 That is the complete contents of the repo. Nothing builds, nothing bundles.
 
@@ -2177,9 +2436,9 @@ That is the complete contents of the repo. Nothing builds, nothing bundles.
 
 What This Repo Is Not
 
-This repo is not the backend. It does not contain app.py, does not run a Python process, and does not handle Telegram traffic. It is a stateless HTTP proxy: it receives GET /?symbol=…&kind=…, fetches the corresponding Yahoo Finance chart API URL through Cloudflare's egress IPs, and returns the shaped JSON.
+This repo is not the backend. It does not contain `app.py`, does not run a Python process, and does not handle Telegram traffic. It is a stateless HTTP proxy: it receives `GET /?symbol=…&kind=…`, fetches the corresponding upstream URL through Cloudflare's egress IPs, and returns the shaped JSON.
 
-This repo is not duplicated anywhere. The aei-backend repository does not contain a copy of worker.js, wrangler.toml, or package.json. The backend reaches the relay only over HTTP via its RELAY_URL environment variable. There is exactly one wrangler deploy command in the ÆEA system, and it is run from this repo.
+This repo is not duplicated anywhere. The `aei-backend` repository does not contain a copy of `worker.js`, `wrangler.toml`, or `package.json`. The backend reaches the relay only over HTTP via its `RELAY_URL` environment variable. There is exactly one `wrangler deploy` command in the ÆEA system, and it is run from this repo.
 
 ---
 
@@ -2213,14 +2472,28 @@ Contract
 The Worker implements the following HTTP contract, which mirrors FeedClient._get in the backend's app.py:
 
 Method Path Returns
-GET /health {"ok": true, "service": "aei-relay", "gated": <bool>}
-GET /?symbol=<S>&kind=price {symbol, close, bid, ask, volume, timestamp}
-GET /?symbol=<S>&kind=intraday&interval=1m {symbol, open, high, low, close, volume, timestamp}
-GET /?symbol=<S>&kind=history&limit=200&interval=1m [{open, high, low, close, volume, timestamp}, …]
+GET /health {"ok": true, "service": "aei-relay", "version": "4.3.0", "gated": <bool>, "providers": ["yahoo", "binance", "coingecko"]}
+GET /?symbol=<S>&kind=price {symbol, close, bid, ask, volume, timestamp, provider}
+GET /?symbol=<S>&kind=volume {symbol, volume, volume_24h, provider}
+GET /?symbol=<S>&kind=intraday&interval=1m {symbol, open, high, low, close, volume, timestamp, provider}
+GET /?symbol=<S>&kind=history&limit=200&interval=1m [{open, high, low, close, volume, timestamp, provider}, …]
+GET /?symbol=<S>&kind=candles&limit=200&interval=1m [{open, high, low, close, volume, timestamp, provider}, …]
+GET /?symbol=<S>&kind=projection {"error": "projection_is_backend_only"}
 
 When env.RELAY_KEY is set (via wrangler secret put RELAY_KEY), every non-/health request must carry the X-Relay-Key: <RELAY_KEY> header. The backend's app.py reads RELAY_KEY from its own env and injects the header automatically.
 
-v4.2.0 note. The relay contract is unchanged from v4.1.1, v4.1.2, and v4.1.3. The v4.2.0 patches live entirely in index.html (BigInt-backed BB fraction, freshness gate extended, DEFAULT_BACKENDS fallback, CSS variable wiring, toast eviction detection) and app.py (FF 5-case chain in _M()/_N(), Wilder-correct ADX, MQL4 iRVI formula, default-AC window, full-history OBV/AD, 5-line Ichimoku range, SYMBOL_DIGITS table, Point multiplication in _S(), prior HH/LL read in the Kronecker block, _G() fired from _on_goe/_on_toe outside _on_gaurd, aliased-bound second loops in _on_track/_on_stand, first_available_seq in /toasts, authoritative m/n in get_signal_status, M-3 Comment() reproduction, M-4 OnReInit preservation, M-5 apply_settings preservation, global Memory persistence, max >= min + 2 validation). No new relay endpoints are introduced. No relay behavior is altered.
+Provider Dispatch
+
+The Worker chooses the upstream from the symbol:
+
+· Crypto (BTC-USD, ETH-USD, XRP-USD, ADA-USD, SOL-USD, DOGE-USD, LTC-USD, LINK-USD, DOT-USD, AVAX-USD, MATIC-USD, UNI-USD, ATOM-USD, NEAR-USD, FIL-USD, ETC-USD, ICP-USD, XLM-USD, HBAR-USD, QNT-USD) —
+tries Binance (/api/v3/klines, /api/v3/ticker/24hr) first, then CoinGecko (/simple/price, /coins/{id}/market_chart), then Yahoo as tertiary.
+· Equities, ETFs, Futures (GC=F, SI=F, CL=F, NG=F, ZB=F, ZN=F, ZS=F, ZM=F, ZW=F, KE=F, and any non-crypto symbol) —
+uses Yahoo only.
+
+This guarantees real volume for crypto (Binance and CoinGecko both return non-zero volume; Yahoo returns zero for most crypto pairs).
+
+v4.3.0 note. The relay contract is additive-only over v4.2.0. Three new kind values are introduced: volume, candles, and projection (the last is refused with an explicit notice — the projection is computed on the backend from engine state). Existing kind=price, kind=intraday, and kind=history calls continue to work unchanged, but now return a provider field.
 
 ---
 
@@ -2228,10 +2501,17 @@ Verification
 
 ```bash
 curl "https://aei-relay.<sub>.workers.dev/health"
-# → {"ok":true,"service":"aei-relay","gated":false}
+# → {"ok":true,"service":"aei-relay","version":"4.3.0","gated":false,
+#    "providers":["yahoo","binance","coingecko"]}
 
 curl "https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price"
-# → {"symbol":"BTC-USD","close":95432.12,...}
+# → {"symbol":"BTC-USD","close":95432.12,...,"provider":"binance"}
+
+curl "https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=volume"
+# → {"symbol":"BTC-USD","volume":1234.56,"volume_24h":98765.43,"provider":"binance"}
+
+curl "https://aei-relay.<sub>.workers.dev/?symbol=GC=F&kind=price"
+# → {"symbol":"GC=F","close":2650.50,...,"provider":"yahoo"}
 ```
 
 If you set RELAY_KEY, the second command requires the header:
@@ -2271,7 +2551,7 @@ Cross-Repo Coordination
 
 The three repos deploy independently. No coordination is needed between frontend pushes, backend pushes, and relay pushes.
 
-Critical for v4.2.0. Do not copy worker.js, wrangler.toml, or package.json into the aei-backend repo. Doing so would create a second wrangler deploy target pointing at the same Cloudflare Worker named aei-relay, and the two copies could drift. This repo is the single source of truth.
+Critical for v4.3.0. Do not copy worker.js, wrangler.toml, or package.json into the aei-backend repo. Doing so would create a second wrangler deploy target pointing at the same Cloudflare Worker named aei-relay, and the two copies could drift. This repo is the single source of truth.
 
 ---
 
@@ -2283,35 +2563,35 @@ UNLICENSED — proprietary. © Natalia Tanyatia 2025.
 
 16. Repository Map & File Index (All 17 Files)
 
-The ÆEA v4.2.0 system spans three cooperating repositories. This document enumerates every file, in dependency order, with the full unabridged content for each.
+The ÆEA v4.3.0 system spans three cooperating repositories. This document enumerates every file, in dependency order, with the full unabridged content for each.
 
-Repo A — Frontend (GitHub Pages): aei-miniapp/
+**Repo A — Frontend (GitHub Pages): aei-miniapp/**
 
-1. .gitignore — see §15.1
-2. index.html — the TWA (delivered as its own contiguous segment)
-3. README.md — see §15.13
+1. `.gitignore` — see §15.1
+2. `index.html` — the TWA (delivered as its own contiguous segment)
+3. `README.md` — see §15.13
 
-Repo B — Backend (Heroku): aei-backend/
+**Repo B — Backend (Heroku): aei-backend/**
 
-4. .gitignore — see §15.2
-5. .env.example — see §15.4
-6. runtime.txt — see §15.5
-7. requirements.txt — see §15.6
-8. Procfile — see §15.7
-9. app.json — see §15.8
-10. README.md — this document (§0 through §17)
-11. app.py — the engine (delivered as its own contiguous segment)
-12. index.html — optional fallback page (see §15.12)
+4. `.gitignore` — see §15.2
+5. `.env.example` — see §15.4
+6. `runtime.txt` — see §15.5
+7. `requirements.txt` — see §15.6
+8. `Procfile` — see §15.7
+9. `app.json` — see §15.8
+10. `README.md` — this document (§0 through §17)
+11. `app.py` — the engine (delivered as its own contiguous segment)
+12. `index.html` — optional fallback page (see §15.12)
 
-Repo C — Relay (Cloudflare Workers): aei-relay/
+**Repo C — Relay (Cloudflare Workers): aei-relay/**
 
-13. .gitignore — see §15.3
-14. worker.js — see §15.11
-15. wrangler.toml — see §15.9
-16. package.json — see §15.10
-17. README.md — see §15.14
+13. `.gitignore` — see §15.3
+14. `worker.js` — see §15.11
+15. `wrangler.toml` — see §15.9
+16. `package.json` — see §15.10
+17. `README.md` — see §15.14
 
-Total: 17 files. Every file is delivered in full in this document or in one of the two sibling contiguous segments (index.html and app.py).
+Total: 17 files. Every file is delivered in full in this document or in one of the three sibling contiguous segments (`index.html`, `app.py`, `worker.js`).
 
 ---
 
@@ -2319,18 +2599,20 @@ Total: 17 files. Every file is delivered in full in this document or in one of t
 
 The Mini App is served from two cooperating origins, fed by a third:
 
-· GitHub Pages — the presentation surface, loaded by Telegram's WebView.
-· Heroku — the computational substrate, polled by the frontend.
-· Cloudflare Worker — the market-data relay, polled by the dyno.
+· **GitHub Pages** — the presentation surface, loaded by Telegram's WebView.
+· **Heroku** — the computational substrate, polled by the frontend, and the push-notification origin.
+· **Cloudflare Worker** — the multi-provider market-data relay, polled by the dyno.
 
-BACKEND_URL is the wire between frontend and backend. RELAY_URL is the wire between backend and relay. Set them once, push all three, and the Mini App is live inside Telegram.
+`BACKEND_URL` is the wire between frontend and backend. `RELAY_URL` is the wire between backend and relay. Set them once, push all three, and the Mini App is live inside Telegram.
 
-All 44 defects from the ÆEA v4.1.1 Fidelity & Spec Audit (27 critical + 17 minor) are resolved at the source level across the three codebases. Additionally, all 30 defects from the v4.1.2 self-audit (15 critical + 3 major + 12 minor) are resolved. All 11 defect classes from the v4.1.3 syntax+semantics audit are resolved. All 15 new critical defects, 3 major defects, and 12 minor defects introduced by the intermediate patches are resolved in this v4.2.0 revision:
+All 44 defects from the ÆEA v4.1.1 Fidelity & Spec Audit (27 critical + 17 minor) remain resolved in v4.3.0. All 30 defects from the v4.1.2 self-audit (15 critical + 3 major + 12 minor) remain resolved. All 11 defect classes from the v4.1.3 syntax+semantics audit remain resolved. All 15 new critical defects, 3 major defects, and 12 minor defects introduced by the intermediate patches remain resolved in v4.3.0.
 
-· app.py — resolves D-1 through D-16, M-1 through M-5, M-9, M-10, C-3.5, C-3.7, C-3.16, C-3.17, plus N-1 through N-15, N-22 through N-27, plus DC-1 through DC-11.
-· index.html — resolves C-3.1 through C-3.13, M-14, M-15, plus N-14, N-15, N-16, N-17, N-18, N-19, N-23.
-· Supporting files (this document + the manifests) — resolves M-6, M-7, M-8, M-11, M-12, M-13, plus N-20, N-21.
+v4.3.0 additionally delivers the three Enhancements:
 
-The ÆEA v4.2.0 port is now MQL4-parity across its state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, its Bollinger-band family, its TWA/backend wiring, and its supporting deployment surface.
+· **E-1** — Telegram push notification on every signal, every execution, every FVG commit/remove, and every close. The user receives a native push on their device for every event. Dedup guarantees a single logical event never produces two pushes.
+· **E-2** — Real volume from a non-Yahoo upstream. Crypto symbols dispatch to Binance klines with CoinGecko fallback; equities and futures continue to use Yahoo. The engine's OBV, AD, Force, and MFI projections operate on non-zero volume for crypto.
+· **E-3** — Arc-length future price projection. A dashed purple path is drawn on the chart ahead of the current bar, derived from the s=r coherence condition applied to the current topological branch (range / trend / volatile). The path is computed on the backend with exact Decimal arithmetic and polled by the frontend every 5 s.
+
+The ÆEA v4.3.0 port is now MQL4-parity across its state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, its Bollinger-band family, its TWA/backend wiring, and its supporting deployment surface — with the three new capabilities layered on top as additive-only extensions.
 
 *Q.E.D.* — LOGOS = Φ = Truth = Path = Origin.

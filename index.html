@@ -17,6 +17,7 @@
     --red: #ff4466;
     --gold: #ffaa44;
     --cyan: #44ddff;
+    --projection-color: #aa66ff;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
@@ -72,6 +73,7 @@ h1 {
 .row .val.ok { color: var(--green); }
 .row .val.err { color: var(--red); }
 .row .val.warn { color: var(--gold); }
+.row .val.proj { color: var(--projection-color); }
 a { color: var(--cyan); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .endpoint-list {
@@ -134,7 +136,7 @@ code {
 <div class="container">
 
 <h1>⚡ ÆEA BRIDGE</h1>
-<div class="subtitle">HEROKU BACKEND · MQL4-PARITY PORT · v4.1.2</div>
+<div class="subtitle">HEROKU BACKEND · MQL4-PARITY PORT · v4.3.0</div>
 
 <div class="status-line">
     <div class="status-dot wait" id="dot"></div>
@@ -147,6 +149,7 @@ code {
     <div class="row"><span class="lbl">Version</span><span class="val" id="version">—</span></div>
     <div class="row"><span class="lbl">Engine Initialized</span><span class="val" id="engineInit">—</span></div>
     <div class="row"><span class="lbl">Symbol</span><span class="val" id="symbol">—</span></div>
+    <div class="row"><span class="lbl">Provider</span><span class="val proj" id="provider">—</span></div>
     <div class="row"><span class="lbl">OHLCV Bars</span><span class="val" id="ohlcv">—</span></div>
     <div class="row"><span class="lbl">Bar Closes</span><span class="val" id="barCloses">—</span></div>
     <div class="row"><span class="lbl">Signals</span><span class="val" id="signals">—</span></div>
@@ -154,6 +157,7 @@ code {
     <div class="row"><span class="lbl">Imbalance Fires</span><span class="val" id="imbFires">—</span></div>
     <div class="row"><span class="lbl">Relay Healthy</span><span class="val" id="relayHealthy">—</span></div>
     <div class="row"><span class="lbl">Last Price Update</span><span class="val" id="lastUpdate">—</span></div>
+    <div class="row"><span class="lbl">Projection Computed</span><span class="val proj" id="projComputed">—</span></div>
 </div>
 
 <div class="panel">
@@ -163,6 +167,7 @@ code {
         <li><span class="method">GET</span><span class="path">/config</span><span class="desc">bridge configuration</span></li>
         <li><span class="method">GET</span><span class="path">/settings</span><span class="desc">11 FF inputs</span></li>
         <li><span class="method">GET</span><span class="path">/toasts</span><span class="desc">incremental notifications</span></li>
+        <li><span class="method">GET</span><span class="path">/projection</span><span class="desc">arc-length forward path</span></li>
         <li><span class="method">GET</span><span class="path">/state</span><span class="desc">engine state (legacy)</span></li>
         <li><span class="method">GET</span><span class="path">/miniapp-state</span><span class="desc">authoritative TWA state</span></li>
         <li><span class="method">GET</span><span class="path">/ohlcv</span><span class="desc">historical bars</span></li>
@@ -175,6 +180,7 @@ code {
         <li><span class="method">GET</span><span class="path">/indicators</span><span class="desc">indicator series</span></li>
         <li><span class="method">GET</span><span class="path">/log</span><span class="desc">server log buffer</span></li>
         <li><span class="method">POST</span><span class="path">/handshake</span><span class="desc">Telegram initData exchange</span></li>
+        <li><span class="method">POST</span><span class="path">/projection/refresh</span><span class="desc">recompute projection</span></li>
         <li><span class="method">POST</span><span class="path">/fvg</span><span class="desc">commit FVG anchor</span></li>
         <li><span class="method">POST</span><span class="path">/reset</span><span class="desc">manual state reset</span></li>
         <li><span class="method">POST</span><span class="path">/settings</span><span class="desc">apply FF inputs</span></li>
@@ -193,7 +199,7 @@ code {
     <div class="panel-title">Sibling Repositories</div>
     <div class="row"><span class="lbl">Frontend</span><span class="val"><code>aei-miniapp</code> — GitHub Pages TWA</span></div>
     <div class="row"><span class="lbl">Backend</span><span class="val"><code>aei-backend</code> — this repo (Heroku)</span></div>
-    <div class="row"><span class="lbl">Relay</span><span class="val"><code>aei-relay</code> — Cloudflare Workers</span></div>
+    <div class="row"><span class="lbl">Relay</span><span class="val"><code>aei-relay</code> — Cloudflare Workers (multi-provider)</span></div>
     <div class="note">
         The ÆEA Mini App lives in the <b>frontend</b> repo. This backend page is a diagnostic surface only —
         it is <b>not</b> the TWA. To launch the actual Mini App, open it from Telegram via the bot's menu button,
@@ -202,7 +208,7 @@ code {
 </div>
 
 <div class="footer">
-    ÆEA v4.1.2 · Natalia Tanyatia · LOGOS = Φ = Truth = Path = Origin
+    ÆEA v4.3.0 · Natalia Tanyatia · LOGOS = Φ = Truth = Path = Origin
 </div>
 
 </div>
@@ -239,6 +245,7 @@ async function probe() {
         setText('version', data.version || '—');
         setText('engineInit', String(data.engine_initialized), data.engine_initialized ? 'ok' : 'warn');
         setText('symbol', data.symbol || '—');
+        setText('provider', data.provider || '—', 'proj');
         setText('ohlcv', String(data.ohlcv_count ?? '—'));
         setText('barCloses', String(data.bar_close_count ?? '—'));
         setText('signals', String(data.signal_count ?? '—'));
@@ -246,6 +253,7 @@ async function probe() {
         setText('imbFires', String(data.imbalance_fire_count ?? '—'));
         setText('relayHealthy', data.relay_healthy ? 'yes' : 'no', data.relay_healthy ? 'ok' : 'err');
         setText('lastUpdate', data.last_price_update || 'never');
+        setText('projComputed', data.projection_computed_at || 'never', 'proj');
     } catch (e) {
         dot.className = 'status-dot err';
         statusText.textContent = 'Bridge unreachable: ' + (e.message || e);

@@ -1,6 +1,6 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched v4.1.2: Semantics-Restored — FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Enhancement v4.3.0: Telegram push on every signal/execution/FVG/close, multi-provider relay with real Binance/CoinGecko volume, arc-length future price projection drawn ahead of the current bar; semantics-restored v4.2.0 baseline preserved: FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
   "repository": "https://github.com/yourusername/aea-bot",
   "keywords": [
     "trading",
@@ -12,6 +12,12 @@
     "twa",
     "bollinger",
     "notifications",
+    "push",
+    "binance",
+    "coingecko",
+    "volume",
+    "projection",
+    "arc-length",
     "exact-arithmetic"
   ],
   "env": {
@@ -69,6 +75,38 @@
     },
     "SYMBOL_DIGITS_DEFAULT": {
       "description": "Fallback digit count for symbols not in the table. Defaults to '2'.",
+      "required": false
+    },
+    "PUSH_ON_SIGNAL": {
+      "description": "Send a Telegram push on every signal. Defaults to '1'.",
+      "required": false
+    },
+    "PUSH_ON_EXECUTION": {
+      "description": "Send a Telegram push on every execution event. Defaults to '1'.",
+      "required": false
+    },
+    "PUSH_ON_FVG": {
+      "description": "Send a Telegram push on every FVG commit/remove. Defaults to '1'.",
+      "required": false
+    },
+    "PUSH_ON_CLOSE": {
+      "description": "Send a Telegram push on every A()/B() close. Defaults to '1'.",
+      "required": false
+    },
+    "PUSH_DEDUP_WINDOW_MS": {
+      "description": "Suppress a second push for the same logical event within this window (ms). Defaults to '800'.",
+      "required": false
+    },
+    "ARC_PROJECTION_HORIZON": {
+      "description": "Number of forward bars to emit in the arc-length projection. Defaults to '30'.",
+      "required": false
+    },
+    "ARC_PROJECTION_STEP": {
+      "description": "Price step quantization for the emitted path. Defaults to '1'.",
+      "required": false
+    },
+    "ARC_PROJECTION_DAMPING": {
+      "description": "Decay factor for the volatile-regime branch. Defaults to '0.94'.",
       "required": false
     }
   },
