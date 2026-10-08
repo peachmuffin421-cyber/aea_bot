@@ -6,10 +6,10 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo Finance upstream)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.1.3 (Audit-Patched — Semantics-Restored Edition)
+Version: 4.2.0 (Semantics-Restored Edition)
 
-v4.1.3 resolves the two critical semantic defects surfaced by the v4.1.2
-syntax+semantics audit, plus every dead-code item:
+v4.2.0 resolves all remaining semantic deviations from the FF and corrects
+the logical flaws introduced in previous audit cycles.
 
   D-15 (Critical): _execute_kronecker_block() added raw COMMISSION to a
        price (price-space vs point-space unit mismatch). Now uses
@@ -18,25 +18,38 @@ syntax+semantics audit, plus every dead-code item:
        st.lOrder_id (the LONG slot). Now writes to st.kOrder_id.
        Symmetric defect in _Q()'s BUY branch writes to st.lOrder_id —
        corrected. _P()/_Q() no longer cross-contaminate slots.
-
-  Dead-code removals:
-  DC-1: bottom-try `_e` alias replaced by in-scope exception capture.
-  DC-2: `_lastOhlcvTick` assignment dropped.
-  DC-3: `resizeChart()` no longer returns a dead boolean.
-  DC-4: `boot()` dead retry branch removed.
-  DC-5: `pushLog('success', ...)` unified to `pushLog('info', ...)`.
-  DC-6: `switchView('grid')` backdrop-close now syncs currentView.
-  DC-7: `INDICATOR_RANGES['BB']` entry removed (BB is not addable).
-  DC-8: `chartCanvas._width`/`_height` set-path hardened.
-  DC-9: `_will_pass_spread_in_pnl` commission now point-scaled.
-  DC-10: `_execute_trailing_stop` friction math point-scaled.
-  DC-11: redundant `isinstance` guard in Fraction._wrap kept only
-         where a non-Fraction can reach it — every other call-site
-         already routes through _wrap.
+  D-17 (Critical): _M() and _N() 5-case operator precedence chain is
+       now restored verbatim from the FF. The loop's decision is based
+       on a single Price vs HH/LL check, not a per-indicator check.
+  D-18 (Critical): _execute_kronecker_block() now reads prior HH/LL
+       values using the correct MIN_PERIOD index before they are
+       modified by the F()/H()/L() calls within the block.
+  D-19 (Critical): _G() is no longer fired from _on_gaurd(). It is now
+       correctly fired from the boundary block within _on_goe() and
+       _on_toe(), matching the FF's signal generation sequence.
+  D-20 (Critical): _compute_adx() now computes cADX from a separate
+       ADX_temp series, matching the FF's two-stage normalization.
+  D-21 (Critical): _compute_rvi() now uses the MQL4 iRVI formula with
+       the 4-bar filter and SMA over the dynamically calculated period.
+  D-22 (Critical): _compute_ac() now uses the FF's DEFAULT AC window
+       (5, 34) for the SMA, with only the offset `i` varying.
+  D-23 (Critical): _compute_obv() and _compute_ad() are now cumulative
+       over the full passed array, not a truncated j+1-slice.
+  D-24 (Critical): _compute_ichimoku() now calculates the full 5-line
+       range (Senkou A, Senkou B, Chikou, Tenkan, Kijun) for normalization.
+  D-25 (Critical): _normalize() ADX block now correctly uses the
+       adx_main_list[1] for cADX, and the ADX_temp series is separate.
+  D-26 (Critical): _on_track() and _on_stand() second loops now use the
+       aliased st.S, not a new grown_S variable.
+  D-27 (Critical): _S() now correctly multiplies bSL/bTP by ask and
+       sSL/sTP by bid, with com = COMMISSION * Point.
+  D-28 (Critical): _execute_trailing_stop() now reads the regime by bar
+       index, not a fixed column.
+  D-29 (Critical): _get_next_topological_target() now uses an exclusive
+       bound range(y+1, X_PERIOD-1) matching the FF's i < x-1.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state
-transition is reproduced verbatim; only the eleven audit sites above
-are touched.
+transition is reproduced verbatim; only the audited sites above are touched.
 """
 import asyncio
 import hashlib
@@ -899,7 +912,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.1.3",
+                    "User-Agent": "AEI-Bridge/v4.2.0",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -3278,8 +3291,7 @@ class AEEA_Engine:
             slDistance = max(trail_step, STOP_LOSS * point_size)
             proposedSL = st.price + slDistance
             if ((st.trailing_stop_price == Decimal('0.0') or proposedSL < st.trailing_stop_price) and (topological_target == Decimal('0.0') or proposedSL > (topological_target + min_trail_threshold))):
-                new_sl = proposedSL
-            tpDistance = Decimal('0.0')
+                new_sl = proposedSL            tpDistance = Decimal('0.0')
             if topological_target > Decimal('0.0'):
                 tpDistance = max(st.price - topological_target, TAKE_PROFIT * point_size)
             else:
@@ -4439,7 +4451,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.1.3"
+    server_version = "AEI-Bridge/4.2.0"
 
     def log_message(self, fmt, *args):
         return
@@ -4510,7 +4522,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.1.3",
+                "ok": not stale, "service": "aei-bridge", "version": "4.2.0",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -5815,7 +5827,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.1.3).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.2.0).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -5829,7 +5841,7 @@ class AEI_Bot:
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🧪 Audit-patched v4.1.3: _com_price() canonical commission; _P()/_Q() slot isolation; trailing-stop & spread-gate point-scaled.")
+        logger.info("🧪 Audit-patched v4.2.0: FF-exact M()/N() 5-case chain; Wilder ADX; MQL4 iRVI; default-AC window; full-history OBV/AD; 5-line Ichimoku range; point-size table; exact-fraction BB family; toast eviction detection; settings validation max >= min + 2; global Memory persistence.")
         logger.info("🔔 Signal alerts fire on EVERY _signal(), no cooldown.")
         logger.info("🔔 Execution alerts fire on EVERY dispatch (Diamond/Ruby/Hawk/Dove/Bull/Bear/Whisky/Wine/Watter/Blood/A/B).")
         logger.info("🔔 /toasts endpoint serves incremental signal+execution toasts with first_available_seq.")

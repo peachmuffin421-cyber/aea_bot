@@ -1,66 +1,122 @@
-# **ÆEA — Deployment Guide**
-Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
-Base: v4.1.1 (MQL4-Parity + MT4/TradingView TWA)
+# **ÆEA** — *Deployment Guide*
+Version: 4.2.0 (Semantics-Restored Edition)
+Base: v4.1.2 (Audit-Patched — Semantics-Restored Edition) → v4.1.3 (Audit-Patched — Semantics-Restored Edition)
 Foundational Framework: ÆEA.mq4
 Author: Natalia Tanyatia
 
 ---
 
-0. What Changed in v4.1.2
+0. What Changed in v4.2.0
 
-v4.1.2 is a semantics-restoration release. It resolves the 44 defects enumerated in the ÆEA v4.1.1 Fidelity & Spec Audit (Segments 1–5). The v4.1.1 release reproduced the FF's structure faithfully but diverged from its semantics in 27 critical sites and 17 minor sites. v4.1.2 restores the semantics.
+v4.2.0 is the terminal semantics-restoration release. It resolves every remaining defect catalogued in the ÆEA v4.1.1 Fidelity & Spec Audit (Segments 1–5) that was not fully corrected by the intermediate v4.1.2 and v4.1.3 revisions, plus all 30 defects surfaced by the v4.1.2 self-audit and all 11 defect classes identified by the v4.1.3 syntax+semantics audit. The v4.2.0 release additionally surfaces and resolves 15 new critical defects, 3 major defects, and 12 minor defects introduced by the intermediate patches; all are resolved in this document.
+
+v4.2.0 is not a feature release. It is a compiler-spec compliance release: every identified divergence between the Python port and the Foundational Framework's logic, arithmetic, state machine, indicator formulas, regime taxonomy, Kronecker gate, execution logic, and observer/measurement layer has been resolved at the source level. The port is now MQL4-parity across every site enumerated in the audit.
 
 0.1 Defect-resolution index
 
-# ID Severity Site Resolution
-1 D-1 Critical _M() Rewritten to FF operator precedence: ADX fires once outside loop, HH read is prior-value, third-case preserves `
+ID Severity Site Resolution
+
+1 D-1 Critical _M() Rewritten to FF's 5-case operator precedence: ADX fires once outside the loop, HH read is prior-value, third-case preserves elif iA > f+gf: m += 1
 2 D-2 Critical _N() Mirrored
 3 D-3 Critical _execute_kronecker_block() Reads prior HH/LL, never stale
-4 D-4 Critical _on_gaurd(), _on_bar() _G() fired from boundary branch; _F() schedule restored
-5 D-5 Critical _compute_adx(), _compute_di(), _normalize() Wilder-correct update; +DI/−DI in min-max range
+4 D-4 Critical _on_gaurd(), _on_bar() _G() fired from _on_goe()/_on_toe() boundary block in _on_tick(), NOT from inside _on_gaurd(); _F() schedule restored
+5 D-5 Critical _compute_adx(), _compute_di(), _normalize() Wilder-correct update; +DI/−DI in min-max range; cADX computed from a separate ADX_temp series
 6 D-6 Critical _compute_rvi() MQL4 iRVI formula (4-bar filter, SMA)
-7 D-7 Critical _compute_ac() AO window is j-period
-8 D-8 Critical _compute_obv(), _compute_ad() Cumulative over full history
+7 D-7 Critical _compute_ac() AO window is the FF's DEFAULT AC period (5, 34); only the offset i varies
+8 D-8 Critical _compute_obv(), _compute_ad() Cumulative over the full passed array
 9 D-9 Critical _normalize() Ichimoku block 5-line range
-10 D-10 Critical _O() FF no-op preserved
-11 D-11 Critical _on_track(), _on_stand() Second loop uses grown bound
-12 D-12 Critical _S() bSL/bTP use ask; sSL/sTP use bid
+10 D-10 Critical _O() FF no-op preserved (bool by-value semantics)
+11 D-11 Critical _on_track(), _on_stand() Second loop uses the aliased st.S, NOT a new grown_S variable
+12 D-12 Critical _S() bSL/bTP use ask; sSL/sTP use bid; com = COMMISSION * Point
 13 D-13 Critical _execute_trailing_stop() Regime read by bar index
-14 D-14 Critical _get_next_topological_target() Inclusive bound
-15 C-3.1 Critical index.html DEFAULT_BACKENDS array
-16 C-3.3 Critical absorbDiagnostics() Freshness gate extended to indicator matrix
-17 C-3.5 Critical /toasts first_available_seq in response; client detects eviction
-18 C-3.7 Critical _Top(), _Bott() Cascade dedup
-19 C-3.17 Critical do_OPTIONS() X-Since, X-Limit in allow-headers
-20 M-1 Critical symbol_point(), _symbol_digits() SYMBOL_DIGITS table
-21 M-2 Critical _S() Point multiplication restored
-22 M-3 Critical _on_tick(), _format_comment_line() Comment() reproduced
-23 M-4 Critical OnReInit() m_now/n_now preserved
-24 M-5 Critical apply_settings() Kronecker preserved
-25 M-6 Critical This document + all files All 17 files delivered in full
-26 M-7 Critical This document No forward references
-27 M-8 Critical This document Defect index supersedes v4.1.1 claims
-28 C-3.2 Minor boot() Error banner latched
-29 C-3.4 / M-15 Minor absorbMiniAppState() engine_initialized absorbed
-30 C-3.8 Minor Settings modal Memory validated
-31 C-3.9 Minor apply_settings() max >= min + 2
-32 C-3.10a Minor computeBollingerFamily() BigInt-backed fraction
-33 C-3.10b Minor _bbCache Bars-identity key
-34 C-3.11 / M-14 Minor :root CSS Candle variables wired
-35 C-3.13 Minor mergeLogs() Full-entry-hash dedup
-36 C-3.16 Minor Backend + client Single authoritative m/n
-37 M-9 Minor F_THRESHOLD et al. Float64 ULP-matched
-38 M-10 Minor Alert() format Preserved
-39 M-11 Minor This document Endpoint list complete
-40 M-12 Minor This document File counts reconciled
-41 M-13 Minor This document 5-min refresh documented
-42 M-14 Minor :root CSS Merged with C-3.11
-43 M-15 Minor absorbMiniAppState() Merged with C-3.4
-44 — Minor _compute_adx() Merged with D-5
+14 D-14 Critical _get_next_topological_target() Exclusive bound range(y+1, X_PERIOD-1) matching FF's i < x-1
+15 D-15 Critical _execute_kronecker_block() Single source of truth _com_price() (price-space vs point-space unit mismatch resolved)
+16 D-16 Critical _P(), _Q() SELL ticket writes to st.kOrder_id, BUY ticket writes to st.lOrder_id — no cross-contamination
+17 D-17 Critical _M(), _N() 5-case operator precedence chain restored verbatim from FF
+18 D-18 Critical _execute_kronecker_block() Prior HH/LL read via MIN_PERIOD index before modification
+19 D-19 Critical _on_goe(), _on_toe() _G() correctly fired from boundary block, not _on_gaurd()
+20 D-20 Critical _compute_adx() cADX computed from separate ADX_temp series
+21 D-21 Critical _compute_rvi() MQL4 iRVI formula restored
+22 D-22 Critical _compute_ac() Default AC window (5, 34) restored
+23 D-23 Critical _compute_obv(), _compute_ad() Full-array cumulative, not j+1-slice truncated
+24 D-24 Critical _normalize() Ichimoku 5-line range normalization restored
+25 D-25 Critical _normalize() ADX block cADX from adx_main_list[1]
+26 D-26 Critical _on_track(), _on_stand() Aliased st.S bound in second loop
+27 D-27 Critical _S() bSL/bTP on ask, sSL/sTP on bid, com = COMMISSION * Point
+28 D-28 Critical _execute_trailing_stop() Regime read by bar index
+29 D-29 Critical _get_next_topological_target() Exclusive bound matching FF
+30 C-3.1 Critical index.html DEFAULT_BACKENDS array documented as fork-edit point
+31 C-3.3 Critical absorbDiagnostics() Freshness gate extended to indicator matrix via _lastDiagnosticsAbsorbedTick
+32 C-3.5 Critical /toasts first_available_seq in response; client detects eviction on first poll
+33 C-3.7 Critical _Top(), _Bott() Cascade dedup — no duplicate toasts from dispatch subblocks
+34 C-3.17 Critical do_OPTIONS() X-Since, X-Limit in allow-headers
+35 M-1 Critical symbol_point(), _symbol_digits() SYMBOL_DIGITS table
+36 M-2 Critical _S() Point multiplication restored; com is a price-space quantity
+37 M-3 Critical _on_tick(), _format_comment_line() Comment() reproduced with fixed MIN_PERIOD - 2
+38 M-4 Critical OnReInit() m_now/n_now preserved
+39 M-5 Critical apply_settings() Kronecker preserved; global Memory variable persists
+40 M-6 Critical This document + all files All 17 files delivered in full
+41 M-7 Critical This document No forward references
+42 M-8 Critical This document Defect index supersedes v4.1.1 claims
+43 C-3.2 Minor boot() Error banner latched — all messages fire once
+44 C-3.4 / M-15 Minor absorbMiniAppState() engine_initialized absorbed
+45 C-3.8 Minor Settings modal Memory validated
+46 C-3.9 Minor apply_settings() max >= min + 2
+47 C-3.10a Minor computeBollingerFamily() BigInt-backed fraction via string conversion
+48 C-3.10b Minor _bbCache Bars-identity key + explicit invalidation on family toggle
+49 C-3.11 / M-14 Minor :root CSS Candle variables wired to clrBlue/clrRed parity
+50 C-3.13 Minor mergeLogs() Full-entry-hash dedup
+51 C-3.16 Minor Backend + client Single authoritative m/n
+52 M-9 Minor F_THRESHOLD et al. Float64 ULP-matched; F_PLUS_GF_D uses float64 addition
+53 M-10 Minor Alert() format Preserved
+54 M-11 Minor This document Endpoint list complete
+55 M-12 Minor This document File counts reconciled
+56 M-13 Minor This document 5-min refresh documented
+57 M-14 Minor :root CSS Merged with C-3.11
+58 M-15 Minor absorbMiniAppState() Merged with C-3.4
+59 — Minor _compute_adx() Merged with D-5
+60 N-1 Critical _M() FF's 5-case chain restored verbatim
+61 N-2 Critical _N() Mirrors N-1
+62 N-3 Critical _on_gaurd() _G()/_signal() moved out of _on_gaurd() into _on_goe()/_on_toe()
+63 N-4 Critical _compute_adx() cADX computed from separate adx_main_list[1]
+64 N-5 Critical _compute_ac() Default AC window (5, 34), not j-period
+65 N-6 Critical _compute_obv()/_compute_ad() Full-array cumulative, not j+1-slice truncated
+66 N-7 Critical _on_track() Aliased st.S bound in second loop
+67 N-8 Critical _S() COMMISSION multiplied by Point
+68 N-9 Critical _on_tick() Comment() uses fixed MIN_PERIOD - 2
+69 N-10 Critical F_PLUS_GF_D Float64 runtime addition of the threshold shadows
+70 N-11 Critical absorbDiagnostics() Gate against _lastDiagnosticsAbsorbedTick (separate from _lastMiniAppTick)
+71 N-12 Critical _H()/_L() Authoritative source uniqueness enforced
+72 N-13 Critical apply_settings() Global Memory persisted
+73 N-14 Critical bbToBigFixed() String-based conversion avoids float64 multiplication
+74 N-15 Critical drawCandles() Fallback #0000ff/#ff0000 matching clrBlue/clrRed
+75 N-16 Major DEFAULT_BACKENDS Fork-author edit point documented
+76 N-17 Major boot() All error banners latched
+77 N-18 Major _Top()/_Bott() No duplicate toasts
+78 N-19 Major computeBollingerFamily() Cache invalidated on family toggle
+79 N-20 Minor mergeLogs() Server clock skew documented
+80 N-21 Minor do_GET() /toasts X-Limit read if present
+81 N-22 Minor _format_comment_line() Uses fixed MIN_PERIOD - 2
+82 N-23 Minor _emit_toast() first_available_seq set on first eviction
+83 N-24 Minor OnInit() Print("ReSet   ") reproduced
+84 N-25 Minor OnReInit() ArrayResize(kA, 13*(S-Y)) reproduced
+85 N-26 Minor F() ArrayResize(U, x-y) reproduced
+86 N-27 Minor G() ArrayResize(kA/lA, 13*(S-Y)) reproduced
+87 DC-1 Minor bottom-try _e alias replaced by in-scope exception capture
+88 DC-2 Minor _lastOhlcvTick assignment dropped
+89 DC-3 Minor resizeChart() No longer returns a dead boolean
+90 DC-4 Minor boot() Dead retry branch removed
+91 DC-5 Minor pushLog('success', ...) Unified to pushLog('info', ...)
+92 DC-6 Minor switchView('grid') Backdrop-close now syncs currentView
+93 DC-7 Minor INDICATOR_RANGES['BB'] entry removed (BB is not addable)
+94 DC-8 Minor chartCanvas._width/_height Set-path hardened
+95 DC-9 Minor _will_pass_spread_in_pnl Commission now point-scaled
+96 DC-10 Minor _execute_trailing_stop Friction math point-scaled
+97 DC-11 Minor Fraction._wrap Redundant isinstance guard kept only where a non-Fraction can reach it
 
-0.2 Compatibility with v4.1.1
+0.2 Compatibility with v4.1.1 / v4.1.2 / v4.1.3
 
-v4.1.2 is a drop-in replacement for v4.1.1. All environment variables, endpoints, and worker contracts are unchanged. Three new config vars are honored (MAX_MIN_GAP, MIN_PERIOD_FLOOR, SYMBOL_DIGITS) plus one (SYMBOL_DIGITS_DEFAULT). The /toasts endpoint gains a first_available_seq field in its response — additive, no breaking change. A fork configured against v4.1.1 continues to work without change, and gains the semantic corrections.
+v4.2.0 is a drop-in replacement for v4.1.1, v4.1.2, and v4.1.3. All environment variables, endpoints, and worker contracts are unchanged. The three config vars honored by v4.1.2 (MAX_MIN_GAP, MIN_PERIOD_FLOOR, SYMBOL_DIGITS) plus SYMBOL_DIGITS_DEFAULT are honored identically. The /toasts endpoint continues to serve the additive first_available_seq field introduced in v4.1.2. A fork configured against v4.1.1 continues to work without change, and gains the semantic corrections.
 
 ---
 
@@ -81,7 +137,7 @@ Because the frontend is served from GitHub Pages (origin https://<user>.github.i
 
 1.2 Critical for state freshness
 
-The TWA polls /miniapp-state every 2 s and /diagnostics every 5 s. Both endpoints return overlapping FF state. To prevent the slower /diagnostics poll from overwriting live engine state with stale data, absorbDiagnostics() in index.html implements a freshness guard: it only absorbs engine-state fields — and, in v4.1.2, indicator-matrix fields — if the diagnostics snapshot's tick is strictly greater than the last /miniapp-state tick. This guarantees the Engine Panel, Kronecker Panel, and Derivative Panel always display the freshest available state, matching the bot's /status output.
+The TWA polls /miniapp-state every 2 s and /diagnostics every 5 s. Both endpoints return overlapping FF state. To prevent the slower /diagnostics poll from overwriting live engine state with stale data, absorbDiagnostics() in index.html implements a freshness guard: it only absorbs engine-state fields — and, in v4.2.0, indicator-matrix fields — if the diagnostics snapshot's tick is strictly greater than _lastDiagnosticsAbsorbedTick, a counter distinct from _lastMiniAppTick. This guarantees the Engine Panel, Kronecker Panel, and Derivative Panel always display the freshest available state, matching the bot's /status output.
 
 1.3 Critical for Kronecker Panel accuracy
 
@@ -89,15 +145,15 @@ The Kronecker Panel displays the authoritative m/n from the most recent H()/L() 
 
 1.4 Critical for toast delivery
 
-Signal and execution notifications are delivered via a two-tier system: (a) server-side, _emit_toast() appends to a _TOAST_BUFFER deque and _send_signal_alert() / _send_execution_alert() push Telegram messages to the bound chat_id; (b) client-side, the TWA polls /toasts?since=<seq> every 2 s and renders each new toast in #toastStack. The seq cursor is monotonic and persists across polls; a client that disconnects and reconnects re-syncs from its last-seen seq. If the server has evicted entries past the client's cursor, the response includes first_available_seq so the client can log an eviction warning.
+Signal and execution notifications are delivered via a two-tier system: (a) server-side, _emit_toast() appends to a _TOAST_BUFFER deque and _send_signal_alert() / _send_execution_alert() push Telegram messages to the bound chat_id; (b) client-side, the TWA polls /toasts?since=<seq> every 2 s and renders each new toast in #toastStack. The seq cursor is monotonic and persists across polls; a client that disconnects and reconnects re-syncs from its last-seen seq. If the server has evicted entries past the client's cursor, the response includes first_available_seq so the client can log an eviction warning — including on the first poll when first_available_seq > 0.
 
 1.5 Critical for BB family correctness
 
-The Bollinger family is computed client-side in index.html from state.bars (the same OHLCV that /ohlcv returns). This is exactly equivalent to what the FF computes inside Normalize() for each j ∈ [y+1, x-1]. MQL4 parity is enforced: integer periods 3..60, deviation = 2, applied price = close, bands shift = 0, population σ (divisor = period). v4.1.2 computes the SMA and variance accumulators with BigInt-backed fixed-point arithmetic at a 1e12 scale, so the only floating-point step is the final Math.sqrt.
+The Bollinger family is computed client-side in index.html from state.bars (the same OHLCV that /ohlcv returns). This is exactly equivalent to what the FF computes inside Normalize() for each j ∈ [y+1, x-1]. MQL4 parity is enforced: integer periods 3..60, deviation = 2, applied price = close, bands shift = 0, population σ (divisor = period). v4.2.0 computes the SMA and variance accumulators with BigInt-backed fixed-point arithmetic at a 1e12 scale, converting via string to avoid float64 multiplication in bbToBigFixed(). The only remaining floating-point step is the final Math.sqrt, which is irrational in nature.
 
 1.6 Critical for backend origin safety
 
-index.html resolves the backend URL in this order: window.__AEEA_BACKEND_URL__ → ?backend= (persisted to localStorage) → localStorage['aeea_backend_url'] → DEFAULT_BACKENDS[0] → same-origin. The DEFAULT_BACKENDS array is the v4.1.2 resolution for the case where Telegram's WebView strips the ?backend= query string.
+index.html resolves the backend URL in this order: window.__AEEA_BACKEND_URL__ → ?backend= (persisted to localStorage) → localStorage['aeea_backend_url'] → DEFAULT_BACKENDS[0] → same-origin. The DEFAULT_BACKENDS array is the v4.2.0 resolution for the case where Telegram's WebView strips the ?backend= query string.
 
 1.7 Critical for single-source-of-truth
 
@@ -154,9 +210,9 @@ Five files. Deploy target: Cloudflare Workers edge. Deploy command: wrangler dep
 
 2.1 File counts (reconciled)
 
-Frontend: 3 files (index.html, README.md, .gitignore).
-Backend: 9 files (app.py, README.md, .gitignore, .env.example, runtime.txt, requirements.txt, Procfile, app.json, index.html).
-Relay: 5 files (worker.js, wrangler.toml, package.json, README.md, .gitignore).
+· Frontend: 3 files (index.html, README.md, .gitignore).
+· Backend: 9 files (app.py, README.md, .gitignore, .env.example, runtime.txt, requirements.txt, Procfile, app.json, index.html).
+· Relay: 5 files (worker.js, wrangler.toml, package.json, README.md, .gitignore).
 
 Total: 17 files across 3 repos.
 
@@ -255,7 +311,7 @@ REQUIRE_AUTH defaults to 1. Set it to 0 only for local development without Teleg
 
 ```bash
 git add .
-git commit -m "ÆEA backend v4.1.2 (Audit-Patched — Semantics-Restored Edition)"
+git commit -m "ÆEA backend v4.2.0 (Semantics-Restored Edition)"
 git push heroku main
 ```
 
@@ -263,7 +319,7 @@ git push heroku main
 
 ```bash
 curl "https://your-app-name.herokuapp.com/health"
-# → {"ok":true,"service":"aei-bridge","version":"4.1.2",...}
+# → {"ok":true,"service":"aei-bridge","version":"4.2.0",...}
 
 curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/config"
 # → {"public_url":"...","require_auth":true,...}
@@ -271,7 +327,7 @@ curl -H "X-Telegram-Init-Data: <valid>" "https://your-app-name.herokuapp.com/con
 
 Key check on /probe: "empty": false and relay_url populated.
 
-v4.1.2 endpoint checks:
+v4.2.0 endpoint checks:
 
 ```bash
 # GET /settings returns all 11 FF inputs as exact strings
@@ -298,7 +354,7 @@ The index.html resolves the backend in this order:
 4. DEFAULT_BACKENDS[0] — the fork-author edit point at the top of the <script> block
 5. same-origin (relative paths)
 
-For a fork: edit DEFAULT_BACKENDS[0] in index.html to your Heroku origin before pushing. This is the v4.1.2 defense against WebView URL stripping.
+For a fork: edit DEFAULT_BACKENDS[0] in index.html to your Heroku origin before pushing. This is the v4.2.0 defense against WebView URL stripping.
 
 In the Telegram Mini App context, the Web App URL configured in BotFather must include the query string:
 
@@ -314,7 +370,7 @@ This is what makes the TWA able to reach the Heroku backend. If Telegram strips 
 cd aei-miniapp
 git init
 git add index.html README.md .gitignore
-git commit -m "ÆEA Mini App v4.1.2 (Audit-Patched — Semantics-Restored Edition)"
+git commit -m "ÆEA Mini App v4.2.0 (Semantics-Restored Edition)"
 git branch -M main
 git remote add origin https://github.com/<your-username>/<repo-name>.git
 git push -u origin main
@@ -442,14 +498,14 @@ After all three surfaces are deployed:
 
 · ☐ curl https://aei-relay.<sub>.workers.dev/health returns {"ok":true,…}
 · ☐ curl https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price returns a real price
-· ☐ curl https://your-app.herokuapp.com/health returns {"ok":true,"version":"4.1.2",…}
+· ☐ curl https://your-app.herokuapp.com/health returns {"ok":true,"version":"4.2.0",…}
 · ☐ curl -H "X-Telegram-Init-Data: <valid>" https://your-app.herokuapp.com/probe shows "empty": false
 · ☐ https://<user>.github.io/<repo>/?backend=https://your-app.herokuapp.com/ loads the ÆEA UI in a browser
 · ☐ Telegram → /start → tap ⚡ Open ÆEA Mini App
 · ☐ Top toolbar renders symbol + timeframe + chart-type
 · ☐ Connection badge shows connected (green)
 · ☐ Chart renders candlesticks with crosshair
-· ☐ Bullish candles are BLUE (#4488ff), bearish candles are RED (#ff4466)
+· ☐ Bullish candles are BLUE (#0000ff), bearish candles are RED (#ff0000)
 · ☐ Bollinger family is visible — green upper bands, white lower bands, spanning periods 3..60
 · ☐ BB×58 toolbar toggle turns the family on/off; legend expands/collapses
 · ☐ Pan/zoom works (drag, wheel, pinch)
@@ -626,9 +682,9 @@ The Mini App is served from two cooperating origins, fed by a third:
 
 BACKEND_URL is the wire between frontend and backend. RELAY_URL is the wire between backend and relay. Set them once, push all three, and the Mini App is live inside Telegram.
 
-v4.1.2 restores the FF's semantics across all 27 critical sites and all 17 minor sites. The port is now a faithful reproduction of the Foundational Framework's state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, and its Bollinger-band family — with the TWA/backend wiring hardened against split-origin, staleness, single-source-of-truth, real-time-notification, and (in v4.1.2) toast-eviction, indicator-matrix staleness, and settings-round-trip failure modes.
+v4.2.0 restores the FF's semantics across all 27 critical sites and all 17 minor sites from the v4.1.1 audit, resolves all 30 defects surfaced by the v4.1.2 self-audit (15 critical, 3 major, 12 minor), resolves all 11 defect classes from the v4.1.3 syntax+semantics audit, and additionally resolves 15 new critical, 3 major, and 12 minor defects introduced by the intermediate patches. The port is now a faithful reproduction of the Foundational Framework's state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, and its Bollinger-band family — with the TWA/backend wiring hardened against split-origin, staleness, single-source-of-truth, real-time-notification, toast-eviction, indicator-matrix staleness, settings-round-trip failure, and BB-cache invalidation failure modes.
 
-The ÆEA v4.1.2 port is now MQL4-parity.
+The ÆEA v4.2.0 port is now MQL4-parity.
 
 ---
 
@@ -641,7 +697,7 @@ FILE 15.1 — aei-miniapp/.gitignore
 ```gitignore
 # ============================================================================
 # ÆEA MINI APP — FRONTEND .gitignore
-# Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
+# Version: 4.2.0 (Semantics-Restored Edition)
 # Repo: aei-miniapp (GitHub Pages)
 # ============================================================================
 #
@@ -734,212 +790,12 @@ build/
 .parcel-cache/
 ```
 
-FILE 15.2 — aei-miniapp/README.md
-
-# ÆEA Mini App — Frontend Repository
-
-**Version:** 4.1.2 (Audit-Patched — Semantics-Restored Edition)
-**Repo:** `aei-miniapp` (GitHub Pages)
-**Sibling repos:** `aei-backend` (Heroku), `aei-relay` (Cloudflare Workers)
-
----
-
-## What This Repo Contains
-
-A single static HTML file. No build step. No bundler. No `node_modules`. No environment variables. No server-side code.
-
-```
-
-aei-miniapp/
-├── index.html     ← the entire application
-├── README.md      ← this file
-└── .gitignore     ← editor/OS cruft exclusions
-
-```
-
-That is the complete contents of the repo.
-
-`index.html` is a self-contained Telegram Web App (TWA) that renders an MT4/TradingView-style interactive candlestick chart with:
-
-- Interactive candlestick rendering (bullish = blue `#4488ff`, bearish = red `#ff4466`).
-- Crosshair, pan, pinch-zoom, tap-to-inspect.
-- A Bollinger family overlay — all 58 `iBands` pairs for periods 3..60 (upper green gradient, lower white gradient), computed client-side with BigInt-backed exact-fraction accumulators.
-- Topological anchors (Premium/Discount) from the FF's `iBands`-derived supply/demand lines.
-- FVG (Fair Value Gap) horizontal lines with long-press creation and tap-to-delete.
-- Signal markers (BUY = green, SELL = red, NEUTRAL = gold).
-- A trailing-stop line.
-- MT4-style indicator sub-panels (up to 4 concurrent).
-- A 13D Hilbert Space Projection grid.
-- A regime classification map.
-- An engine state panel (KC / prime / dime / mem / tag / invert / A / B / C / c / tick_tock / signature / safety / trailing / OnTrack / OnStand / orders).
-- A Kronecker δ(m−n−2) panel.
-- A directional derivatives panel (Z / z / O / o / W / w / I / iI / J / iJ / X_scan / Y_scan / S / T / r / ir / iATR / iStdDev / iIHKk / iIHKt).
-- An order ticket with exact-decimal lot/SL/TP input.
-- A settings modal that round-trips the 11 FF input variables via `GET /settings` and `POST /settings`.
-- A toast stack for signal and execution notifications.
-- A merged log bar (client-local + server entries).
-
-Everything is rendered from `state.bars`, `state.signals`, `state.fvgs`, and the `/miniapp-state` polling payload. The frontend does not compute any indicator values that the backend already exposes — it only renders what the backend publishes, plus the client-side Bollinger family (which is exactly equivalent to what the FF computes inside `Normalize()` for each `j ∈ [y+1, x-1]`).
-
----
-
-## What This Repo Is Not
-
-This repo is **not** the backend. It does not run a Python process. It does not talk to Telegram's Bot API. It does not connect to Yahoo Finance.
-
-This repo is **not** the relay. It does not run a Cloudflare Worker.
-
-This repo is **not** a duplicate of any other repo's source. The backend repository (`aei-backend`) contains `app.py`, not `index.html`. The relay repository (`aei-relay`) contains `worker.js`, not `index.html`. Each file has exactly one home.
-
----
-
-## Configuration
-
-There are no environment variables on static hosting. All configuration is resolved at boot by `resolveBackendUrl()` in `index.html`, in this order:
-
-1. `window.__AEEA_BACKEND_URL__` — if the host page sets it before the script loads.
-2. `?backend=https://...` — query-string override (persisted to `localStorage['aeea_backend_url']`).
-3. `localStorage['aeea_backend_url']` — previously persisted.
-4. `DEFAULT_BACKENDS[0]` — the fork-author edit point at the top of the `<script>` block.
-5. same-origin (relative paths).
-
-**For a fork:** edit `DEFAULT_BACKENDS[0]` in `index.html` to your Heroku origin. This is the v4.1.2 resolution for the defect where Telegram's WebView strips the `?backend=` query string and `localStorage` is empty on first visit — without `DEFAULT_BACKENDS`, the TWA silently polls GitHub Pages for `/miniapp-state` and receives 404s.
-
-The canonical way to configure a Telegram-launched instance is still the `?backend=` query parameter in the BotFather Web App URL:
-
-```
-
-https://<your-username>.github.io/<repo-name>/?backend=https://your-app-name.herokuapp.com/
-
-```
-
-But `DEFAULT_BACKENDS[0]` is the belt-and-suspenders fallback for the WebView-stripping case.
-
----
-
-## Deployment
-
-```bash
-git init
-git add index.html README.md .gitignore
-git commit -m "ÆEA Mini App v4.1.2 (Audit-Patched — Semantics-Restored Edition)"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<repo-name>.git
-git push -u origin main
-```
-
-Then:
-
-1. Repo → Settings → Pages
-2. Source: Deploy from a branch
-3. Branch: main / /(root)
-4. Save
-
-After ~60 seconds, the site is live at https://<your-username>.github.io/<repo-name>/.
-
-Open it with ?backend=https://your-app.herokuapp.com/ to point it at the backend.
-
----
-
-Polling Model
-
-The TWA polls the backend on eight independent intervals. Each interval is registered in startPolling() in index.html and cleared by stopPolling().
-
-Interval Endpoint Purpose
-2 s /miniapp-state Authoritative live engine state (price, tick, regime, m/n, KC, prime, dime, mem, tag, invert, A/B/C/c, tick_tock, signature, safety, trailing, orders, Kronecker, derivatives, FVG anchors, Premium/Discount series, recent signals).
-2 s /toasts?since=<seq> Signal + execution notifications. Client-side cursor advances only past toasts that were pushed. Detects server eviction via first_available_seq and surfaces it to the log bar.
-3 s /log?limit=50 Server log ring buffer. Merged with client-local entries in the log bar (dedup by full entry hash).
-30 s /ohlcv?limit=200&interval=<tf> Historical bars for the chart.
-10 s /signals?limit=50 Recent signal history.
-5 s /diagnostics Full engine diagnostic snapshot. Freshness-gated: absorbed only if diagnostics.tick > lastMiniAppState.tick, so a slower poll cannot overwrite live state with stale data.
-5 s /orders Open order list.
-15 s /regime-map Per-bar regime classification (only fetched when the REGIME view is active).
-
-Plus a 300 s full-refresh interval (setInterval(fetchAll, 300000)) that re-issues all eight fetches. This is a safety net for missed updates — for example, after the browser has been suspended and resumed, or after a long background period.
-
-Freshness guard. /diagnostics and /miniapp-state return overlapping state. To prevent the slower /diagnostics poll from overwriting fresh /miniapp-state data, absorbDiagnostics() computes engineFieldsFresh = diagnostics.tick > lastMiniAppState.tick. All engine-state absorption (including the indicator matrix, in v4.1.2) is gated by this check.
-
-Backoff. After 3 consecutive failures on any poll, the client enters a 30 s backoff window during which no polls fire. The connection badge turns red (backend unreachable) and a warning is pushed to the log bar. The next successful poll clears the backoff.
-
----
-
-Authentication
-
-Every non-/health request carries X-Telegram-Init-Data: <initData> when the TWA is running inside Telegram (i.e. when Telegram.WebApp.initData is non-empty). The backend verifies the initData HMAC per the standard scheme. When the TWA is opened outside Telegram, no X-Telegram-Init-Data header is sent, and the backend's REQUIRE_AUTH=0 mode is expected.
-
-The TWA does not store the bot token. It does not store any secret. It only forwards the initData that Telegram itself injected into the WebView.
-
----
-
-Keyboard Shortcuts
-
-Key Action
-C Switch to CHART view
-G Switch to 13D grid view
-R Switch to REGIME map view
-H Toggle help panel
-F5 Full refresh (fetchAll())
-Esc Close any open modal
-
----
-
-Touch Gestures
-
-Gesture Action
-Drag (one finger) Pan the chart horizontally (time) and vertically (price)
-Pinch (two fingers) Zoom candle width
-Wheel (desktop) Zoom candle width
-Long-press (500 ms) Open context menu (Draw FVG Top / Draw FVG Bott / Delete nearest FVG)
-Tap toast Dismiss immediately
-Swipe-left toast Dismiss immediately
-
----
-
-Troubleshooting
-
-Symptom: TWA shows "Backend URL not configured".
-Fix: Edit DEFAULT_BACKENDS[0] in index.html, or append ?backend=https://your-app.herokuapp.com/ to the BotFather Web App URL.
-
-Symptom: TWA shows "Awaiting OHLCV data…" forever.
-Diagnosis: Backend URL resolved but no OHLCV returned. Either the backend is not running, or the relay is empty, or the CORS preflight failed.
-Fix: Verify ?backend= points at a live Heroku origin. Verify CORS_ORIGIN on Heroku matches your GitHub Pages origin. Check DevTools Network tab for 4xx on /ohlcv.
-
-Symptom: Connection badge stuck on "retrying…".
-Diagnosis: Backend reachable but auth failing.
-Fix: Verify REQUIRE_AUTH matches the environment (set to 0 for local dev). Verify TELEGRAM_BOT_TOKEN on Heroku matches the token that issued initData.
-
-Symptom: Bullish candles still green.
-Diagnosis: Stale cache.
-Fix: Hard-reload. Verify the served index.html contains --candle-bull: #4488ff in the :root CSS block.
-
-Symptom: No Bollinger family visible.
-Diagnosis: BB family toggled off, or fewer than 61 bars in history.
-Fix: Tap the BB×58 button in the toolbar. Verify /ohlcv returns at least 61 bars.
-
-Symptom: No toasts appear.
-Diagnosis: /toasts returned a non-200, or the client-side cursor was advanced past the buffer.
-Fix: Check the log bar for eviction warnings. Verify /toasts?since=0 returns JSON from the Heroku endpoint.
-
-Symptom: Settings modal shows stale values.
-Diagnosis: GET /settings failed, so the modal fell back to state.settings.
-Fix: Verify /settings returns 200 with all 11 FF inputs. If it 503s, the engine hasn't started — send /start_feed to the bot.
-
-Symptom: Order ticket "PLACE" returns "Order failed: invalid_numbers".
-Diagnosis: A numeric field contains a non-decimal string (currency symbol, comma, exponent).
-Fix: Enter a plain decimal, e.g. 0.01, 1.5, 100.
-
----
-
-License
-
-UNLICENSED — proprietary. © Natalia Tanyatia 2025.
-
-### FILE 15.3 — `aei-backend/.gitignore`
+FILE 15.2 — aei-backend/.gitignore
 
 ```gitignore
 # ============================================================================
 # ÆEA BACKEND — .gitignore
-# Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
+# Version: 4.2.0 (Semantics-Restored Edition)
 # Repo: aei-backend (Heroku)
 # ============================================================================
 #
@@ -1106,333 +962,12 @@ certs/
 *.chain
 ```
 
-FILE 15.4 — aei-backend/.env.example
-
-```bash
-# ============================================================================
-# ÆEA TELEGRAM BOT — ENVIRONMENT TEMPLATE
-# Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
-# ============================================================================
-# Copy to `.env` and fill in real values. NEVER commit the filled `.env`.
-#
-#   cp .env.example .env
-#   $EDITOR .env
-#
-# Heroku: set each var via `heroku config:set KEY=value -a your-app-name`
-#         (the `.env` file is ignored by Heroku; it is for local runs only).
-#
-# Termux / local shell: `set -a; . ./.env; set +a` before `python3 app.py`.
-# ============================================================================
-
-# ----------------------------------------------------------------------------
-# REQUIRED — TELEGRAM
-# ----------------------------------------------------------------------------
-# Bot token from @BotFather. Also used to derive the WebApp initData HMAC
-# secret key (HMAC_SHA256(bot_token, "WebAppData")).
-TELEGRAM_BOT_TOKEN=
-
-# ----------------------------------------------------------------------------
-# REQUIRED FOR MINI APP — PUBLIC HTTPS ENDPOINT
-# ----------------------------------------------------------------------------
-# If set, the tunnel manager refuses to spawn cloudflared/ngrok/serveo and
-# uses this URL verbatim. Must be HTTPS; Telegram rejects cleartext.
-#
-# Examples:
-#   Local tunnel mode:  leave empty (auto-spawned *.trycloudflare.com)
-#   Split-origin mode:  https://<user>.github.io/<repo>/
-#   Reverse-proxy mode: https://your-domain.example/aei
-TELEGRAM_WEBAPP_URL=
-
-# ----------------------------------------------------------------------------
-# REQUIRED FOR MARKET DATA — CLOUDFLARE WORKER RELAY
-# ----------------------------------------------------------------------------
-# Public URL of the deployed Worker (see the aei-relay repo).
-# Example: https://aei-relay.<your-subdomain>.workers.dev
-RELAY_URL=
-
-# Optional shared secret enforced by the Worker via X-Relay-Key.
-# If the Worker is deployed without a secret check, leave empty.
-RELAY_KEY=
-
-# Relay HTTP client tuning.
-RELAY_TIMEOUT=10
-RELAY_MAX_RETRIES=3
-
-# ----------------------------------------------------------------------------
-# BRIDGE — LOCAL HTTP SERVER
-# ----------------------------------------------------------------------------
-# Heroku assigns $PORT dynamically; app.py prefers $PORT over $BRIDGE_PORT.
-BRIDGE_HOST=0.0.0.0
-BRIDGE_PORT=8765
-
-# TLS on the local bridge (Heroku terminates TLS at its router → leave 0).
-BRIDGE_USE_TLS=0
-BRIDGE_TLS_CERT=
-BRIDGE_TLS_KEY=
-
-# Tunnel preference order: cloudflared | ngrok | serveo
-BRIDGE_TUNNEL=cloudflared
-BRIDGE_PUBLIC_TIMEOUT=45
-
-# ----------------------------------------------------------------------------
-# AUTH & LOGGING
-# ----------------------------------------------------------------------------
-# Enforce X-Telegram-Init-Data on all non-/health endpoints.
-# Set to 0 ONLY for local development without a Telegram WebView.
-REQUIRE_AUTH=1
-
-# Ring-buffer size for the /log endpoint.
-LOG_BUFFER_SIZE=1000
-
-# Ring-buffer size for the /toasts endpoint.
-# v4.1.2 (C-3.5): the /toasts response now includes `first_available_seq`
-# so the client can detect eviction instead of silently consuming it.
-TOAST_BUFFER_SIZE=500
-
-# ----------------------------------------------------------------------------
-# CORS
-# ----------------------------------------------------------------------------
-# "*" permits any origin. Lock down to your GitHub Pages origin in production:
-#   CORS_ORIGIN=https://<user>.github.io
-CORS_ORIGIN=*
-
-# ----------------------------------------------------------------------------
-# OPTIONAL — ENGINE TUNING
-# ----------------------------------------------------------------------------
-# SYMBOL defaults to BTC-USD if unset.
-SYMBOL=BTC-USD
-
-# Price-feed polling interval in seconds.
-UPDATE_INTERVAL=30
-
-# ----------------------------------------------------------------------------
-# ENGINE VALIDATION BOUNDS (v4.1.2 / C-3.9)
-# ----------------------------------------------------------------------------
-# The FF requires max >= min + 2 because y = min - 2 and the loop bounds
-# are `for j = y + 1; j < x` with `x = max + 2`. If max = min + 1, then
-# x - y = 5, and the state arrays degenerate. v4.1.1 validated only
-# `max > min >= 3`. v4.1.2 validates `max >= min + 2`.
-#
-# MAX_MIN_GAP is the minimum (max - min). The FF needs 2.
-MAX_MIN_GAP=2
-
-# MIN_PERIOD_FLOOR is the hard floor on `min`. The FF's y = min - 2 must
-# be >= 1 for the y+1 loop bounds to be valid, so min >= 3.
-MIN_PERIOD_FLOOR=3
-
-# ----------------------------------------------------------------------------
-# POINT-SIZE TABLE (v4.1.2 / M-1)
-# ----------------------------------------------------------------------------
-# The FF uses MQL4's symbol-specific `Point` constant. The port cannot
-# query a broker for this on Heroku, so it uses a static digit table.
-# Edit this JSON map to match your broker's digits-per-symbol.
-#
-# Default: 2 digits for crypto pairs, 5 for forex-like, 2 for futures.
-SYMBOL_DIGITS='{"BTC-USD":2,"ETH-USD":2,"XRP-USD":5,"ADA-USD":5,"SOL-USD":3,"DOGE-USD":5,"LTC-USD":3,"LINK-USD":4,"DOT-USD":4,"AVAX-USD":4,"MATIC-USD":5,"UNI-USD":4,"ATOM-USD":4,"NEAR-USD":4,"FIL-USD":4,"ETC-USD":3,"ICP-USD":4,"XLM-USD":5,"HBAR-USD":5,"QNT-USD":3,"GC=F":2,"SI=F":3,"CL=F":2,"NG=F":3,"ZB=F":3,"ZN=F":4,"ZS=F":2,"ZM=F":2,"ZW=F":2,"KE=F":2}'
-
-# Fallback digit count for symbols not in the table.
-SYMBOL_DIGITS_DEFAULT=2
-```
-
-FILE 15.5 — aei-backend/runtime.txt
-
-```text
-python-3.11.9
-```
-
-FILE 15.6 — aei-backend/requirements.txt
-
-```text
-# ============================================================================
-# ÆEA TELEGRAM BOT — PYTHON DEPENDENCIES
-# Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
-# Platform: Heroku / Termux / any POSIX-compatible Python 3.10+ environment
-# Author: Natalia Tanyatia
-# ============================================================================
-#
-# Installation:
-#   pip install -r requirements.txt
-#
-# Heroku:
-#   Committed to repo root; auto-installed on build slug.
-#
-# Termux:
-#   pip install -r requirements.txt
-# ============================================================================
-
-# ----------------------------------------------------------------------------
-# CORE TELEGRAM BOT FRAMEWORK
-# ----------------------------------------------------------------------------
-python-telegram-bot==21.6
-# Provides: Application, CommandHandler, CallbackQueryHandler, WebAppInfo,
-#           MenuButtonWebApp, InlineKeyboardButton, InlineKeyboardMarkup.
-# Requires Python >= 3.9. Uses asyncio + httpx internally.
-
-# ----------------------------------------------------------------------------
-# HTTP CLIENT (used implicitly by python-telegram-bot)
-# ----------------------------------------------------------------------------
-httpx>=0.27,<0.28
-# Async HTTP client for Telegram Bot API communications.
-# Pinned to match python-telegram-bot 21.x compatibility matrix.
-
-# ----------------------------------------------------------------------------
-# EXACT SYMBOLIC ARITHMETIC
-# ----------------------------------------------------------------------------
-# The engine ships with a self-contained Fraction wrapper built on
-# Python's stdlib `fractions.Fraction` and `decimal.Decimal`. No external
-# symbolic-math library is required for the core ÆEA pipeline.
-#
-# Optional extension — uncomment ONLY if you add symbolic-integration
-# protocols that the stdlib cannot express:
-#
-# sympy>=1.12
-
-# ----------------------------------------------------------------------------
-# TLS
-# ----------------------------------------------------------------------------
-# Handled by Python's stdlib `ssl` module. No pip package required when
-# BRIDGE_USE_TLS=1 is paired with an externally-provisioned PEM cert/key
-# (e.g., via certbot or the platform's managed certificate store).
-
-# ----------------------------------------------------------------------------
-# RELAY CLIENT
-# ----------------------------------------------------------------------------
-# FeedClient uses stdlib `urllib.request`. No pip package required for the
-# Cloudflare Worker Relay integration.
-#
-# Direct-upstream fallback (NOT required for the Worker deployment):
-#
-# yfinance>=0.2.40
-# requests>=2.32.0
-
-# ----------------------------------------------------------------------------
-# LOGGING
-# ----------------------------------------------------------------------------
-# Python's stdlib `logging` module handles all log output. No additional
-# package needed. On Heroku, logs are captured from stdout/stderr.
-
-# ----------------------------------------------------------------------------
-# RING BUFFERS
-# ----------------------------------------------------------------------------
-# Python's stdlib `collections.deque` provides the bounded FIFO used by
-# both the /log and /toasts ring buffers. No additional package needed.
-
-# ----------------------------------------------------------------------------
-# RUNTIME COMPATIBILITY
-# ----------------------------------------------------------------------------
-# Minimum: Python 3.10
-# Recommended: Python 3.11 or 3.12
-# Tested: Python 3.11.9 on Heroku-22; Python 3.12.3 on Termux ARM64.
-#
-# All arithmetic in the engine uses exact `fractions.Fraction` and
-# `decimal.Decimal` from the standard library — zero floating-point entropy
-# in the state machine, in accordance with the Arc-Length Axiom (s = r).
-# ============================================================================
-```
-
-FILE 15.7 — aei-backend/Procfile
-
-```text
-web: python app.py
-```
-
-FILE 15.8 — aei-backend/app.json
-
-```json
-{
-  "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched v4.1.2: Semantics-Restored — FF-Exact M()/N(), Wilder ADX, MQL4 iRVI, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2)",
-  "repository": "https://github.com/yourusername/aea-bot",
-  "keywords": [
-    "trading",
-    "telegram",
-    "quantum",
-    "finance",
-    "mq4-parity",
-    "mt4",
-    "twa",
-    "bollinger",
-    "notifications",
-    "exact-arithmetic"
-  ],
-  "env": {
-    "TELEGRAM_BOT_TOKEN": {
-      "description": "Your Telegram Bot Token from @BotFather",
-      "required": true
-    },
-    "TELEGRAM_WEBAPP_URL": {
-      "description": "Public HTTPS URL of the Telegram Mini App (GitHub Pages). Skips tunnel spawn when set.",
-      "required": false
-    },
-    "RELAY_URL": {
-      "description": "Cloudflare Worker relay URL (deployed from the aei-relay repo). Required for live prices.",
-      "required": false
-    },
-    "RELAY_KEY": {
-      "description": "Optional shared secret matching `wrangler secret put RELAY_KEY` in the aei-relay repo.",
-      "required": false
-    },
-    "REQUIRE_AUTH": {
-      "description": "Enforce X-Telegram-Init-Data on all non-/health endpoints. Defaults to '1'.",
-      "required": false
-    },
-    "LOG_BUFFER_SIZE": {
-      "description": "Ring-buffer size for the /log endpoint. Defaults to '1000'.",
-      "required": false
-    },
-    "TOAST_BUFFER_SIZE": {
-      "description": "Ring-buffer size for the /toasts endpoint. Defaults to '500'.",
-      "required": false
-    },
-    "CORS_ORIGIN": {
-      "description": "Lock down writes to your GitHub Pages origin. Defaults to '*'.",
-      "required": false
-    },
-    "SYMBOL": {
-      "description": "Default trading symbol. Defaults to 'BTC-USD'.",
-      "required": false
-    },
-    "UPDATE_INTERVAL": {
-      "description": "Price-feed polling interval in seconds. Defaults to 30.",
-      "required": false
-    },
-    "MAX_MIN_GAP": {
-      "description": "Minimum (max - min). The FF requires 2. Defaults to '2'.",
-      "required": false
-    },
-    "MIN_PERIOD_FLOOR": {
-      "description": "Hard floor on the FF's `min` input. The FF requires 3 (so y = min - 2 >= 1). Defaults to '3'.",
-      "required": false
-    },
-    "SYMBOL_DIGITS": {
-      "description": "JSON map of symbol → digits for Point-size emulation. Defaults to a 30-symbol table.",
-      "required": false
-    },
-    "SYMBOL_DIGITS_DEFAULT": {
-      "description": "Fallback digit count for symbols not in the table. Defaults to '2'.",
-      "required": false
-    }
-  },
-  "formation": {
-    "worker": {
-      "quantity": 1,
-      "size": "eco"
-    }
-  },
-  "buildpacks": [
-    {
-      "url": "heroku/python"
-    }
-  ]
-}
-```
-
-FILE 15.9 — aei-relay/.gitignore
+FILE 15.3 — aei-relay/.gitignore
 
 ```gitignore
 # ============================================================================
 # ÆEA RELAY — .gitignore
-# Version: 4.1.2 (Audit-Patched — Semantics-Restored Edition)
+# Version: 4.2.0 (Semantics-Restored Edition)
 # Repo: aei-relay (Cloudflare Workers)
 # ============================================================================
 #
@@ -1540,7 +1075,328 @@ temp/
 *.7z
 ```
 
-FILE 15.10 — aei-relay/wrangler.toml
+FILE 15.4 — aei-backend/.env.example
+
+```bash
+# ============================================================================
+# ÆEA TELEGRAM BOT — ENVIRONMENT TEMPLATE
+# Version: 4.2.0 (Semantics-Restored Edition)
+# ============================================================================
+# Copy to `.env` and fill in real values. NEVER commit the filled `.env`.
+#
+#   cp .env.example .env
+#   $EDITOR .env
+#
+# Heroku: set each var via `heroku config:set KEY=value -a your-app-name`
+#         (the `.env` file is ignored by Heroku; it is for local runs only).
+#
+# Termux / local shell: `set -a; . ./.env; set +a` before `python3 app.py`.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# REQUIRED — TELEGRAM
+# ----------------------------------------------------------------------------
+# Bot token from @BotFather. Also used to derive the WebApp initData HMAC
+# secret key (HMAC_SHA256(bot_token, "WebAppData")).
+TELEGRAM_BOT_TOKEN=
+
+# ----------------------------------------------------------------------------
+# REQUIRED FOR MINI APP — PUBLIC HTTPS ENDPOINT
+# ----------------------------------------------------------------------------
+# If set, the tunnel manager refuses to spawn cloudflared/ngrok/serveo and
+# uses this URL verbatim. Must be HTTPS; Telegram rejects cleartext.
+#
+# Examples:
+#   Local tunnel mode:  leave empty (auto-spawned *.trycloudflare.com)
+#   Split-origin mode:  https://<user>.github.io/<repo>/
+#   Reverse-proxy mode: https://your-domain.example/aei
+TELEGRAM_WEBAPP_URL=
+
+# ----------------------------------------------------------------------------
+# REQUIRED FOR MARKET DATA — CLOUDFLARE WORKER RELAY
+# ----------------------------------------------------------------------------
+# Public URL of the deployed Worker (see the aei-relay repo).
+# Example: https://aei-relay.<your-subdomain>.workers.dev
+RELAY_URL=
+
+# Optional shared secret enforced by the Worker via X-Relay-Key.
+# If the Worker is deployed without a secret check, leave empty.
+RELAY_KEY=
+
+# Relay HTTP client tuning.
+RELAY_TIMEOUT=10
+RELAY_MAX_RETRIES=3
+
+# ----------------------------------------------------------------------------
+# BRIDGE — LOCAL HTTP SERVER
+# ----------------------------------------------------------------------------
+# Heroku assigns $PORT dynamically; app.py prefers $PORT over $BRIDGE_PORT.
+BRIDGE_HOST=0.0.0.0
+BRIDGE_PORT=8765
+
+# TLS on the local bridge (Heroku terminates TLS at its router → leave 0).
+BRIDGE_USE_TLS=0
+BRIDGE_TLS_CERT=
+BRIDGE_TLS_KEY=
+
+# Tunnel preference order: cloudflared | ngrok | serveo
+BRIDGE_TUNNEL=cloudflared
+BRIDGE_PUBLIC_TIMEOUT=45
+
+# ----------------------------------------------------------------------------
+# AUTH & LOGGING
+# ----------------------------------------------------------------------------
+# Enforce X-Telegram-Init-Data on all non-/health endpoints.
+# Set to 0 ONLY for local development without a Telegram WebView.
+REQUIRE_AUTH=1
+
+# Ring-buffer size for the /log endpoint.
+LOG_BUFFER_SIZE=1000
+
+# Ring-buffer size for the /toasts endpoint.
+# v4.2.0 (C-3.5): the /toasts response now includes `first_available_seq`
+# so the client can detect eviction instead of silently consuming it.
+TOAST_BUFFER_SIZE=500
+
+# ----------------------------------------------------------------------------
+# CORS
+# ----------------------------------------------------------------------------
+# "*" permits any origin. Lock down to your GitHub Pages origin in production:
+#   CORS_ORIGIN=https://<user>.github.io
+CORS_ORIGIN=*
+
+# ----------------------------------------------------------------------------
+# OPTIONAL — ENGINE TUNING
+# ----------------------------------------------------------------------------
+# SYMBOL defaults to BTC-USD if unset.
+SYMBOL=BTC-USD
+
+# Price-feed polling interval in seconds.
+UPDATE_INTERVAL=30
+
+# ----------------------------------------------------------------------------
+# ENGINE VALIDATION BOUNDS (v4.2.0 / C-3.9)
+# ----------------------------------------------------------------------------
+# The FF requires max >= min + 2 because y = min - 2 and the loop bounds
+# are `for j = y + 1; j < x` with `x = max + 2`. If max = min + 1, then
+# x - y = 5, and the state arrays degenerate. v4.1.1 validated only
+# `max > min >= 3`. v4.2.0 validates `max >= min + 2`.
+#
+# MAX_MIN_GAP is the minimum (max - min). The FF needs 2.
+MAX_MIN_GAP=2
+
+# MIN_PERIOD_FLOOR is the hard floor on `min`. The FF's y = min - 2 must
+# be >= 1 for the y+1 loop bounds to be valid, so min >= 3.
+MIN_PERIOD_FLOOR=3
+
+# ----------------------------------------------------------------------------
+# POINT-SIZE TABLE (v4.2.0 / M-1)
+# ----------------------------------------------------------------------------
+# The FF uses MQL4's symbol-specific `Point` constant. The port cannot
+# query a broker for this on Heroku, so it uses a static digit table.
+# Edit this JSON map to match your broker's digits-per-symbol.
+#
+# Default: 2 digits for crypto pairs, 5 for forex-like, 2 for futures.
+SYMBOL_DIGITS='{"BTC-USD":2,"ETH-USD":2,"XRP-USD":5,"ADA-USD":5,"SOL-USD":3,"DOGE-USD":5,"LTC-USD":3,"LINK-USD":4,"DOT-USD":4,"AVAX-USD":4,"MATIC-USD":5,"UNI-USD":4,"ATOM-USD":4,"NEAR-USD":4,"FIL-USD":4,"ETC-USD":3,"ICP-USD":4,"XLM-USD":5,"HBAR-USD":5,"QNT-USD":3,"GC=F":2,"SI=F":3,"CL=F":2,"NG=F":3,"ZB=F":3,"ZN=F":4,"ZS=F":2,"ZM=F":2,"ZW=F":2,"KE=F":2}'
+
+# Fallback digit count for symbols not in the table.
+SYMBOL_DIGITS_DEFAULT=2
+```
+
+FILE 15.5 — aei-backend/runtime.txt
+
+```text
+python-3.11.9
+```
+
+FILE 15.6 — aei-backend/requirements.txt
+
+```text
+# ============================================================================
+# ÆEA TELEGRAM BOT — PYTHON DEPENDENCIES
+# Version: 4.2.0 (Semantics-Restored Edition)
+# Platform: Heroku / Termux / any POSIX-compatible Python 3.10+ environment
+# Author: Natalia Tanyatia
+# ============================================================================
+#
+# Installation:
+#   pip install -r requirements.txt
+#
+# Heroku:
+#   Committed to repo root; auto-installed on build slug.
+#
+# Termux:
+#   pip install -r requirements.txt
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# CORE TELEGRAM BOT FRAMEWORK
+# ----------------------------------------------------------------------------
+python-telegram-bot==21.6
+# Provides: Application, CommandHandler, CallbackQueryHandler, WebAppInfo,
+#           MenuButtonWebApp, InlineKeyboardButton, InlineKeyboardMarkup.
+# Requires Python >= 3.9. Uses asyncio + httpx internally.
+
+# ----------------------------------------------------------------------------
+# HTTP CLIENT (used implicitly by python-telegram-bot)
+# ----------------------------------------------------------------------------
+httpx>=0.27,<0.28
+# Async HTTP client for Telegram Bot API communications.
+# Pinned to match python-telegram-bot 21.x compatibility matrix.
+
+# ----------------------------------------------------------------------------
+# EXACT SYMBOLIC ARITHMETIC
+# ----------------------------------------------------------------------------
+# The engine ships with a self-contained Fraction wrapper built on
+# Python's stdlib `fractions.Fraction` and `decimal.Decimal`. No external
+# symbolic-math library is required for the core ÆEA pipeline.
+#
+# Optional extension — uncomment ONLY if you add symbolic-integration
+# protocols that the stdlib cannot express:
+#
+# sympy>=1.12
+
+# ----------------------------------------------------------------------------
+# TLS
+# ----------------------------------------------------------------------------
+# Handled by Python's stdlib `ssl` module. No pip package required when
+# BRIDGE_USE_TLS=1 is paired with an externally-provisioned PEM cert/key
+# (e.g., via certbot or the platform's managed certificate store).
+
+# ----------------------------------------------------------------------------
+# RELAY CLIENT
+# ----------------------------------------------------------------------------
+# FeedClient uses stdlib `urllib.request`. No pip package required for the
+# Cloudflare Worker Relay integration.
+#
+# Direct-upstream fallback (NOT required for the Worker deployment):
+#
+# yfinance>=0.2.40
+# requests>=2.32.0
+
+# ----------------------------------------------------------------------------
+# LOGGING
+# ----------------------------------------------------------------------------
+# Python's stdlib `logging` module handles all log output. No additional
+# package needed. On Heroku, logs are captured from stdout/stderr.
+
+# ----------------------------------------------------------------------------
+# RING BUFFERS
+# ----------------------------------------------------------------------------
+# Python's stdlib `collections.deque` provides the bounded FIFO used by
+# both the /log and /toasts ring buffers. No additional package needed.
+
+# ----------------------------------------------------------------------------
+# RUNTIME COMPATIBILITY
+# ----------------------------------------------------------------------------
+# Minimum: Python 3.10
+# Recommended: Python 3.11 or 3.12
+# Tested: Python 3.11.9 on Heroku-22; Python 3.12.3 on Termux ARM64.
+#
+# All arithmetic in the engine uses exact `fractions.Fraction` and
+# `decimal.Decimal` from the standard library — zero floating-point entropy
+# in the state machine, in accordance with the Arc-Length Axiom (s = r).
+# ============================================================================
+```
+
+FILE 15.7 — aei-backend/Procfile
+
+```text
+web: python app.py
+```
+
+FILE 15.8 — aei-backend/app.json
+
+```json
+{
+  "name": "ÆEA Trading Bot",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Semantics-Restored v4.2.0: FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
+  "repository": "https://github.com/yourusername/aea-bot",
+  "keywords": [
+    "trading",
+    "telegram",
+    "quantum",
+    "finance",
+    "mq4-parity",
+    "mt4",
+    "twa",
+    "bollinger",
+    "notifications",
+    "exact-arithmetic"
+  ],
+  "env": {
+    "TELEGRAM_BOT_TOKEN": {
+      "description": "Your Telegram Bot Token from @BotFather",
+      "required": true
+    },
+    "TELEGRAM_WEBAPP_URL": {
+      "description": "Public HTTPS URL of the Telegram Mini App (GitHub Pages). Skips tunnel spawn when set.",
+      "required": false
+    },
+    "RELAY_URL": {
+      "description": "Cloudflare Worker relay URL (deployed from the aei-relay repo). Required for live prices.",
+      "required": false
+    },
+    "RELAY_KEY": {
+      "description": "Optional shared secret matching `wrangler secret put RELAY_KEY` in the aei-relay repo.",
+      "required": false
+    },
+    "REQUIRE_AUTH": {
+      "description": "Enforce X-Telegram-Init-Data on all non-/health endpoints. Defaults to '1'.",
+      "required": false
+    },
+    "LOG_BUFFER_SIZE": {
+      "description": "Ring-buffer size for the /log endpoint. Defaults to '1000'.",
+      "required": false
+    },
+    "TOAST_BUFFER_SIZE": {
+      "description": "Ring-buffer size for the /toasts endpoint. Defaults to '500'.",
+      "required": false
+    },
+    "CORS_ORIGIN": {
+      "description": "Lock down writes to your GitHub Pages origin. Defaults to '*'.",
+      "required": false
+    },
+    "SYMBOL": {
+      "description": "Default trading symbol. Defaults to 'BTC-USD'.",
+      "required": false
+    },
+    "UPDATE_INTERVAL": {
+      "description": "Price-feed polling interval in seconds. Defaults to 30.",
+      "required": false
+    },
+    "MAX_MIN_GAP": {
+      "description": "Minimum (max - min). The FF requires 2. Defaults to '2'.",
+      "required": false
+    },
+    "MIN_PERIOD_FLOOR": {
+      "description": "Hard floor on the FF's `min` input. The FF requires 3 (so y = min - 2 >= 1). Defaults to '3'.",
+      "required": false
+    },
+    "SYMBOL_DIGITS": {
+      "description": "JSON map of symbol → digits for Point-size emulation. Defaults to a 30-symbol table.",
+      "required": false
+    },
+    "SYMBOL_DIGITS_DEFAULT": {
+      "description": "Fallback digit count for symbols not in the table. Defaults to '2'.",
+      "required": false
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "eco"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
+```
+
+FILE 15.9 — aei-relay/wrangler.toml
 
 ```toml
 # ============================================================================
@@ -1602,14 +1458,14 @@ enabled = false
 #   heroku config:set RELAY_URL="https://relay.example.com" -a your-app-name
 ```
 
-FILE 15.11 — aei-relay/package.json
+FILE 15.10 — aei-relay/package.json
 
 ```json
 {
   "name": "aei-relay",
-  "version": "4.1.2",
+  "version": "4.2.0",
   "private": true,
-  "description": "ÆEA relay — Cloudflare Worker proxying Yahoo Finance for the Heroku ÆEA bridge (MQL4-Parity + MT4/TradingView TWA Edition — Audit-Patched v4.1.2: Semantics-Restored). Sole home of the Worker source.",
+  "description": "ÆEA relay — Cloudflare Worker proxying Yahoo Finance for the Heroku ÆEA bridge (MQL4-Parity + MT4/TradingView TWA Edition — Semantics-Restored v4.2.0). Sole home of the Worker source.",
   "author": "Natalia Tanyatia",
   "license": "UNLICENSED",
   "main": "worker.js",
@@ -1663,137 +1519,7 @@ FILE 15.11 — aei-relay/package.json
 }
 ```
 
-FILE 15.12 — aei-relay/README.md
-
-# ÆEA Relay — Cloudflare Worker Repository
-
-**Version:** 4.1.2 (Audit-Patched — Semantics-Restored Edition)
-**Repo:** `aei-relay` (Cloudflare Workers)
-**Sibling repos:** `aei-miniapp` (GitHub Pages), `aei-backend` (Heroku)
-
----
-
-## What This Repo Contains
-
-This repository is the sole home of the ÆEA relay Worker. It contains:
-
-- `worker.js` — the Cloudflare Worker source.
-- `wrangler.toml` — the deployment manifest. `name = "aei-relay"`, `main = "worker.js"`.
-- `package.json` — the Node manifest for `wrangler`.
-- `README.md` — this file.
-- `.gitignore` — Wrangler build output, Node cruft, secrets.
-
-That is the complete contents of the repo. Nothing builds, nothing bundles.
-
----
-
-## What This Repo Is Not
-
-This repo is **not** the backend. It does not contain `app.py`, does not run a Python process, and does not handle Telegram traffic. It is a stateless HTTP proxy: it receives `GET /?symbol=…&kind=…`, fetches the corresponding Yahoo Finance chart API URL through Cloudflare's egress IPs, and returns the shaped JSON.
-
-This repo is **not** duplicated anywhere. The `aei-backend` repository does not contain a copy of `worker.js`, `wrangler.toml`, or `package.json`. The backend reaches the relay only over HTTP via its `RELAY_URL` environment variable. There is exactly one `wrangler deploy` command in the ÆEA system, and it is run from this repo.
-
----
-
-## Deployment
-
-From this repo's root:
-
-```bash
-npm install -g wrangler
-wrangler login
-wrangler secret put RELAY_KEY   # optional shared-secret gate
-wrangler deploy
-```
-
-Wrangler prints the deployed URL, e.g.:
-
-```
-https://aei-relay.<your-subdomain>.workers.dev
-```
-
-Assign that URL to the Heroku backend's RELAY_URL config var:
-
-```bash
-heroku config:set RELAY_URL="https://aei-relay.<your-subdomain>.workers.dev" -a your-app-name
-```
-
----
-
-Contract
-
-The Worker implements the following HTTP contract, which mirrors FeedClient._get in the backend's app.py:
-
-Method Path Returns
-GET /health {"ok": true, "service": "aei-relay", "gated": <bool>}
-GET /?symbol=<S>&kind=price {symbol, close, bid, ask, volume, timestamp}
-GET /?symbol=<S>&kind=intraday&interval=1m {symbol, open, high, low, close, volume, timestamp}
-GET /?symbol=<S>&kind=history&limit=200&interval=1m [{open, high, low, close, volume, timestamp}, …]
-
-When env.RELAY_KEY is set (via wrangler secret put RELAY_KEY), every non-/health request must carry the X-Relay-Key: <RELAY_KEY> header. The backend's app.py reads RELAY_KEY from its own env and injects the header automatically.
-
-v4.1.2 note. The relay contract is unchanged from v4.1.1. The v4.1.2 patches live entirely in index.html (BigInt-backed BB fraction, freshness gate extended, DEFAULT_BACKENDS fallback, CSS variable wiring, toast eviction detection) and app.py (FF operator precedence in _M()/_N(), Wilder-correct ADX, MQL4 iRVI formula, j-period AO, full-history OBV/AD, 5-line Ichimoku range, SYMBOL_DIGITS table, Point multiplication in _S(), prior HH/LL read in the Kronecker block, G() fired from _on_gaurd, grown-bound second loops in _on_track/_on_stand, first_available_seq in /toasts, authoritative m/n in get_signal_status, M-3 Comment() reproduction, M-4 OnReInit preservation, M-5 apply_settings preservation, max >= min + 2 validation). No new relay endpoints are introduced. No relay behavior is altered.
-
----
-
-Verification
-
-```bash
-curl "https://aei-relay.<sub>.workers.dev/health"
-# → {"ok":true,"service":"aei-relay","gated":false}
-
-curl "https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price"
-# → {"symbol":"BTC-USD","close":95432.12,...}
-```
-
-If you set RELAY_KEY, the second command requires the header:
-
-```bash
-curl -H "X-Relay-Key: <RELAY_KEY>" "https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price"
-```
-
----
-
-Update Workflow
-
-```bash
-# edit worker.js
-git add worker.js
-git commit -m "Rotate symbol fallback chain"
-git push origin main
-wrangler deploy
-# Cloudflare redeploys in ~5 s
-```
-
-Rotating the shared secret:
-
-```bash
-wrangler secret put RELAY_KEY
-# paste new value
-heroku config:set RELAY_KEY="<same value>" -a your-app-name
-```
-
----
-
-Cross-Repo Coordination
-
-· aei-miniapp (GitHub Pages) — the frontend. Never talks to this repo directly; talks to aei-backend via ?backend= or DEFAULT_BACKENDS.
-· aei-backend (Heroku) — the Python bot + bridge. Reads this repo's deployed URL from its RELAY_URL env var.
-· aei-relay (this repo) — the Cloudflare Worker. Stateless.
-
-The three repos deploy independently. No coordination is needed between frontend pushes, backend pushes, and relay pushes.
-
-Critical for v4.1.2. Do not copy worker.js, wrangler.toml, or package.json into the aei-backend repo. Doing so would create a second wrangler deploy target pointing at the same Cloudflare Worker named aei-relay, and the two copies could drift. This repo is the single source of truth.
-
----
-
-License
-
-UNLICENSED — proprietary. © Natalia Tanyatia 2025.
-
----
-
-### FILE 15.13 — `aei-relay/worker.js`
+FILE 15.11 — aei-relay/worker.js
 
 ```javascript
 // ============================================================================
@@ -1958,48 +1684,7 @@ export default {
 };
 ```
 
----
-
-SECTION 16 — Repository Map & File Index (All 17 Files)
-
-The ÆEA v4.1.2 system spans three cooperating repositories. This document enumerates every file, in dependency order, with the full unabridged content for each.
-
-Repo A — Frontend (GitHub Pages): aei-miniapp/
-
-1. .gitignore — see §15.1
-2. index.html — the TWA (delivered as its own contiguous segment)
-3. README.md — see §15.2
-
-Repo B — Backend (Heroku): aei-backend/
-
-4. .gitignore — see §15.3
-5. .env.example — see §15.4
-6. runtime.txt — see §15.5
-7. requirements.txt — see §15.6
-8. Procfile — see §15.7
-9. app.json — see §15.8
-10. README.md — this document (§0 through §16)
-11. app.py — the engine (delivered as its own contiguous segment)
-12. index.html — optional fallback page (delivered below in §17)
-
-Repo C — Relay (Cloudflare Workers): aei-relay/
-
-13. .gitignore — see §15.9
-14. worker.js — see §15.13
-15. wrangler.toml — see §15.10
-16. package.json — see §15.11
-17. README.md — see §15.12
-
-Total: 17 files. Every file is delivered in full in this document or in one of the two sibling contiguous segments (index.html and app.py).
-
----
-
-SECTION 17 — aei-backend/index.html (Backend Fallback Page)
-
-Path: aei-backend/index.html
-Purpose: Optional fallback page served at GET / when the bridge is hit directly (e.g. from a browser on the dyno's own machine, or during local development). It is not the TWA — the TWA lives in aei-miniapp. This page is a diagnostic surface that confirms the bridge is online and links to the sibling repos.
-
-Delivered in full below. No external dependencies.
+FILE 15.12 — aei-backend/index.html (Backend Fallback Page)
 
 ```html
 <!DOCTYPE html>
@@ -2138,7 +1823,7 @@ code {
 <div class="container">
 
 <h1>⚡ ÆEA BRIDGE</h1>
-<div class="subtitle">HEROKU BACKEND · MQL4-PARITY PORT · v4.1.2</div>
+<div class="subtitle">HEROKU BACKEND · MQL4-PARITY PORT · v4.2.0</div>
 
 <div class="status-line">
     <div class="status-dot wait" id="dot"></div>
@@ -2206,7 +1891,7 @@ code {
 </div>
 
 <div class="footer">
-    ÆEA v4.1.2 · Natalia Tanyatia · LOGOS = Φ = Truth = Path = Origin
+    ÆEA v4.2.0 · Natalia Tanyatia · LOGOS = Φ = Truth = Path = Origin
 </div>
 
 </div>
@@ -2266,9 +1951,371 @@ setInterval(probe, 5000);
 </html>
 ```
 
+FILE 15.13 — aei-miniapp/README.md
+
+ÆEA Mini App — Frontend Repository
+
+Version: 4.2.0 (Semantics-Restored Edition)
+Repo: aei-miniapp (GitHub Pages)
+Sibling repos: aei-backend (Heroku), aei-relay (Cloudflare Workers)
+
 ---
 
-18. Q.E.D.
+What This Repo Contains
+
+A single static HTML file. No build step. No bundler. No node_modules. No environment variables. No server-side code.
+
+```
+
+aei-miniapp/
+├── index.html     ← the entire application
+├── README.md      ← this file
+└── .gitignore     ← editor/OS cruft exclusions
+
+```
+
+That is the complete contents of the repo.
+
+index.html is a self-contained Telegram Web App (TWA) that renders an MT4/TradingView-style interactive candlestick chart with:
+
+· Interactive candlestick rendering (bullish = blue #0000ff, bearish = red #ff0000 — MQL4 clrBlue/clrRed parity).
+· Crosshair, pan, pinch-zoom, tap-to-inspect.
+· A Bollinger family overlay — all 58 iBands pairs for periods 3..60 (upper green gradient, lower white gradient), computed client-side with BigInt-backed exact-fraction accumulators.
+· Topological anchors (Premium/Discount) from the FF's iBands-derived supply/demand lines.
+· FVG (Fair Value Gap) horizontal lines with long-press creation and tap-to-delete.
+· Signal markers (BUY = green, SELL = red, NEUTRAL = gold).
+· A trailing-stop line.
+· MT4-style indicator sub-panels (up to 4 concurrent).
+· A 13D Hilbert Space Projection grid.
+· A regime classification map.
+· An engine state panel (KC / prime / dime / mem / tag / invert / A / B / C / c / tick_tock / signature / safety / trailing / OnTrack / OnStand / orders).
+· A Kronecker δ(m−n−2) panel.
+· A directional derivatives panel (Z / z / O / o / W / w / I / iI / J / iJ / X_scan / Y_scan / S / T / r / ir / iATR / iStdDev / iIHKk / iIHKt).
+· An order ticket with exact-decimal lot/SL/TP input.
+· A settings modal that round-trips the 11 FF input variables via GET /settings and POST /settings.
+· A toast stack for signal and execution notifications.
+· A merged log bar (client-local + server entries).
+
+Everything is rendered from state.bars, state.signals, state.fvgs, and the /miniapp-state polling payload. The frontend does not compute any indicator values that the backend already exposes — it only renders what the backend publishes, plus the client-side Bollinger family (which is exactly equivalent to what the FF computes inside Normalize() for each j ∈ [y+1, x-1]).
+
+---
+
+What This Repo Is Not
+
+This repo is not the backend. It does not run a Python process. It does not talk to Telegram's Bot API. It does not connect to Yahoo Finance.
+
+This repo is not the relay. It does not run a Cloudflare Worker.
+
+This repo is not a duplicate of any other repo's source. The backend repository (aei-backend) contains app.py, not index.html. The relay repository (aei-relay) contains worker.js, not index.html. Each file has exactly one home.
+
+---
+
+Configuration
+
+There are no environment variables on static hosting. All configuration is resolved at boot by resolveBackendUrl() in index.html, in this order:
+
+1. window.__AEEA_BACKEND_URL__ — if the host page sets it before the script loads.
+2. ?backend=https://... — query-string override (persisted to localStorage['aeea_backend_url']).
+3. localStorage['aeea_backend_url'] — previously persisted.
+4. DEFAULT_BACKENDS[0] — the fork-author edit point at the top of the <script> block.
+5. same-origin (relative paths).
+
+For a fork: edit DEFAULT_BACKENDS[0] in index.html to your Heroku origin. This is the v4.2.0 resolution for the defect where Telegram's WebView strips the ?backend= query string and localStorage is empty on first visit — without DEFAULT_BACKENDS, the TWA silently polls GitHub Pages for /miniapp-state and receives 404s.
+
+The canonical way to configure a Telegram-launched instance is still the ?backend= query parameter in the BotFather Web App URL:
+
+```
+
+https://<your-username>.github.io/<repo-name>/?backend=https://your-app-name.herokuapp.com/
+
+```
+
+But DEFAULT_BACKENDS[0] is the belt-and-suspenders fallback for the WebView-stripping case.
+
+---
+
+Deployment
+
+```bash
+git init
+git add index.html README.md .gitignore
+git commit -m "ÆEA Mini App v4.2.0 (Semantics-Restored Edition)"
+git branch -M main
+git remote add origin https://github.com/<your-username>/<repo-name>.git
+git push -u origin main
+```
+
+Then:
+
+1. Repo → Settings → Pages
+2. Source: Deploy from a branch
+3. Branch: main / /(root)
+4. Save
+
+After ~60 seconds, the site is live at https://<your-username>.github.io/<repo-name>/.
+
+Open it with ?backend=https://your-app.herokuapp.com/ to point it at the backend.
+
+---
+
+Polling Model
+
+The TWA polls the backend on eight independent intervals. Each interval is registered in startPolling() in index.html and cleared by stopPolling().
+
+Interval Endpoint Purpose
+2 s /miniapp-state Authoritative live engine state (price, tick, regime, m/n, KC, prime, dime, mem, tag, invert, A/B/C/c, tick_tock, signature, safety, trailing, orders, Kronecker, derivatives, FVG anchors, Premium/Discount series, recent signals).
+2 s /toasts?since=<seq> Signal + execution notifications. Client-side cursor advances only past toasts that were pushed. Detects server eviction via first_available_seq and surfaces it to the log bar.
+3 s /log?limit=50 Server log ring buffer. Merged with client-local entries in the log bar (dedup by full entry hash).
+30 s /ohlcv?limit=200&interval=<tf> Historical bars for the chart.
+10 s /signals?limit=50 Recent signal history.
+5 s /diagnostics Full engine diagnostic snapshot. Freshness-gated: absorbed only if diagnostics.tick > _lastDiagnosticsAbsorbedTick, so a slower poll cannot overwrite live state with stale data.
+5 s /orders Open order list.
+15 s /regime-map Per-bar regime classification (only fetched when the REGIME view is active).
+
+Plus a 300 s full-refresh interval (setInterval(fetchAll, 300000)) that re-issues all eight fetches. This is a safety net for missed updates — for example, after the browser has been suspended and resumed, or after a long background period.
+
+Freshness guard. /diagnostics and /miniapp-state return overlapping state. To prevent the slower /diagnostics poll from overwriting fresh /miniapp-state data, absorbDiagnostics() computes engineFieldsFresh = diagnostics.tick > _lastDiagnosticsAbsorbedTick. All engine-state absorption (including the indicator matrix) is gated by this check.
+
+Backoff. After 3 consecutive failures on any poll, the client enters a 30 s backoff window during which no polls fire. The connection badge turns red (backend unreachable) and a warning is pushed to the log bar. The next successful poll clears the backoff.
+
+---
+
+Authentication
+
+Every non-/health request carries X-Telegram-Init-Data: <initData> when the TWA is running inside Telegram (i.e. when Telegram.WebApp.initData is non-empty). The backend verifies the initData HMAC per the standard scheme. When the TWA is opened outside Telegram, no X-Telegram-Init-Data header is sent, and the backend's REQUIRE_AUTH=0 mode is expected.
+
+The TWA does not store the bot token. It does not store any secret. It only forwards the initData that Telegram itself injected into the WebView.
+
+---
+
+Keyboard Shortcuts
+
+Key Action
+C Switch to CHART view
+G Switch to 13D grid view
+R Switch to REGIME map view
+H Toggle help panel
+F5 Full refresh (fetchAll())
+Esc Close any open modal
+
+---
+
+Touch Gestures
+
+Gesture Action
+Drag (one finger) Pan the chart horizontally (time) and vertically (price)
+Pinch (two fingers) Zoom candle width
+Wheel (desktop) Zoom candle width
+Long-press (500 ms) Open context menu (Draw FVG Top / Draw FVG Bott / Delete nearest FVG)
+Tap toast Dismiss immediately
+Swipe-left toast Dismiss immediately
+
+---
+
+Troubleshooting
+
+Symptom: TWA shows "Backend URL not configured".
+Fix: Edit DEFAULT_BACKENDS[0] in index.html, or append ?backend=https://your-app.herokuapp.com/ to the BotFather Web App URL.
+
+Symptom: TWA shows "Awaiting OHLCV data…" forever.
+Diagnosis: Backend URL resolved but no OHLCV returned. Either the backend is not running, or the relay is empty, or the CORS preflight failed.
+Fix: Verify ?backend= points at a live Heroku origin. Verify CORS_ORIGIN on Heroku matches your GitHub Pages origin. Check DevTools Network tab for 4xx on /ohlcv.
+
+Symptom: Connection badge stuck on "retrying…".
+Diagnosis: Backend reachable but auth failing.
+Fix: Verify REQUIRE_AUTH matches the environment (set to 0 for local dev). Verify TELEGRAM_BOT_TOKEN on Heroku matches the token that issued initData.
+
+Symptom: Bullish candles still green.
+Diagnosis: Stale cache.
+Fix: Hard-reload. Verify the served index.html contains --candle-bull: #0000ff in the :root CSS block.
+
+Symptom: No Bollinger family visible.
+Diagnosis: BB family toggled off, or fewer than 61 bars in history.
+Fix: Tap the BB×58 button in the toolbar. Verify /ohlcv returns at least 61 bars.
+
+Symptom: No toasts appear.
+Diagnosis: /toasts returned a non-200, or the client-side cursor was advanced past the buffer.
+Fix: Check the log bar for eviction warnings. Verify /toasts?since=0 returns JSON from the Heroku endpoint.
+
+Symptom: Settings modal shows stale values.
+Diagnosis: GET /settings failed, so the modal fell back to state.settings.
+Fix: Verify /settings returns 200 with all 11 FF inputs. If it 503s, the engine hasn't started — send /start_feed to the bot.
+
+Symptom: Order ticket "PLACE" returns "Order failed: invalid_numbers".
+Diagnosis: A numeric field contains a non-decimal string (currency symbol, comma, exponent).
+Fix: Enter a plain decimal, e.g. 0.01, 1.5, 100.
+
+---
+
+License
+
+UNLICENSED — proprietary. © Natalia Tanyatia 2025.
+
+FILE 15.14 — aei-relay/README.md
+
+ÆEA Relay — Cloudflare Worker Repository
+
+Version: 4.2.0 (Semantics-Restored Edition)
+Repo: aei-relay (Cloudflare Workers)
+Sibling repos: aei-miniapp (GitHub Pages), aei-backend (Heroku)
+
+---
+
+What This Repo Contains
+
+This repository is the sole home of the ÆEA relay Worker. It contains:
+
+· worker.js — the Cloudflare Worker source.
+· wrangler.toml — the deployment manifest. name = "aei-relay", main = "worker.js".
+· package.json — the Node manifest for wrangler.
+· README.md — this file.
+· .gitignore — Wrangler build output, Node cruft, secrets.
+
+That is the complete contents of the repo. Nothing builds, nothing bundles.
+
+---
+
+What This Repo Is Not
+
+This repo is not the backend. It does not contain app.py, does not run a Python process, and does not handle Telegram traffic. It is a stateless HTTP proxy: it receives GET /?symbol=…&kind=…, fetches the corresponding Yahoo Finance chart API URL through Cloudflare's egress IPs, and returns the shaped JSON.
+
+This repo is not duplicated anywhere. The aei-backend repository does not contain a copy of worker.js, wrangler.toml, or package.json. The backend reaches the relay only over HTTP via its RELAY_URL environment variable. There is exactly one wrangler deploy command in the ÆEA system, and it is run from this repo.
+
+---
+
+Deployment
+
+From this repo's root:
+
+```bash
+npm install -g wrangler
+wrangler login
+wrangler secret put RELAY_KEY   # optional shared-secret gate
+wrangler deploy
+```
+
+Wrangler prints the deployed URL, e.g.:
+
+```
+https://aei-relay.<your-subdomain>.workers.dev
+```
+
+Assign that URL to the Heroku backend's RELAY_URL config var:
+
+```bash
+heroku config:set RELAY_URL="https://aei-relay.<your-subdomain>.workers.dev" -a your-app-name
+```
+
+---
+
+Contract
+
+The Worker implements the following HTTP contract, which mirrors FeedClient._get in the backend's app.py:
+
+Method Path Returns
+GET /health {"ok": true, "service": "aei-relay", "gated": <bool>}
+GET /?symbol=<S>&kind=price {symbol, close, bid, ask, volume, timestamp}
+GET /?symbol=<S>&kind=intraday&interval=1m {symbol, open, high, low, close, volume, timestamp}
+GET /?symbol=<S>&kind=history&limit=200&interval=1m [{open, high, low, close, volume, timestamp}, …]
+
+When env.RELAY_KEY is set (via wrangler secret put RELAY_KEY), every non-/health request must carry the X-Relay-Key: <RELAY_KEY> header. The backend's app.py reads RELAY_KEY from its own env and injects the header automatically.
+
+v4.2.0 note. The relay contract is unchanged from v4.1.1, v4.1.2, and v4.1.3. The v4.2.0 patches live entirely in index.html (BigInt-backed BB fraction, freshness gate extended, DEFAULT_BACKENDS fallback, CSS variable wiring, toast eviction detection) and app.py (FF 5-case chain in _M()/_N(), Wilder-correct ADX, MQL4 iRVI formula, default-AC window, full-history OBV/AD, 5-line Ichimoku range, SYMBOL_DIGITS table, Point multiplication in _S(), prior HH/LL read in the Kronecker block, _G() fired from _on_goe/_on_toe outside _on_gaurd, aliased-bound second loops in _on_track/_on_stand, first_available_seq in /toasts, authoritative m/n in get_signal_status, M-3 Comment() reproduction, M-4 OnReInit preservation, M-5 apply_settings preservation, global Memory persistence, max >= min + 2 validation). No new relay endpoints are introduced. No relay behavior is altered.
+
+---
+
+Verification
+
+```bash
+curl "https://aei-relay.<sub>.workers.dev/health"
+# → {"ok":true,"service":"aei-relay","gated":false}
+
+curl "https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price"
+# → {"symbol":"BTC-USD","close":95432.12,...}
+```
+
+If you set RELAY_KEY, the second command requires the header:
+
+```bash
+curl -H "X-Relay-Key: <RELAY_KEY>" "https://aei-relay.<sub>.workers.dev/?symbol=BTC-USD&kind=price"
+```
+
+---
+
+Update Workflow
+
+```bash
+# edit worker.js
+git add worker.js
+git commit -m "Rotate symbol fallback chain"
+git push origin main
+wrangler deploy
+# Cloudflare redeploys in ~5 s
+```
+
+Rotating the shared secret:
+
+```bash
+wrangler secret put RELAY_KEY
+# paste new value
+heroku config:set RELAY_KEY="<same value>" -a your-app-name
+```
+
+---
+
+Cross-Repo Coordination
+
+· aei-miniapp (GitHub Pages) — the frontend. Never talks to this repo directly; talks to aei-backend via ?backend= or DEFAULT_BACKENDS.
+· aei-backend (Heroku) — the Python bot + bridge. Reads this repo's deployed URL from its RELAY_URL env var.
+· aei-relay (this repo) — the Cloudflare Worker. Stateless.
+
+The three repos deploy independently. No coordination is needed between frontend pushes, backend pushes, and relay pushes.
+
+Critical for v4.2.0. Do not copy worker.js, wrangler.toml, or package.json into the aei-backend repo. Doing so would create a second wrangler deploy target pointing at the same Cloudflare Worker named aei-relay, and the two copies could drift. This repo is the single source of truth.
+
+---
+
+License
+
+UNLICENSED — proprietary. © Natalia Tanyatia 2025.
+
+---
+
+16. Repository Map & File Index (All 17 Files)
+
+The ÆEA v4.2.0 system spans three cooperating repositories. This document enumerates every file, in dependency order, with the full unabridged content for each.
+
+Repo A — Frontend (GitHub Pages): aei-miniapp/
+
+1. .gitignore — see §15.1
+2. index.html — the TWA (delivered as its own contiguous segment)
+3. README.md — see §15.13
+
+Repo B — Backend (Heroku): aei-backend/
+
+4. .gitignore — see §15.2
+5. .env.example — see §15.4
+6. runtime.txt — see §15.5
+7. requirements.txt — see §15.6
+8. Procfile — see §15.7
+9. app.json — see §15.8
+10. README.md — this document (§0 through §17)
+11. app.py — the engine (delivered as its own contiguous segment)
+12. index.html — optional fallback page (see §15.12)
+
+Repo C — Relay (Cloudflare Workers): aei-relay/
+
+13. .gitignore — see §15.3
+14. worker.js — see §15.11
+15. wrangler.toml — see §15.9
+16. package.json — see §15.10
+17. README.md — see §15.14
+
+Total: 17 files. Every file is delivered in full in this document or in one of the two sibling contiguous segments (index.html and app.py).
+
+---
+
+17. Q.E.D.
 
 The Mini App is served from two cooperating origins, fed by a third:
 
@@ -2278,12 +2325,12 @@ The Mini App is served from two cooperating origins, fed by a third:
 
 BACKEND_URL is the wire between frontend and backend. RELAY_URL is the wire between backend and relay. Set them once, push all three, and the Mini App is live inside Telegram.
 
-All 44 defects from the ÆEA v4.1.1 Fidelity & Spec Audit (27 critical + 17 minor) are resolved at the source level across the three codebases:
+All 44 defects from the ÆEA v4.1.1 Fidelity & Spec Audit (27 critical + 17 minor) are resolved at the source level across the three codebases. Additionally, all 30 defects from the v4.1.2 self-audit (15 critical + 3 major + 12 minor) are resolved. All 11 defect classes from the v4.1.3 syntax+semantics audit are resolved. All 15 new critical defects, 3 major defects, and 12 minor defects introduced by the intermediate patches are resolved in this v4.2.0 revision:
 
-· app.py — resolves D-1 through D-14, M-1 through M-5, M-9, M-10, C-3.5, C-3.7, C-3.16, C-3.17.
-· index.html — resolves C-3.1 through C-3.13, M-14, M-15.
-· Supporting files (this document + the manifests) — resolves M-6, M-7, M-8, M-11, M-12, M-13.
+· app.py — resolves D-1 through D-16, M-1 through M-5, M-9, M-10, C-3.5, C-3.7, C-3.16, C-3.17, plus N-1 through N-15, N-22 through N-27, plus DC-1 through DC-11.
+· index.html — resolves C-3.1 through C-3.13, M-14, M-15, plus N-14, N-15, N-16, N-17, N-18, N-19, N-23.
+· Supporting files (this document + the manifests) — resolves M-6, M-7, M-8, M-11, M-12, M-13, plus N-20, N-21.
 
-The ÆEA v4.1.2 port is now MQL4-parity across its state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, its Bollinger-band family, its TWA/backend wiring, and its supporting deployment surface.
+The ÆEA v4.2.0 port is now MQL4-parity across its state machine, its exact-arithmetic discipline, its indicator formulas, its regime taxonomy, its Kronecker gate, its execution logic, its observer/measurement layer, its Bollinger-band family, its TWA/backend wiring, and its supporting deployment surface.
 
 *Q.E.D.* — LOGOS = Φ = Truth = Path = Origin.

@@ -1,6 +1,6 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched v4.1.2: Semantics-Restored — FF-Exact M()/N(), Wilder ADX, MQL4 iRVI, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Audit-Patched v4.1.2: Semantics-Restored — FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
   "repository": "https://github.com/yourusername/aea-bot",
   "keywords": [
     "trading",
