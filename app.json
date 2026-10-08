@@ -1,6 +1,6 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Enhancement v4.3.0: Telegram push on every signal/execution/FVG/close, multi-provider relay with real Binance/CoinGecko volume, arc-length future price projection drawn ahead of the current bar; semantics-restored v4.2.0 baseline preserved: FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Scroll-Ahead v4.4.0: execution-gated arc-length projection, scroll-ahead viewport to the projected TP, bot replies threaded to the user's last command, bounded push dispatch, FVG merge, legend stacking; carries forward v4.3.0 Enhancement: Telegram push on every signal/execution/FVG/close, multi-provider relay with real Binance/CoinGecko volume, arc-length future price projection; semantics-restored v4.2.0 baseline preserved: FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
   "repository": "https://github.com/yourusername/aea-bot",
   "keywords": [
     "trading",
@@ -18,7 +18,10 @@
     "volume",
     "projection",
     "arc-length",
-    "exact-arithmetic"
+    "exact-arithmetic",
+    "scroll-ahead",
+    "execution-gated",
+    "reply-threaded"
   ],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
@@ -106,7 +109,7 @@
       "required": false
     },
     "ARC_PROJECTION_DAMPING": {
-      "description": "Decay factor for the volatile-regime branch. Defaults to '0.94'.",
+      "description": "Decay factor for the volatile-regime branch. Must parse as a Decimal in (0, 1); otherwise the process fails fast at module load. Defaults to '0.94'.",
       "required": false
     }
   },

@@ -1,6 +1,6 @@
 # ============================================================================
 # ÆEA TELEGRAM BOT — PYTHON DEPENDENCIES
-# Version: 4.3.0 (Enhancement Edition)
+# Version: 4.4.0 (Scroll-Ahead Edition)
 # Platform: Heroku / Termux / any POSIX-compatible Python 3.10+ environment
 # Author: Natalia Tanyatia
 # ============================================================================
@@ -73,10 +73,12 @@ httpx>=0.27,<0.28
 # both the /log and /toasts ring buffers. No additional package needed.
 
 # ----------------------------------------------------------------------------
-# BACKGROUND THREADS
+# BACKGROUND THREADS + BOUNDED DISPATCH QUEUE
 # ----------------------------------------------------------------------------
-# Python's stdlib `threading` module provides the daemon threads used for
-# the Telegram push dispatch path (E-1). No additional package needed.
+# Python's stdlib `threading` module provides the daemon thread used for
+# the Telegram push dispatch path (E-1), and the stdlib `queue.Queue`
+# provides the bounded single-consumer queue that replaces the per-toast
+# thread spawn (E-7). No additional package needed.
 
 # ----------------------------------------------------------------------------
 # RUNTIME COMPATIBILITY
@@ -89,5 +91,6 @@ httpx>=0.27,<0.28
 # `decimal.Decimal` from the standard library — zero floating-point entropy
 # in the state machine, in accordance with the Arc-Length Axiom (s = r).
 # The arc-length projection's cosine is evaluated via a Decimal Taylor
-# series, preserving the same exact-arithmetic discipline.
+# series, and the half-period is kept as a Fraction until the cosine call,
+# preserving the same exact-arithmetic discipline (v4.4.0, D-33).
 # ============================================================================
