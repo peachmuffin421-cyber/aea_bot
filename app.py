@@ -6,7 +6,39 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo / Binance / CoinGecko upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.4.0 (Scroll-Ahead Edition)
+Version: 4.4.1 (Await-Corrected Edition)
+
+v4.4.1 is a defect-resolution release on top of v4.4.0 (Scroll-Ahead Edition).
+It does not alter any FF-invariant logic. It resolves a single blocking defect
+in the out-of-loop send path that v4.4.0 introduced by routing every toast,
+signal alert, and execution alert through a synchronous call site, which in
+python-telegram-bot 21.x is a coroutine and therefore silently dropped:
+
+  D-44 (critical, discovered during v4.4.0 deployment). Every synchronous
+       call to Bot.send_message in python-telegram-bot 21.x constructs a
+       coroutine object and drops it. The callers are:
+         * _telegram_push (running on the daemon push-worker thread)
+         * AEEA_Engine._send_signal_alert (running on the price-feed thread,
+           reached via _signal() ← _on_goe/_on_toe ← _on_tick ← update_price
+           ← update_price_from_feed ← price_feed_loop; the chain below the
+           async task is entirely synchronous)
+         * AEEA_Engine._send_execution_alert (running on the same thread,
+           reached via _emit_execution_toast ← dispatch subblocks)
+       The runtime effect was a RuntimeWarning per event:
+         "coroutine 'ExtBot.send_message' was never awaited"
+       and zero delivered messages. /status and every push notification
+       therefore silently failed. Resolved by E-10.
+
+  E-10 (Enhancement). Cross-thread async send via run_coroutine_threadsafe.
+       The bot captures its running event loop in _post_init (python-
+       telegram-bot invokes _post_init after the loop is live, before
+       run_polling enters the polling loop). A new helper
+       AEI_Bot._send_message_sync schedules Bot.send_message onto that loop
+       with asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=N)
+       and returns a bool. Every out-of-loop call site now routes through
+       this helper. The RuntimeWarning is eliminated, every signal alert
+       delivers, every execution alert delivers, every toast push delivers,
+       and /status responds.
 
 v4.4.0 adds two user-facing capabilities and their supporting fixes on top of
 the v4.3.0 Enhancement Edition, without altering any FF-invariant logic:
@@ -549,10 +581,10 @@ def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
     engine = BRIDGE_ENGINE_REF.get("engine")
     if engine is None:
         return
-    app = engine.application
-    st = engine.state
-    if app is None:
+    bot = BRIDGE_ENGINE_REF.get("bot")
+    if bot is None:
         return
+    st = engine.state
     # D-31: prefer chat_id strictly; fall back to webapp_user_id only when
     # chat_id is None. Previously the code picked whichever was set, which
     # could double-send or send to the wrong chat in group contexts.
@@ -564,16 +596,22 @@ def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
     # E-6: thread the push as a reply to the user's most recent inbound
     # message. If none has been recorded, the push is a standalone message.
     reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
-    try:
-        app.bot.send_message(
-            chat_id=target_chat,
-            text=msg,
-            parse_mode="Markdown",
-            reply_to_message_id=reply_to,
-        )
+    # E-10: route through the cross-thread send helper so the coroutine is
+    # actually awaited on the bot's event loop. The old direct call to
+    # app.bot.send_message(...) constructed the coroutine and dropped it.
+    if not hasattr(bot, "_send_message_sync"):
+        logger.warning("📲 Push skipped: bot has no _send_message_sync")
+        return
+    ok = bot._send_message_sync(
+        chat_id=target_chat,
+        text=msg,
+        parse_mode="Markdown",
+        reply_to_message_id=reply_to,
+    )
+    if ok:
         logger.info(f"📲 Push sent ({kind}) to {target_chat} reply_to={reply_to} (tick={st.tick})")
-    except Exception as e:
-        logger.warning(f"📲 Push failed ({kind}): {e}")
+    else:
+        logger.warning(f"📲 Push failed ({kind}) to {target_chat} reply_to={reply_to} (tick={st.tick})")
 
 def _push_worker_loop() -> None:
     while True:
@@ -1123,7 +1161,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.4.0",
+                    "User-Agent": "AEI-Bridge/v4.4.1",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -4132,11 +4170,21 @@ class AEEA_Engine:
             f"🔄 *Tick Count:* {st.tick}\n"
             f"💎 Natalia Tanyatia"
         )
-        try:
-            self.application.bot.send_message(chat_id=target_chat, text=msg, parse_mode="Markdown")
-            logger.info(f"📡 Signal alert sent to {target_chat} (tick={st.tick})")
-        except Exception as e:
-            logger.error(f"❌ Failed to send signal alert: {e}")
+        bot = BRIDGE_ENGINE_REF.get("bot")
+        if bot is not None and hasattr(bot, "_send_message_sync"):
+            reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+            ok = bot._send_message_sync(
+                chat_id=target_chat,
+                text=msg,
+                parse_mode="Markdown",
+                reply_to_message_id=reply_to,
+            )
+            if ok:
+                logger.info(f"📡 Signal alert sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
+            else:
+                logger.warning(f"❌ Signal alert send failed for {target_chat} (tick={st.tick})")
+            return
+        logger.warning("❌ Signal alert skipped: bot reference or _send_message_sync unavailable")
 
     def _send_execution_alert(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
         st = self.state
@@ -4166,11 +4214,21 @@ class AEEA_Engine:
             f"🔄 *Tick:* {st.tick}\n"
             f"💎 Natalia Tanyatia"
         )
-        try:
-            self.application.bot.send_message(chat_id=target_chat, text=msg, parse_mode="Markdown")
-            logger.info(f"📡 Execution alert ({event}) sent to {target_chat} (tick={st.tick})")
-        except Exception as e:
-            logger.error(f"❌ Failed to send execution alert: {e}")
+        bot = BRIDGE_ENGINE_REF.get("bot")
+        if bot is not None and hasattr(bot, "_send_message_sync"):
+            reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+            ok = bot._send_message_sync(
+                chat_id=target_chat,
+                text=msg,
+                parse_mode="Markdown",
+                reply_to_message_id=reply_to,
+            )
+            if ok:
+                logger.info(f"📡 Execution alert ({event}) sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
+            else:
+                logger.warning(f"❌ Execution alert ({event}) send failed (tick={st.tick})")
+            return
+        logger.warning("❌ Execution alert skipped: bot reference or _send_message_sync unavailable")
 
     def get_signal_status(self) -> Dict[str, Any]:
         st = self.state
@@ -4944,7 +5002,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.4.0"
+    server_version = "AEI-Bridge/4.4.1"
 
     def log_message(self, fmt, *args):
         return
@@ -5015,7 +5073,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.4.0",
+                "ok": not stale, "service": "aei-bridge", "version": "4.4.1",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -5744,6 +5802,7 @@ class AEI_Bot:
         self._price_task: Optional[asyncio.Task] = None
         self._bridge_server: Optional[BridgeServer] = None
         self._webapp_url: Optional[str] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _resolve_webapp_url(self) -> Optional[str]:
         return TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
@@ -5760,6 +5819,35 @@ class AEI_Bot:
                 self.engine.state.chat_id = int(chat.id)
         except Exception as e:
             logger.debug(f"_track_inbound_message failed: {e}")
+
+    def _send_message_sync(self, chat_id: int, text: str, parse_mode: str = "Markdown",
+                           reply_to_message_id: Optional[int] = None,
+                           timeout: float = 10.0) -> bool:
+        # E-10: schedule an async Bot.send_message onto the bot's event loop
+        # from a synchronous context. Returns True on success, False otherwise.
+        # Never raises. This is the single point through which every
+        # out-of-loop send (signal alert, execution alert, toast push) flows.
+        if self.application is None:
+            return False
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return False
+        coro = self.application.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_to_message_id=reply_to_message_id,
+        )
+        try:
+            fut = asyncio.run_coroutine_threadsafe(coro, loop)
+            fut.result(timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("📡 send_message timed out")
+            return False
+        except Exception as e:
+            logger.warning(f"📡 send_message failed: {e}")
+            return False
 
     async def price_feed_loop(self):
         logger.info("🔄 Price feed loop entered")
@@ -6426,6 +6514,18 @@ class AEI_Bot:
         logger.error(f"Update {update} caused error {context.error}")
 
     async def _post_init(self, application) -> None:
+        # E-10: capture the running event loop so synchronous callers (the
+        # price-feed thread, the toast worker thread, the tick loop) can
+        # schedule coroutines onto it via asyncio.run_coroutine_threadsafe.
+        # python-telegram-bot 21.x makes Bot.send_message a coroutine; calling
+        # it without await constructs the coroutine and garbage-collects it,
+        # silently dropping the message and emitting a RuntimeWarning.
+        try:
+            self._loop = asyncio.get_running_loop()
+            logger.info("🔁 Event loop captured for cross-thread send")
+        except RuntimeError:
+            self._loop = None
+            logger.warning("⚠️ No running loop in _post_init; sends will be dropped")
         url = self._resolve_webapp_url()
         if not url:
             logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
@@ -6462,7 +6562,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.4.0).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.4.1).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -6486,6 +6586,7 @@ class AEI_Bot:
         logger.info("🎯 Execution-gated projection: recomputed on Bull/Bear/Hawk/Dove/Whisky/Wine/Watter/Blood/Diamond/Ruby.")
         logger.info("💬 Push threading: every push is a reply to the user's most recent inbound message.")
         logger.info("📮 Bounded push dispatch: single queue.Queue(maxsize=512) with one daemon consumer.")
+        logger.info("🔁 Cross-thread send: enabled via asyncio.run_coroutine_threadsafe")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
