@@ -6,7 +6,58 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo / Binance / CoinGecko upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.4.1 (Await-Corrected Edition)
+Version: 4.4.2 (Send-Hardened Edition)
+
+v4.4.2 is a defect-resolution release on top of v4.4.1 (Await-Corrected
+Edition). It does not alter any FF-invariant logic. It resolves the three
+remaining failure modes in the out-of-loop send path that the Heroku log
+(2026-10-09T05:43:44.586431+00:00) exposed as HTTP 400 Bad Request from
+Telegram's sendMessage endpoint:
+
+  D-45 (critical, discovered in the 2026-10-09 Heroku log). The push path
+       (_telegram_push, _send_signal_alert, _send_execution_alert) forwarded
+       reply_to_message_id = state.last_inbound_message_id on every send.
+       When that message id is stale — the user's command was deleted, the
+       bot was restarted with a persisted id, or the id belongs to a chat the
+       bot can no longer reply to — Telegram returns HTTP 400 Bad Request
+       with description "message to reply not found" and drops the entire
+       push. Because E-6 threads every push, a single stale id silences the
+       whole notification stream. Resolved by E-11.
+
+  D-46 (critical). Every push and alert body interpolates live engine fields
+       — provider, regime, reason, side, trailing_stop_side, tag — into a
+       parse_mode="Markdown" string without escaping. Telegram's legacy
+       Markdown parser treats *, _, `, [, and \ as control characters. A
+       provider string, a reason, or a symbol containing any of those
+       characters causes Telegram to reject the message with HTTP 400
+       "can't parse entities". Resolved by E-12.
+
+  D-47 (major). When both retries above fail, the send path had no final
+       fallback, so a single unparseable field permanently silenced the
+       notification until the next state change. Resolved by E-13.
+
+  E-11 (Enhancement). Reply-target hardening. _send_message_sync now tries
+       the send three times: (1) as threaded reply with parse_mode=Markdown,
+       (2) as standalone message with parse_mode=Markdown and
+       reply_to_message_id=None when the first failure description mentions
+       "reply" or "message to reply not found", (3) as standalone message
+       with parse_mode=None when either prior failure description mentions
+       "parse" or "can't parse entities". If all three fail, the failure is
+       logged with the full Telegram description and returns False. The
+       successful path returns True. No exception escapes.
+
+  E-12 (Enhancement). Markdown escaping. A new module-level helper
+       _md_escape(s) escapes every legacy-Markdown control character in an
+       interpolated string. It is applied at every interpolation site in
+       _format_push_message, _send_signal_alert, and _send_execution_alert.
+       Static template characters (*, _, `) are preserved; only user- and
+       engine-supplied values are escaped. The emojis, bold markers, and
+       code spans that form the message template are unchanged.
+
+  E-13 (Enhancement). Plain-text final fallback. The third attempt in
+       _send_message_sync strips parse_mode entirely, guaranteeing delivery
+       of the raw text even when a value contains an irreducible Markdown
+       character sequence.
 
 v4.4.1 is a defect-resolution release on top of v4.4.0 (Scroll-Ahead Edition).
 It does not alter any FF-invariant logic. It resolves a single blocking defect
@@ -58,10 +109,12 @@ the v4.3.0 Enhancement Edition, without altering any FF-invariant logic:
        execution-gated refresh already provides).
 
   E-6 (Enhancement): Bot replies on every event.
-       _telegram_push() now threads every push as reply_to_message_id to the
+       _telegram_push() threads every push as reply_to_message_id to the
        user's most recent inbound message (state.last_inbound_message_id),
        updated on every command invocation. Every signal, execution, FVG, and
        close push therefore appears as a visible bot *reply* in the conversation.
+       In v4.4.2 (E-11), a stale reply id is no longer fatal: the send path
+       retries as a standalone message.
 
   E-7 (Enhancement): Bounded push dispatch.
        The per-toast threading.Thread spawn in _emit_toast() is replaced by a
@@ -268,6 +321,55 @@ class Fraction:
 
     def __repr__(self):
         return f"Fraction({self._f.numerator}/{self._f.denominator})"
+
+# ============================================================================
+# D-46 / E-12: LEGACY-MARKDOWN ESCAPING
+# ============================================================================
+def _md_escape(value) -> str:
+    """Escape every legacy-Markdown control character in an interpolated value.
+
+    Telegram's legacy Markdown parser treats *, _, `, [, ], and \\ as control
+    characters. Any of those appearing inside a value that is interpolated
+    into a parse_mode="Markdown" string causes the whole message to be
+    rejected with HTTP 400 "can't parse entities". This helper escapes them
+    so only the static template characters remain meaningful to the parser.
+
+    The function is idempotent for values that contain no control characters,
+    and preserves the visible content of any value that does. It never
+    raises; None becomes an em-dash placeholder.
+    """
+    if value is None:
+        return "—"
+    s = str(value)
+    out_chars = []
+    for ch in s:
+        if ch == '\\':
+            out_chars.append('\\\\')
+        elif ch == '*':
+            out_chars.append('\\*')
+        elif ch == '_':
+            out_chars.append('\\_')
+        elif ch == '`':
+            out_chars.append('\\`')
+        elif ch == '[':
+            out_chars.append('\\[')
+        elif ch == ']':
+            out_chars.append('\\]')
+        else:
+            out_chars.append(ch)
+    return ''.join(out_chars)
+
+def _looks_like_reply_error(desc: str) -> bool:
+    if not desc:
+        return False
+    d = desc.lower()
+    return ('reply' in d) or ('message to reply' in d) or ('replied message' in d)
+
+def _looks_like_parse_error(desc: str) -> bool:
+    if not desc:
+        return False
+    d = desc.lower()
+    return ('parse' in d) or ("can't parse" in d) or ('entities' in d) or ('entity' in d)
 
 # ============================================================================
 # CONSTANTS & CONFIGURATION — MQL4 PARITY
@@ -513,7 +615,7 @@ logger.addHandler(_RingHandler())
 logger.propagate = False
 
 # ============================================================================
-# E-1 + E-6: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
+# E-1 + E-6 + E-12: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
 # ============================================================================
 def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
     if kind == "signal" and not PUSH_ON_SIGNAL:
@@ -529,11 +631,11 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         arrow = "📈" if direction == "BUY" else ("📉" if direction == "SELL" else "⚪")
         return (
             f"🎯 *ÆEA SIGNAL* {arrow}\n"
-            f"*Type:* {direction}\n"
-            f"*Price:* `{payload.get('price')}`\n"
-            f"*m/n:* {payload.get('m')}/{payload.get('n')} @ h={payload.get('h')}\n"
-            f"*Regime:* {payload.get('regime', '—')}\n"
-            f"*Tick:* {payload.get('tick', '—')}\n"
+            f"*Type:* {_md_escape(direction)}\n"
+            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*m/n:* {_md_escape(payload.get('m'))}/{_md_escape(payload.get('n'))} @ h={_md_escape(payload.get('h'))}\n"
+            f"*Regime:* {_md_escape(payload.get('regime', '—'))}\n"
+            f"*Tick:* {_md_escape(payload.get('tick', '—'))}\n"
             f"💎 Natalia Tanyatia"
         )
     if kind == "execution":
@@ -549,13 +651,13 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         ticket = payload.get("ticket", -1)
         ticket_str = f"#{ticket}" if ticket != -1 else "—"
         reason = payload.get("reason", "")
-        reason_str = f"\n*Reason:* {reason}" if reason else ""
+        reason_str = f"\n*Reason:* {_md_escape(reason)}" if reason else ""
         return (
-            f"{emoji} *ÆEA EXECUTION: {event}*\n"
-            f"*Side:* {side}\n"
-            f"*Ticket:* {ticket_str}\n"
-            f"*Price:* `{payload.get('price')}`\n"
-            f"*Tick:* {payload.get('tick', '—')}{reason_str}\n"
+            f"{emoji} *ÆEA EXECUTION: {_md_escape(event)}*\n"
+            f"*Side:* {_md_escape(side)}\n"
+            f"*Ticket:* {_md_escape(ticket_str)}\n"
+            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*Tick:* {_md_escape(payload.get('tick', '—'))}{reason_str}\n"
             f"💎 Natalia Tanyatia"
         )
     if kind == "fvg":
@@ -563,10 +665,10 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         fvg_type = payload.get("type", "top")
         arrow = "▲" if fvg_type == "top" else "▼"
         return (
-            f"📐 *ÆEA FVG {action.upper()}*\n"
-            f"*Type:* {arrow} {fvg_type}\n"
-            f"*Price:* `{payload.get('price')}`\n"
-            f"*Idx:* {payload.get('idx', '—')}\n"
+            f"📐 *ÆEA FVG {_md_escape(action.upper())}*\n"
+            f"*Type:* {arrow} {_md_escape(fvg_type)}\n"
+            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*Idx:* {_md_escape(payload.get('idx', '—'))}\n"
             f"💎 Natalia Tanyatia"
         )
     return None
@@ -599,6 +701,9 @@ def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
     # E-10: route through the cross-thread send helper so the coroutine is
     # actually awaited on the bot's event loop. The old direct call to
     # app.bot.send_message(...) constructed the coroutine and dropped it.
+    # E-11: the helper internally retries without reply_to_message_id and
+    # without parse_mode on 400s, so a stale reply id or an unparseable
+    # field no longer silences the push.
     if not hasattr(bot, "_send_message_sync"):
         logger.warning("📲 Push skipped: bot has no _send_message_sync")
         return
@@ -1161,7 +1266,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.4.1",
+                    "User-Agent": "AEI-Bridge/v4.4.2",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -4158,16 +4263,19 @@ class AEEA_Engine:
         condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+        # D-46 / E-12: every interpolated value is Markdown-escaped before it
+        # is placed into the parse_mode="Markdown" template. The static
+        # template characters (*, _, `) remain meaningful to the parser.
         msg = (
             f"🎯 *ÆEA SIGNAL ALERT*\n"
-            f"📊 *Direction:* {direction}\n"
-            f"🎯 *Signal Level:* {st.signal}\n"
-            f"💰 *Current Price:* {st.price}\n"
-            f"📊 *Regime:* {regime}\n"
-            f"⚖️ *Imbalance @ h={st.h}:* m={m_at_h}, n={n_at_h}\n"
-            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
+            f"📊 *Direction:* {_md_escape(direction)}\n"
+            f"🎯 *Signal Level:* {_md_escape(st.signal)}\n"
+            f"💰 *Current Price:* {_md_escape(st.price)}\n"
+            f"📊 *Regime:* {_md_escape(regime)}\n"
+            f"⚖️ *Imbalance @ h={_md_escape(st.h)}:* m={_md_escape(m_at_h)}, n={_md_escape(n_at_h)}\n"
+            f"⚖️ *Local m/n:* {_md_escape(m_local)}/{_md_escape(n_local)}\n"
             f"✅ *δ(m-n-2)=1 (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
-            f"🔄 *Tick Count:* {st.tick}\n"
+            f"🔄 *Tick Count:* {_md_escape(st.tick)}\n"
             f"💎 Natalia Tanyatia"
         )
         bot = BRIDGE_ENGINE_REF.get("bot")
@@ -4204,14 +4312,15 @@ class AEEA_Engine:
         emoji = emoji_map.get(event, "⚡")
         side_str = side if side else "NONE"
         ticket_str = f"#{ticket}" if ticket != -1 else "—"
-        reason_str = f" | {reason}" if reason else ""
+        reason_str = f" | {_md_escape(reason)}" if reason else ""
+        # D-46 / E-12: escape every interpolated value.
         msg = (
             f"{emoji} *ÆEA EXECUTION*\n"
-            f"📛 *Event:* {event}\n"
-            f"📊 *Side:* {side_str}\n"
-            f"🎫 *Ticket:* {ticket_str}\n"
-            f"💰 *Price:* {price}{reason_str}\n"
-            f"🔄 *Tick:* {st.tick}\n"
+            f"📛 *Event:* {_md_escape(event)}\n"
+            f"📊 *Side:* {_md_escape(side_str)}\n"
+            f"🎫 *Ticket:* {_md_escape(ticket_str)}\n"
+            f"💰 *Price:* {_md_escape(price)}{reason_str}\n"
+            f"🔄 *Tick:* {_md_escape(st.tick)}\n"
             f"💎 Natalia Tanyatia"
         )
         bot = BRIDGE_ENGINE_REF.get("bot")
@@ -5002,7 +5111,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.4.1"
+    server_version = "AEI-Bridge/4.4.2"
 
     def log_message(self, fmt, *args):
         return
@@ -5073,7 +5182,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.4.1",
+                "ok": not stale, "service": "aei-bridge", "version": "4.4.2",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -5827,27 +5936,95 @@ class AEI_Bot:
         # from a synchronous context. Returns True on success, False otherwise.
         # Never raises. This is the single point through which every
         # out-of-loop send (signal alert, execution alert, toast push) flows.
+        #
+        # E-11: three attempts, in this order:
+        #   (1) threaded reply with parse_mode=Markdown
+        #   (2) standalone message with parse_mode=Markdown (only if the first
+        #       failure description mentions "reply" or "message to reply")
+        #   (3) standalone message with parse_mode=None (only if either prior
+        #       failure description mentions "parse" or "can't parse entities")
+        #
+        # E-13: the third attempt is the plain-text final fallback. It strips
+        # parse_mode entirely, guaranteeing delivery of the raw text even when
+        # a value contains an irreducible Markdown character sequence.
+        #
+        # Every attempt never raises; the method returns True if any attempt
+        # succeeds and False if all three fail. Each failure logs the full
+        # Telegram error description so the operator can see which branch the
+        # failure landed in.
         if self.application is None:
+            logger.warning("📡 send_message skipped: application is None")
             return False
         loop = self._loop
         if loop is None or loop.is_closed():
+            logger.warning("📡 send_message skipped: event loop not captured or closed")
             return False
-        coro = self.application.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode=parse_mode,
-            reply_to_message_id=reply_to_message_id,
-        )
-        try:
-            fut = asyncio.run_coroutine_threadsafe(coro, loop)
-            fut.result(timeout=timeout)
+        bot = self.application.bot
+
+        def _attempt(pm: Optional[str], rt: Optional[int]) -> Tuple[bool, str]:
+            coro = bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=pm,
+                reply_to_message_id=rt,
+            )
+            try:
+                fut = asyncio.run_coroutine_threadsafe(coro, loop)
+                fut.result(timeout=timeout)
+                return (True, "")
+            except asyncio.TimeoutError:
+                return (False, "timeout")
+            except Exception as e:
+                return (False, str(e))
+
+        # Attempt 1: threaded reply with Markdown
+        ok, err1 = _attempt(parse_mode, reply_to_message_id)
+        if ok:
             return True
-        except asyncio.TimeoutError:
-            logger.warning("📡 send_message timed out")
+        logger.info(f"📡 send_message attempt 1 failed (reply+Markdown): {err1}")
+
+        # Attempt 2: standalone message with Markdown, only when the first
+        # failure was a reply-target problem. This is the E-11 fix for D-45.
+        if _looks_like_reply_error(err1):
+            ok2, err2 = _attempt(parse_mode, None)
+            if ok2:
+                logger.info("📡 send_message attempt 2 succeeded (standalone Markdown)")
+                return True
+            logger.info(f"📡 send_message attempt 2 failed (standalone Markdown): {err2}")
+            # Attempt 3: plain-text fallback (E-13)
+            ok3, err3 = _attempt(None, None)
+            if ok3:
+                logger.info("📡 send_message attempt 3 succeeded (plain text)")
+                return True
+            logger.warning(f"📡 send_message attempt 3 failed (plain text): {err3}")
             return False
-        except Exception as e:
-            logger.warning(f"📡 send_message failed: {e}")
+
+        # If the first failure was a Markdown parse problem, go straight to the
+        # plain-text fallback (E-13). Do not retry the threaded reply.
+        if _looks_like_parse_error(err1):
+            ok3, err3 = _attempt(None, reply_to_message_id)
+            if ok3:
+                logger.info("📡 send_message attempt 3 succeeded (plain text, threaded)")
+                return True
+            # Last resort: plain text, no reply threading
+            ok3b, err3b = _attempt(None, None)
+            if ok3b:
+                logger.info("📡 send_message attempt 3b succeeded (plain text, standalone)")
+                return True
+            logger.warning(f"📡 send_message attempt 3/3b failed (plain text): {err3b}")
             return False
+
+        # Unknown failure class. Try standalone Markdown, then plain text.
+        ok2, err2 = _attempt(parse_mode, None)
+        if ok2:
+            logger.info("📡 send_message attempt 2 succeeded (standalone Markdown, unknown class)")
+            return True
+        ok3, err3 = _attempt(None, None)
+        if ok3:
+            logger.info("📡 send_message attempt 3 succeeded (plain text, unknown class)")
+            return True
+        logger.warning(f"📡 send_message failed all attempts: reply_err={err1} standalone_err={err2} plain_err={err3}")
+        return False
 
     async def price_feed_loop(self):
         logger.info("🔄 Price feed loop entered")
@@ -6562,7 +6739,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.4.1).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.4.2).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -6587,6 +6764,9 @@ class AEI_Bot:
         logger.info("💬 Push threading: every push is a reply to the user's most recent inbound message.")
         logger.info("📮 Bounded push dispatch: single queue.Queue(maxsize=512) with one daemon consumer.")
         logger.info("🔁 Cross-thread send: enabled via asyncio.run_coroutine_threadsafe")
+        logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
+        logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
+        logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
