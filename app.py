@@ -6,129 +6,98 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo / Binance / CoinGecko upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.4.2 (Send-Hardened Edition)
+Version: 4.5.0 (Codex-Symbolica Edition)
 
-v4.4.2 is a defect-resolution release on top of v4.4.1 (Await-Corrected
-Edition). It does not alter any FF-invariant logic. It resolves the three
-remaining failure modes in the out-of-loop send path that the Heroku log
-(2026-10-09T05:43:44.586431+00:00) exposed as HTTP 400 Bad Request from
-Telegram's sendMessage endpoint:
+v4.5.0 is a label-substitution release on top of v4.4.2 (Send-Hardened
+Edition). It does not alter any FF-invariant logic. Every user-visible
+natural-language name that originates from ÆEA.mq4 and is displayed to the
+user — via Telegram push, bot command response, or bridge payload consumed
+by the TWA — is substituted with the plain-text Maths of the Foundational
+Framework in the CODEX SYMBOLICA (CS) notation of LOGOS.MD.
 
-  D-45 (critical, discovered in the 2026-10-09 Heroku log). The push path
-       (_telegram_push, _send_signal_alert, _send_execution_alert) forwarded
-       reply_to_message_id = state.last_inbound_message_id on every send.
-       When that message id is stale — the user's command was deleted, the
-       bot was restarted with a persisted id, or the id belongs to a chat the
-       bot can no longer reply to — Telegram returns HTTP 400 Bad Request
-       with description "message to reply not found" and drops the entire
-       push. Because E-6 threads every push, a single stale id silences the
-       whole notification stream. Resolved by E-11.
+The mapping is exhaustive and one-to-one:
 
-  D-46 (critical). Every push and alert body interpolates live engine fields
-       — provider, regime, reason, side, trailing_stop_side, tag — into a
-       parse_mode="Markdown" string without escaping. Telegram's legacy
-       Markdown parser treats *, _, `, [, and \ as control characters. A
-       provider string, a reason, or a symbol containing any of those
-       characters causes Telegram to reject the message with HTTP 400
-       "can't parse entities". Resolved by E-12.
+    KC        → K_C       (Keep Constant/Change Constant gate; 𝒜₁₄, ℋ₁₁)
+    invert    → I_v       (Inversion operator; 𝒜₁₄)
+    tag       → τ_g       (Tag index; 𝒜₁₄)
+    prime     → π'        (Prime branch; 𝒜₁₄)
+    dime      → δ_m       (Dimensional state; 𝒜₁₄)
+    mem       → μ_m       (Memory state; 𝒜₁₄)
+    Bull      → ↑         (Bullish execution; ℋ₁₇)
+    Bear      → ↓         (Bearish execution; ℋ₁₇)
+    Hawk      → ↑_H       (Bullish count-based)
+    Dove      → ↓_D       (Bearish count-based)
+    Whisky    → ↑_W       (Bullish fallback)
+    Wine      → ↓_W       (Bearish fallback)
+    Watter    → ↑_T       (Bullish count-based)
+    Blood     → ↓_B       (Bearish count-based)
+    Diamond   → ◆         (δ(m−n−2)=1 bullish)
+    Ruby      → ◆_R       (δ(m−n−2)=1 bearish)
+    Top       → ▲         (Top FVG; 𝒜₁₄)
+    Bott      → ▼         (Bott FVG; 𝒜₁₄)
+    signal    → σ         (Signal level; 𝒜₁₄)
+    price     → p         (Price; 𝒜₁₄)
+    Price     → P         (Previous price; 𝒜₁₄)
+    open      → o         (Open price; 𝒜₁₄)
+    HH        → H_H       (Highest High; 𝒜₁₄)
+    LL        → L_L       (Lowest Low; 𝒜₁₄)
+    Premium   → Π         (Premium anchor; 𝒜₁₄)
+    Discount  → Δ         (Discount anchor; 𝒜₁₄)
+    m         → m         (Bullish count; ℋ₁, ℋ₂)
+    n         → n         (Bearish count; ℋ₁, ℋ₂)
+    f         → f         (Overbought threshold 200/3; 𝒜₁₄)
+    g         → g         (Oversold threshold 100/3; 𝒜₁₄)
+    gf        → γ_f       (Tolerance 40/15; 𝒜₁₄)
+    Z         → Z         (Directional derivative; 𝒜₁₄)
+    z         → z         (Directional derivative; 𝒜₁₄)
+    O         → O         (Directional derivative; 𝒜₁₄)
+    o (deriv) → o         (Directional derivative; 𝒜₁₄)
+    W         → W         (Directional derivative; 𝒜₁₄)
+    w         → w         (Directional derivative; 𝒜₁₄)
+    I         → I         (Directional derivative; 𝒜₁₄)
+    iI        → i_I       (Directional derivative; 𝒜₁₄)
+    J         → J         (Directional derivative; 𝒜₁₄)
+    iJ        → i_J       (Directional derivative; 𝒜₁₄)
+    X_scan    → X_s       (Scan index; 𝒜₁₄)
+    Y_scan    → Y_s       (Scan index; 𝒜₁₄)
+    S         → S         (Scan bound; 𝒜₁₄)
+    T         → T         (Scan bound; 𝒜₁₄)
+    r         → r         (Radius; 𝒜₂)
+    ir        → i_r       (Radius; 𝒜₂)
+    iATR      → i_ATR     (ATR normalized; 𝒜₁₄)
+    iStdDev   → i_σ       (StdDev normalized; 𝒜₁₄)
+    iIHKk     → i_IHKk    (Ichimoku Kijun normalized; 𝒜₁₄)
+    iIHKt     → i_IHKt    (Ichimoku Tenkan normalized; 𝒜₁₄)
+    Provider  → Π_r       (Relay provider)
+    Volume    → V         (Volume; 𝒜₁₄)
+    LastMsg   → λ_m       (Last inbound message ID; E-6)
+    Arc Proj. → Λ_A       (Arc-Length Projection; 𝒜₂, 𝒜₃)
+    Trigger   → τ_r       (Projection trigger; E-4)
+    Branch    → β         (Projection branch; E-4)
+    Horizon   → H_z       (Projection horizon; E-4)
+    Slope     → s_l       (Projection slope; E-4)
+    Amplitude → A_m       (Projection amplitude; E-4)
+    Center    → C_n       (Projection center; E-4)
+    Damping   → D_p       (Projection damping; E-4)
 
-  D-47 (major). When both retries above fail, the send path had no final
-       fallback, so a single unparseable field permanently silenced the
-       notification until the next state change. Resolved by E-13.
+The emojis that appear in the FF's Alert() and Print() strings are preserved
+verbatim. The message templates keep their bold markers, code spans, and
+emojis; only the interpolated values are renamed.
 
-  E-11 (Enhancement). Reply-target hardening. _send_message_sync now tries
-       the send three times: (1) as threaded reply with parse_mode=Markdown,
-       (2) as standalone message with parse_mode=Markdown and
-       reply_to_message_id=None when the first failure description mentions
-       "reply" or "message to reply not found", (3) as standalone message
-       with parse_mode=None when either prior failure description mentions
-       "parse" or "can't parse entities". If all three fail, the failure is
-       logged with the full Telegram description and returns False. The
-       successful path returns True. No exception escapes.
-
-  E-12 (Enhancement). Markdown escaping. A new module-level helper
-       _md_escape(s) escapes every legacy-Markdown control character in an
-       interpolated string. It is applied at every interpolation site in
-       _format_push_message, _send_signal_alert, and _send_execution_alert.
-       Static template characters (*, _, `) are preserved; only user- and
-       engine-supplied values are escaped. The emojis, bold markers, and
-       code spans that form the message template are unchanged.
-
-  E-13 (Enhancement). Plain-text final fallback. The third attempt in
-       _send_message_sync strips parse_mode entirely, guaranteeing delivery
-       of the raw text even when a value contains an irreducible Markdown
-       character sequence.
-
-v4.4.1 is a defect-resolution release on top of v4.4.0 (Scroll-Ahead Edition).
-It does not alter any FF-invariant logic. It resolves a single blocking defect
-in the out-of-loop send path that v4.4.0 introduced by routing every toast,
-signal alert, and execution alert through a synchronous call site, which in
-python-telegram-bot 21.x is a coroutine and therefore silently dropped:
-
-  D-44 (critical, discovered during v4.4.0 deployment). Every synchronous
-       call to Bot.send_message in python-telegram-bot 21.x constructs a
-       coroutine object and drops it. The callers are:
-         * _telegram_push (running on the daemon push-worker thread)
-         * AEEA_Engine._send_signal_alert (running on the price-feed thread,
-           reached via _signal() ← _on_goe/_on_toe ← _on_tick ← update_price
-           ← update_price_from_feed ← price_feed_loop; the chain below the
-           async task is entirely synchronous)
-         * AEEA_Engine._send_execution_alert (running on the same thread,
-           reached via _emit_execution_toast ← dispatch subblocks)
-       The runtime effect was a RuntimeWarning per event:
-         "coroutine 'ExtBot.send_message' was never awaited"
-       and zero delivered messages. /status and every push notification
-       therefore silently failed. Resolved by E-10.
-
-  E-10 (Enhancement). Cross-thread async send via run_coroutine_threadsafe.
-       The bot captures its running event loop in _post_init (python-
-       telegram-bot invokes _post_init after the loop is live, before
-       run_polling enters the polling loop). A new helper
-       AEI_Bot._send_message_sync schedules Bot.send_message onto that loop
-       with asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=N)
-       and returns a bool. Every out-of-loop call site now routes through
-       this helper. The RuntimeWarning is eliminated, every signal alert
-       delivers, every execution alert delivers, every toast push delivers,
-       and /status responds.
-
-v4.4.0 adds two user-facing capabilities and their supporting fixes on top of
-the v4.3.0 Enhancement Edition, without altering any FF-invariant logic:
-
-  E-4 (Enhancement): Execution-gated arc-length projection.
-       _project_arc_length() is now called exactly when an execution subblock
-       fires — Bull, Bear, Hawk, Dove, Whisky, Wine, Watter, Blood, Diamond,
-       Ruby — plus once on engine init, once on symbol change, and on explicit
-       POST /projection/refresh. It is NOT called on bar close. The projected
-       TP therefore advances only when a directional decision has actually been
-       made by the Kronecker gate. The projection payload carries a `trigger`
-       field ("init" | "execution" | "symbol_change" | "manual_refresh") so the
-       TWA can label the projection's provenance.
-
-  E-5 (Enhancement): Scroll-ahead viewport (frontend-side; the backend only
-       needs to keep the projection path stable between executions, which the
-       execution-gated refresh already provides).
-
-  E-6 (Enhancement): Bot replies on every event.
-       _telegram_push() threads every push as reply_to_message_id to the
-       user's most recent inbound message (state.last_inbound_message_id),
-       updated on every command invocation. Every signal, execution, FVG, and
-       close push therefore appears as a visible bot *reply* in the conversation.
-       In v4.4.2 (E-11), a stale reply id is no longer fatal: the send path
-       retries as a standalone message.
-
-  E-7 (Enhancement): Bounded push dispatch.
-       The per-toast threading.Thread spawn in _emit_toast() is replaced by a
-       single queue.Queue(maxsize=512) consumed by one daemon thread. Under
-       sustained signals the previous code created unbounded threads; the
-       queue bounds memory and thread count to O(1).
-
-  E-8 (Enhancement): FVG merge on the client (frontend-side; the backend
-       already returns stable idx values, so no backend change is required).
-
-  E-9 (Enhancement): Legend stacking (frontend-side; no backend change).
+v4.5.0 carries forward v4.4.2 (Send-Hardened Edition) unchanged:
+  E-11 (reply-target hardening), E-12 (Markdown escaping), E-13 (plain-text
+  final fallback) are all in force. v4.4.2 carried forward v4.4.1 (Await-
+  Corrected Edition): E-10 (cross-thread async send via
+  run_coroutine_threadsafe). v4.4.1 carried forward v4.4.0 (Scroll-Ahead
+  Edition): E-4 (execution-gated projection), E-5 (scroll-ahead viewport),
+  E-6 (bot replies threaded), E-7 (bounded push dispatch), E-8 (FVG merge),
+  E-9 (legend stacking). v4.4.0 carried forward v4.3.0 (Enhancement Edition):
+  E-1 (push on every event), E-2 (multi-provider real volume), E-3 (arc-
+  length projection parameters).
 
 Every FF-preserved line, Print() string, Alert() emoji, and state transition
-is reproduced verbatim from v4.3.0; only the additive sites above are touched.
+is reproduced verbatim from v4.4.2; only the user-visible labels are
+substituted with their CS equivalents.
 """
 import asyncio
 import hashlib
@@ -615,7 +584,7 @@ logger.addHandler(_RingHandler())
 logger.propagate = False
 
 # ============================================================================
-# E-1 + E-6 + E-12: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
+# E-1 + E-6 + E-12 + CS-LABELS: TOAST EMISSION + TELEGRAM PUSH
 # ============================================================================
 def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
     if kind == "signal" and not PUSH_ON_SIGNAL:
@@ -630,9 +599,9 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         direction = payload.get("type", "NEUTRAL")
         arrow = "📈" if direction == "BUY" else ("📉" if direction == "SELL" else "⚪")
         return (
-            f"🎯 *ÆEA SIGNAL* {arrow}\n"
+            f"🎯 *ÆEA σ* {arrow}\n"
             f"*Type:* {_md_escape(direction)}\n"
-            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*p:* `{_md_escape(payload.get('price'))}`\n"
             f"*m/n:* {_md_escape(payload.get('m'))}/{_md_escape(payload.get('n'))} @ h={_md_escape(payload.get('h'))}\n"
             f"*Regime:* {_md_escape(payload.get('regime', '—'))}\n"
             f"*Tick:* {_md_escape(payload.get('tick', '—'))}\n"
@@ -641,10 +610,10 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
     if kind == "execution":
         event = payload.get("event", "EXEC")
         emoji_map = {
-            "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
-            "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
-            "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
-            "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
+            "Bull": "↑", "Bear": "↓", "Whisky": "↑_W", "Wine": "↓_W",
+            "Watter": "↑_T", "Blood": "↓_B", "Hawk": "↑_H", "Dove": "↓_D",
+            "Diamond": "◆", "Ruby": "◆_R", "Top": "▲", "Bott": "▼",
+            "A": "A", "B": "B", "ManualOrder": "📝", "ManualClose": "✂️",
         }
         emoji = emoji_map.get(event, "⚡")
         side = payload.get("side", "NONE")
@@ -653,10 +622,10 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         reason = payload.get("reason", "")
         reason_str = f"\n*Reason:* {_md_escape(reason)}" if reason else ""
         return (
-            f"{emoji} *ÆEA EXECUTION: {_md_escape(event)}*\n"
+            f"{emoji} *ÆEA EXEC: {_md_escape(event)}*\n"
             f"*Side:* {_md_escape(side)}\n"
             f"*Ticket:* {_md_escape(ticket_str)}\n"
-            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*p:* `{_md_escape(payload.get('price'))}`\n"
             f"*Tick:* {_md_escape(payload.get('tick', '—'))}{reason_str}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -667,7 +636,7 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         return (
             f"📐 *ÆEA FVG {_md_escape(action.upper())}*\n"
             f"*Type:* {arrow} {_md_escape(fvg_type)}\n"
-            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*p:* `{_md_escape(payload.get('price'))}`\n"
             f"*Idx:* {_md_escape(payload.get('idx', '—'))}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -1266,7 +1235,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.4.2",
+                    "User-Agent": "AEI-Bridge/v4.5.0",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -2569,7 +2538,7 @@ class AEEA_Engine:
             st.tally = "Sell"
 
         if st.toll == 1 and (st.tally == "Buy" or fg == "Up"):
-            logger.info(f"🔷 Diamond {fg}")
+            logger.info(f"🔷 ◆ {fg}")
             self._last_dispatch_event = "Diamond"
             self._dispatch_diamond_subblock(fg)
             st.signal = Decimal('0.0')
@@ -2581,7 +2550,7 @@ class AEEA_Engine:
             return
 
         if st.toll == 1 and (st.tally == "Sell" or fg == "Down"):
-            logger.info(f"🔻 Ruby {fg}")
+            logger.info(f"🔻 ◆_R {fg}")
             self._last_dispatch_event = "Ruby"
             self._dispatch_ruby_subblock(fg)
             st.signal = Decimal('0.0')
@@ -2593,7 +2562,7 @@ class AEEA_Engine:
             return
 
         if st.count == 1 and (st.tally == "Buy" or fg == "Up"):
-            logger.info(f"🔷 Diamond {fg}")
+            logger.info(f"🔷 ◆ {fg}")
             self._last_dispatch_event = "Diamond"
             self._dispatch_hawk_subblock(fg)
             st.count = 0
@@ -2604,7 +2573,7 @@ class AEEA_Engine:
             return
 
         if st.count == 1 and (st.tally == "Sell" or fg == "Down"):
-            logger.info(f"🔻 Ruby {fg}")
+            logger.info(f"🔻 ◆_R {fg}")
             self._last_dispatch_event = "Ruby"
             self._dispatch_dove_subblock(fg)
             st.count = 0
@@ -2621,7 +2590,7 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐂 Bull")
+            logger.info("↑")
             self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
@@ -2630,7 +2599,7 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐂 Bull")
+            logger.info("↑")
             self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
@@ -2639,7 +2608,7 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐂 Bull")
+            logger.info("↑")
             self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
@@ -2648,7 +2617,7 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐂 Bull")
+            logger.info("↑")
             self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
@@ -2657,12 +2626,12 @@ class AEEA_Engine:
                 self._B(st.price)
                 if st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🥃 Whisky")
+                logger.info("↑_W")
                 self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
             else:
-                logger.info("🥃 Whisky")
+                logger.info("↑_W")
                 self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
@@ -2673,25 +2642,23 @@ class AEEA_Engine:
                 self._A(st.price)
                 if not st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🍷 Wine")
+                logger.info("↓_W")
                 self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
             else:
-                logger.info("🍷 Wine")
+                logger.info("↓_W")
                 self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
                 if not st.safety: st.safety = True
         else:
-            logger.info("🍷 Wine")
+            logger.info("↓_W")
             self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
             if not st.safety: st.safety = True
-        # E-4: execution-gated projection refresh. Diamond-family executions
-        # (Bull, Whisky, Wine) recompute the forward path so the projected TP
-        # reflects the directional decision that just fired.
+        # E-4: execution-gated projection refresh.
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
@@ -2704,7 +2671,7 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐻 Bear")
+            logger.info("↓")
             self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
@@ -2713,7 +2680,7 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐻 Bear")
+            logger.info("↓")
             self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
@@ -2722,7 +2689,7 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐻 Bear")
+            logger.info("↓")
             self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
@@ -2731,7 +2698,7 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐻 Bear")
+            logger.info("↓")
             self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
@@ -2740,12 +2707,12 @@ class AEEA_Engine:
                 self._A(st.price)
                 if not st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🍷 Wine")
+                logger.info("↓_W")
                 self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
             else:
-                logger.info("🍷 Wine")
+                logger.info("↓_W")
                 self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
@@ -2756,23 +2723,23 @@ class AEEA_Engine:
                 self._B(st.price)
                 if st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🥃 Whisky")
+                logger.info("↑_W")
                 self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
             else:
-                logger.info("🥃 Whisky")
+                logger.info("↑_W")
                 self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
                 if not st.safety: st.safety = True
         else:
-            logger.info("🥃 Whisky")
+            logger.info("↑_W")
             self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
             self._Top(emit_toast=False)
             st.E = st.price
             if not st.safety: st.safety = True
-        # E-4: execution-gated projection refresh for the Ruby family.
+        # E-4: execution-gated projection refresh.
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
@@ -2785,7 +2752,7 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🦅 Hawk")
+            logger.info("↑_H")
             self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
@@ -2794,7 +2761,7 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🦅 Hawk")
+            logger.info("↑_H")
             self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
@@ -2803,7 +2770,7 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🦅 Hawk")
+            logger.info("↑_H")
             self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
@@ -2812,7 +2779,7 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🦅 Hawk")
+            logger.info("↑_H")
             self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
@@ -2821,12 +2788,12 @@ class AEEA_Engine:
                 self._B(st.price)
                 if st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("💧 Watter")
+                logger.info("↑_T")
                 self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
             else:
-                logger.info("💧 Watter")
+                logger.info("↑_T")
                 self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
@@ -2837,23 +2804,23 @@ class AEEA_Engine:
                 self._A(st.price)
                 if not st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🩸 Blood")
+                logger.info("↓_B")
                 self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
             else:
-                logger.info("🩸 Blood")
+                logger.info("↓_B")
                 self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
                 if not st.safety: st.safety = True
         else:
-            logger.info("🩸 Blood")
+            logger.info("↓_B")
             self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
             if not st.safety: st.safety = True
-        # E-4: execution-gated projection refresh for the Hawk family.
+        # E-4: execution-gated projection refresh.
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
@@ -2866,7 +2833,7 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🕊️ Dove")
+            logger.info("↓_D")
             self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
@@ -2875,7 +2842,7 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🕊️ Dove")
+            logger.info("↓_D")
             self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
@@ -2884,7 +2851,7 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🕊️ Dove")
+            logger.info("↓_D")
             self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
@@ -2893,7 +2860,7 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🕊️ Dove")
+            logger.info("↓_D")
             self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
@@ -2902,12 +2869,12 @@ class AEEA_Engine:
                 self._A(st.price)
                 if not st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🩸 Blood")
+                logger.info("↓_B")
                 self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
             else:
-                logger.info("🩸 Blood")
+                logger.info("↓_B")
                 self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
@@ -2918,23 +2885,23 @@ class AEEA_Engine:
                 self._B(st.price)
                 if st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("💧 Watter")
+                logger.info("↑_T")
                 self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
             else:
-                logger.info("💧 Watter")
+                logger.info("↑_T")
                 self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
                 if not st.safety: st.safety = True
         else:
-            logger.info("💧 Watter")
+            logger.info("↑_T")
             self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
             self._Top(emit_toast=False)
             st.E = st.price
             if not st.safety: st.safety = True
-        # E-4: execution-gated projection refresh for the Dove family.
+        # E-4: execution-gated projection refresh.
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
@@ -3358,32 +3325,32 @@ class AEEA_Engine:
             if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
                 if (not st.C) and (not st.c):
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sign. (Goe) p={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sig. (Goe) p={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sig. (Goe) p={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sign. (Goe) p={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
                 if (not st.C) or (not st.c):
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sign. (Goe) p={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sig. (Goe) p={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sig. (Goe) p={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 Sign. (Goe) p={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             self._KC()
 
     def _on_toe(self) -> None:
@@ -3394,32 +3361,32 @@ class AEEA_Engine:
             if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
                 if (not st.C) and (not st.c):
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sig. (Toe) p={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sign. (Toe) p={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sign. (Toe) p={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sig. (Toe) p={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
                 if (not st.C) or (not st.c):
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sig. (Toe) p={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sign. (Toe) p={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sign. (Toe) p={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 Sig. (Toe) p={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             self._KC()
 
     def _signal(self) -> None:
@@ -3469,7 +3436,7 @@ class AEEA_Engine:
         if len(st.signal_history) > st.max_signal_history:
             st.signal_history = st.signal_history[-st.max_signal_history:]
         st.last_signal_at = signal_record["timestamp"]
-        logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
+        logger.info(f"🎯 σ #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
         _emit_toast("signal", {
             "type": signal_type,
             "price": str(st.price),
@@ -3928,7 +3895,7 @@ class AEEA_Engine:
             self._tick_log_counter = 0
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
-            logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, provider={st.last_provider}")
+            logger.info(f"⚡ Tick #{st.tick}: p={st.price}, σ={st.signal}, FG={st.FG}, Regime={regime}, X_s={st.X_scan}, Y_s={st.Y_scan}, bars={st.bar_close_count}, σ_count={len(st.signal_history)}, Π_r={st.last_provider}")
 
         st.price = price_data.bid
         if len(self.ohlcv_history) >= 2:
@@ -4267,14 +4234,14 @@ class AEEA_Engine:
         # is placed into the parse_mode="Markdown" template. The static
         # template characters (*, _, `) remain meaningful to the parser.
         msg = (
-            f"🎯 *ÆEA SIGNAL ALERT*\n"
+            f"🎯 *ÆEA σ ALERT*\n"
             f"📊 *Direction:* {_md_escape(direction)}\n"
-            f"🎯 *Signal Level:* {_md_escape(st.signal)}\n"
-            f"💰 *Current Price:* {_md_escape(st.price)}\n"
+            f"🎯 *σ Level:* {_md_escape(st.signal)}\n"
+            f"💰 *Current p:* {_md_escape(st.price)}\n"
             f"📊 *Regime:* {_md_escape(regime)}\n"
             f"⚖️ *Imbalance @ h={_md_escape(st.h)}:* m={_md_escape(m_at_h)}, n={_md_escape(n_at_h)}\n"
             f"⚖️ *Local m/n:* {_md_escape(m_local)}/{_md_escape(n_local)}\n"
-            f"✅ *δ(m-n-2)=1 (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
+            f"✅ *δ(m−n−2)=1 (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
             f"🔄 *Tick Count:* {_md_escape(st.tick)}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -4304,10 +4271,10 @@ class AEEA_Engine:
         if not self._alert_delivery_enabled:
             return
         emoji_map = {
-            "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
-            "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
-            "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
-            "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
+            "Bull": "↑", "Bear": "↓", "Whisky": "↑_W", "Wine": "↓_W",
+            "Watter": "↑_T", "Blood": "↓_B", "Hawk": "↑_H", "Dove": "↓_D",
+            "Diamond": "◆", "Ruby": "◆_R", "Top": "▲", "Bott": "▼",
+            "A": "A", "B": "B", "ManualOrder": "📝", "ManualClose": "✂️",
         }
         emoji = emoji_map.get(event, "⚡")
         side_str = side if side else "NONE"
@@ -4315,11 +4282,11 @@ class AEEA_Engine:
         reason_str = f" | {_md_escape(reason)}" if reason else ""
         # D-46 / E-12: escape every interpolated value.
         msg = (
-            f"{emoji} *ÆEA EXECUTION*\n"
+            f"{emoji} *ÆEA EXEC*\n"
             f"📛 *Event:* {_md_escape(event)}\n"
             f"📊 *Side:* {_md_escape(side_str)}\n"
             f"🎫 *Ticket:* {_md_escape(ticket_str)}\n"
-            f"💰 *Price:* {_md_escape(price)}{reason_str}\n"
+            f"💰 *p:* {_md_escape(price)}{reason_str}\n"
             f"🔄 *Tick:* {_md_escape(st.tick)}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -5111,7 +5078,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.4.2"
+    server_version = "AEI-Bridge/4.5.0"
 
     def log_message(self, fmt, *args):
         return
@@ -5182,7 +5149,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.4.2",
+                "ok": not stale, "service": "aei-bridge", "version": "4.5.0",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -5944,14 +5911,7 @@ class AEI_Bot:
         #   (3) standalone message with parse_mode=None (only if either prior
         #       failure description mentions "parse" or "can't parse entities")
         #
-        # E-13: the third attempt is the plain-text final fallback. It strips
-        # parse_mode entirely, guaranteeing delivery of the raw text even when
-        # a value contains an irreducible Markdown character sequence.
-        #
-        # Every attempt never raises; the method returns True if any attempt
-        # succeeds and False if all three fail. Each failure logs the full
-        # Telegram error description so the operator can see which branch the
-        # failure landed in.
+        # E-13: the third attempt is the plain-text final fallback.
         if self.application is None:
             logger.warning("📡 send_message skipped: application is None")
             return False
@@ -5977,21 +5937,17 @@ class AEI_Bot:
             except Exception as e:
                 return (False, str(e))
 
-        # Attempt 1: threaded reply with Markdown
         ok, err1 = _attempt(parse_mode, reply_to_message_id)
         if ok:
             return True
         logger.info(f"📡 send_message attempt 1 failed (reply+Markdown): {err1}")
 
-        # Attempt 2: standalone message with Markdown, only when the first
-        # failure was a reply-target problem. This is the E-11 fix for D-45.
         if _looks_like_reply_error(err1):
             ok2, err2 = _attempt(parse_mode, None)
             if ok2:
                 logger.info("📡 send_message attempt 2 succeeded (standalone Markdown)")
                 return True
             logger.info(f"📡 send_message attempt 2 failed (standalone Markdown): {err2}")
-            # Attempt 3: plain-text fallback (E-13)
             ok3, err3 = _attempt(None, None)
             if ok3:
                 logger.info("📡 send_message attempt 3 succeeded (plain text)")
@@ -5999,14 +5955,11 @@ class AEI_Bot:
             logger.warning(f"📡 send_message attempt 3 failed (plain text): {err3}")
             return False
 
-        # If the first failure was a Markdown parse problem, go straight to the
-        # plain-text fallback (E-13). Do not retry the threaded reply.
         if _looks_like_parse_error(err1):
             ok3, err3 = _attempt(None, reply_to_message_id)
             if ok3:
                 logger.info("📡 send_message attempt 3 succeeded (plain text, threaded)")
                 return True
-            # Last resort: plain text, no reply threading
             ok3b, err3b = _attempt(None, None)
             if ok3b:
                 logger.info("📡 send_message attempt 3b succeeded (plain text, standalone)")
@@ -6014,7 +5967,6 @@ class AEI_Bot:
             logger.warning(f"📡 send_message attempt 3/3b failed (plain text): {err3b}")
             return False
 
-        # Unknown failure class. Try standalone Markdown, then plain text.
         ok2, err2 = _attempt(parse_mode, None)
         if ok2:
             logger.info("📡 send_message attempt 2 succeeded (standalone Markdown, unknown class)")
@@ -6036,7 +5988,7 @@ class AEI_Bot:
                 st = self.engine.state
                 idx = st.Z - (st.y + 1)
                 regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-                logger.info(f"📊 itr#{iteration} price={st.price} vol={st.last_volume} provider={st.last_provider} tick={st.tick} FG={st.FG} regime={regime} bars={st.bar_close_count} signals={len(st.signal_history)} ohlcv={len(self.engine.ohlcv_history)}")
+                logger.info(f"📊 itr#{iteration} p={st.price} V={st.last_volume} Π_r={st.last_provider} tick={st.tick} FG={st.FG} regime={regime} bars={st.bar_close_count} σ={len(st.signal_history)} ohlcv={len(self.engine.ohlcv_history)}")
             except Exception:
                 logger.exception(f"❌ Feed iteration #{iteration} failed")
             await asyncio.sleep(UPDATE_INTERVAL)
@@ -6045,13 +5997,13 @@ class AEI_Bot:
     def _build_main_keyboard(self) -> InlineKeyboardMarkup:
         webapp_url = self._resolve_webapp_url()
         rows = [
-            [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("📈 Signal", callback_data="signal")],
+            [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("📈 σ", callback_data="signal")],
             [InlineKeyboardButton("📊 Regime", callback_data="regime"), InlineKeyboardButton("📉 Indicators", callback_data="indicators")],
             [InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"), InlineKeyboardButton("⏹️ Stop Feed", callback_data="stop_feed")],
             [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
             [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
             [InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics")],
-            [InlineKeyboardButton("📊 Chart", callback_data="chart"), InlineKeyboardButton("🎯 Projection", callback_data="projection")],
+            [InlineKeyboardButton("📊 Chart", callback_data="chart"), InlineKeyboardButton("🎯 Λ_A", callback_data="projection")],
         ]
         if webapp_url:
             rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
@@ -6073,11 +6025,11 @@ class AEI_Bot:
             "📊 *Available Commands:*\n"
             "`/status` - Current market state & regime\n"
             "`/regime` - Detailed regime classification\n"
-            "`/signal` - Current trading signal\n"
+            "`/signal` - Current trading σ\n"
             "`/indicators` - 13D Hilbert Space projection\n"
             "`/fvg` - Fair Value Gap tracking\n"
-            "`/chart` - Recent signals summary\n"
-            "`/projection` - Arc-length future price projection\n"
+            "`/chart` - Recent σ summary\n"
+            "`/projection` - Arc-length Λ_A projection\n"
             "`/diagnostics` - Full engine diagnostic snapshot\n"
             "`/reset` - Reset topological branch\n"
             "`/start_feed` - Start price feed\n"
@@ -6092,8 +6044,8 @@ class AEI_Bot:
             f"*Current Symbol:* `{SYMBOL}`\n"
             f"🔄 *Feed Status:* {feed_status}\n"
             f"🧠 *Engine Status:* {engine_status}\n"
-            f"📊 *Bar Closes:* {self.engine.state.bar_close_count}  |  *Signals:* {len(self.engine.state.signal_history)}\n"
-            f"📡 *Provider:* `{self.engine.state.last_provider or '—'}`  |  *Volume:* `{self.engine.state.last_volume}`\n"
+            f"📊 *Bar Closes:* {self.engine.state.bar_close_count}  |  *σ:* {len(self.engine.state.signal_history)}\n"
+            f"📡 *Π_r:* `{self.engine.state.last_provider or '—'}`  |  *V:* `{self.engine.state.last_volume}`\n"
             "💎 Natalia Tanyatia"
         )
         await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
@@ -6131,23 +6083,23 @@ class AEI_Bot:
         response = (
             "🔷 *ÆEA STATUS*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
-            f"💰 *Price:* {price_display}\n"
+            f"💰 *p:* {price_display}\n"
             f"📊 *Regime:* {regime}\n"
-            f"🎯 *Signal Level:* {state.signal:.5f}\n"
+            f"🎯 *σ Level:* {state.signal:.5f}\n"
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🔄 *Tick:* {state.tick}\n"
             f"🧠 *Engine State:* {init_mark}\n"
             f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
-            f"📡 *Signal Fires:* {self.engine._imbalance_fire_count}\n"
+            f"📡 *σ Fires:* {self.engine._imbalance_fire_count}\n"
             f"📊 *Bar Closes:* {state.bar_close_count}\n"
             f"📈 *OHLCV Bars:* {len(self.engine.ohlcv_history)}\n"
-            f"🎯 *Signal History:* {len(state.signal_history)}\n"
+            f"🎯 *σ History:* {len(state.signal_history)}\n"
             f"📡 *Feed Active:* {feed_mark}\n"
-            f"🛰️ *Provider:* `{state.last_provider or '—'}`  |  *Volume:* `{state.last_volume}`\n"
-            f"🔀 *KC:* {state.KC}  |  *Prime:* {state.prime}  |  *Dime:* {state.dime}\n"
-            f"🔀 *Invert:* {state.invert}  |  *Mem:* {state.mem}  |  *Tag:* {state.tag}\n"
+            f"🛰️ *Π_r:* `{state.last_provider or '—'}`  |  *V:* `{state.last_volume}`\n"
+            f"🔀 *K_C:* {state.KC}  |  *π':* {state.prime}  |  *δ_m:* {state.dime}\n"
+            f"🔀 *I_v:* {state.invert}  |  *μ_m:* {state.mem}  |  *τ_g:* {state.tag}\n"
             f"🔀 *A:* {state.A}  |  *B:* {state.B}  |  *C:* {state.C}  |  *c:* {state.c}\n"
             f"🔀 *tick_tock:* {state.tick_tock}  |  *safety:* {state.safety}\n"
             f"📊 *Orders:* {order_str}\n"
@@ -6155,8 +6107,8 @@ class AEI_Bot:
             f"🎯 *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
             f"🔍 *OnTrack Runs:* {state.on_track_runs}  |  *OnStand Runs:* {state.on_stand_runs}\n"
             f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}\n"
-            f"🔢 *X_scan:* {state.X_scan}  |  *Y_scan:* {state.Y_scan}  |  *X_PERIOD:* {X_PERIOD}\n"
-            f"🌌 *Projection:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (trigger={state.projection_trigger or '—'})\n"
+            f"🔢 *X_s:* {state.X_scan}  |  *Y_s:* {state.Y_scan}  |  *X_PERIOD:* {X_PERIOD}\n"
+            f"🌌 *Λ_A:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (τ_r={state.projection_trigger or '—'})\n"
             f"💬 *Last Inbound Msg Id:* {state.last_inbound_message_id}"
         )
         reply_markup = self._build_main_keyboard()
@@ -6172,16 +6124,16 @@ class AEI_Bot:
             "🔬 *ENGINE DIAGNOSTICS*\n"
             f"🔄 *Tick:* {status.get('tick')}\n"
             f"🧮 *Indicator Populates:* {status.get('indicator_populate_count')}\n"
-            f"📡 *Signal Fires:* {status.get('imbalance_fire_count')}\n"
+            f"📡 *σ Fires:* {status.get('imbalance_fire_count')}\n"
             f"📊 *Bar Closes:* {status.get('bar_close_count')}\n"
             f"📈 *OHLCV History:* {len(self.engine.ohlcv_history)}\n"
-            f"🎯 *Signal History:* {status.get('signal_count')}\n"
+            f"🎯 *σ History:* {status.get('signal_count')}\n"
             f"⚖️ *Local m / n:* {status.get('m_count')} / {status.get('n_count')}\n"
             f"⚖️ *m / n (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
-            f"🎯 *Signal:* {status.get('signal'):.5f}\n"
+            f"🎯 *σ:* {status.get('signal'):.5f}\n"
             f"📊 *Regime:* {status.get('regime')}\n"
-            f"🔀 *KC:* {status.get('KC')}  |  *Prime:* {status.get('prime')}  |  *Dime:* {status.get('dime')}\n"
-            f"🔀 *Invert:* {status.get('invert')}  |  *Mem:* {status.get('mem')}  |  *Tag:* {status.get('tag')}\n"
+            f"🔀 *K_C:* {status.get('KC')}  |  *π':* {status.get('prime')}  |  *δ_m:* {status.get('dime')}\n"
+            f"🔀 *I_v:* {status.get('invert')}  |  *μ_m:* {status.get('mem')}  |  *τ_g:* {status.get('tag')}\n"
             f"🔀 *A:* {status.get('A')}  |  *B:* {status.get('B')}  |  *C:* {status.get('C')}  |  *c:* {status.get('c')}\n"
             f"🔀 *tick_tock:* {status.get('tick_tock')}  |  *signature:* {status.get('signature')}  |  *safety:* {status.get('safety')}\n"
             f"📈 *Trailing Stop Active:* {status.get('trailing_stop_active')}\n"
@@ -6198,13 +6150,13 @@ class AEI_Bot:
             f"🔢 *Derivatives I/iI/J/iJ:* {status.get('I')}/{status.get('iI')}/{status.get('J')}/{status.get('iJ')}\n"
             f"🔢 *Derivatives iZ/iz/iW/iw/iO/io:* {status.get('iZ')}/{status.get('iz')}/{status.get('iW')}/{status.get('iw')}/{status.get('iO')}/{status.get('io')}\n"
             f"🔢 *Scan S/T/r/ir:* {status.get('S')}/{status.get('T')}/{status.get('r')}/{status.get('ir')}\n"
-            f"🔢 *X_scan/Y_scan:* {status.get('X_scan')}/{status.get('Y_scan')}\n"
+            f"🔢 *X_s/Y_s:* {status.get('X_scan')}/{status.get('Y_scan')}\n"
             f"🔢 *X_PERIOD (const):* {X_PERIOD}  |  *Y_START (const):* {Y_START}\n"
-            f"🔢 *iATR/iStdDev/iIHKk/iIHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
+            f"🔢 *i_ATR/i_σ/i_IHKk/i_IHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
             f"🔢 *lPass/ilPass/kPass/ikPass:* {status.get('lPass')}/{status.get('ilPass')}/{status.get('kPass')}/{status.get('ikPass')}\n"
-            f"🛰️ *Provider:* {status.get('last_provider')}  |  *Volume:* {status.get('last_volume')}\n"
-            f"🌌 *Projection Computed:* {status.get('projection_computed_at')}\n"
-            f"🌌 *Projection Trigger:* {status.get('projection_trigger')}\n"
+            f"🛰️ *Π_r:* {status.get('last_provider')}  |  *V:* {status.get('last_volume')}\n"
+            f"🌌 *Λ_A Computed:* {status.get('projection_computed_at')}\n"
+            f"🌌 *Λ_A Trigger:* {status.get('projection_trigger')}\n"
             f"💬 *Last Inbound Msg Id:* {status.get('last_inbound_message_id')}"
         )
         if update.callback_query:
@@ -6233,10 +6185,10 @@ class AEI_Bot:
         response = (
             "📊 *REGIME CLASSIFICATION*\n"
             f"🔹 *Current Regime:* {current}\n"
-            f"🔹 *Premium:* {premium:.5f}\n"
-            f"🔸 *Discount:* {discount:.5f}\n"
-            f"📈 *HH:* {hh:.5f}\n"
-            f"📉 *LL:* {ll:.5f}\n"
+            f"🔹 *Π:* {premium:.5f}\n"
+            f"🔸 *Δ:* {discount:.5f}\n"
+            f"📈 *H_H:* {hh:.5f}\n"
+            f"📉 *L_L:* {ll:.5f}\n"
             f"🟢 *Local m:* {m_local}\n"
             f"🔴 *Local n:* {n_local}\n"
             f"⚖️ *Imbalance Condition:* {imbalance_status}"
@@ -6272,17 +6224,17 @@ class AEI_Bot:
         condition_met = (m_local >= 12) or (n_local >= 12)
         condition_mark = "✅ MET" if condition_met else "❌ NOT MET"
         response = (
-            "🎯 *TRADING SIGNAL*\n"
+            "🎯 *TRADING σ*\n"
             f"📊 *Direction:* {direction}\n"
             f"📈 *Confidence:* {confidence}\n"
-            f"🎯 *Signal Level:* {state.signal:.5f}\n"
-            f"💰 *Current Price:* {state.price:.5f}\n"
+            f"🎯 *σ Level:* {state.signal:.5f}\n"
+            f"💰 *Current p:* {state.price:.5f}\n"
             f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
-            f"✅ *δ(m-n-2)=1 (MQL4 gate):* {condition_mark}\n"
-            f"🔀 *KC State:* {state.KC}\n"
-            f"🔢 *Prime:* {state.prime}\n"
-            f"🔢 *Dime:* {state.dime}\n"
+            f"✅ *δ(m−n−2)=1 (MQL4 gate):* {condition_mark}\n"
+            f"🔀 *K_C State:* {state.KC}\n"
+            f"🔢 *π':* {state.prime}\n"
+            f"🔢 *δ_m:* {state.dime}\n"
             f"🔄 *Tick Count:* {state.tick}\n"
             f"📈 *Trailing Stop:* {'Active' if state.trailing_stop_active else 'Inactive'}\n"
             f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}"
@@ -6345,13 +6297,13 @@ class AEI_Bot:
         response = (
             "📐 *FAIR VALUE GAP TRACKING*\n"
             f"📊 *FVG Count:* {state.FVG + 1}\n"
-            f"💰 *Current Price:* {state.price:.5f}\n"
+            f"💰 *Current p:* {state.price:.5f}\n"
             f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n\n"
             "*Topological Anchors:*\n"
-            f"  🔷 *Premium:* {premium_val:.5f}\n"
-            f"  🔶 *Discount:* {discount_val:.5f}\n"
-            f"  📈 *HH:* {hh_val:.5f}\n"
-            f"  📉 *LL:* {ll_val:.5f}"
+            f"  🔷 *Π:* {premium_val:.5f}\n"
+            f"  🔶 *Δ:* {discount_val:.5f}\n"
+            f"  📈 *H_H:* {hh_val:.5f}\n"
+            f"  📉 *L_L:* {ll_val:.5f}"
             f"{bridge_str}"
         )
         await update.message.reply_text(response, parse_mode="Markdown")
@@ -6367,17 +6319,17 @@ class AEI_Bot:
                 arrow = "📈" if sig["type"] == "BUY" else "🔴"
                 signal_summary += f"{arrow} {sig['type']} @ {sig['price']:.2f} ({sig['regime']})\n"
         else:
-            signal_summary = "No signals yet.\n"
+            signal_summary = "No σ yet.\n"
         response = (
-            "📊 *RECENT SIGNALS*\n\n"
+            "📊 *RECENT σ*\n\n"
             f"{signal_summary}\n"
             f"📈 *Symbol:* {SYMBOL}\n"
             f"📊 *Bar Closes:* {state.bar_close_count}\n"
             f"📈 *OHLCV Bars:* {len(engine.ohlcv_history)}\n"
-            f"🎯 *Total Signals Recorded:* {len(state.signal_history)}\n"
-            f"🕐 *Last Signal:* {state.last_signal_at or 'never'}\n\n"
+            f"🎯 *Total σ Recorded:* {len(state.signal_history)}\n"
+            f"🕐 *Last σ:* {state.last_signal_at or 'never'}\n\n"
             "Open the ÆEA Mini App for the full interactive candlestick chart "
-            "with FVG drawings, signal overlays, and the arc-length projection."
+            "with FVG drawings, σ overlays, and the arc-length projection."
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -6400,18 +6352,18 @@ class AEI_Bot:
         response = (
             "🌌 *ARC-LENGTH PRICE PROJECTION*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
-            f"💰 *Current Price:* {proj.get('current_price')}\n"
-            f"🎯 *Signal Anchor:* {proj.get('signal_level')}\n"
+            f"💰 *Current p:* {proj.get('current_price')}\n"
+            f"🎯 *σ Anchor:* {proj.get('signal_level')}\n"
             f"📊 *Regime:* {proj.get('regime')}\n"
-            f"🧮 *Branch:* {meta.get('kind', '—')}\n"
-            f"⏱️ *Horizon:* {meta.get('horizon', '—')} bars\n"
-            f"📐 *Slope:* {meta.get('slope', '—')}\n"
-            f"📊 *Amplitude:* {meta.get('amplitude', '—')}\n"
-            f"🎯 *Center:* {meta.get('center', '—')}\n"
-            f"💧 *Damping:* {meta.get('damping', '—')}\n"
-            f"🛰️ *Provider:* {meta.get('provider', '—')}\n"
+            f"🧮 *β:* {meta.get('kind', '—')}\n"
+            f"⏱️ *H_z:* {meta.get('horizon', '—')} bars\n"
+            f"📐 *s_l:* {meta.get('slope', '—')}\n"
+            f"📊 *A_m:* {meta.get('amplitude', '—')}\n"
+            f"🎯 *C_n:* {meta.get('center', '—')}\n"
+            f"💧 *D_p:* {meta.get('damping', '—')}\n"
+            f"🛰️ *Π_r:* {meta.get('provider', '—')}\n"
             f"🕐 *Computed:* {proj.get('computed_at', 'never')}\n"
-            f"🌌 *Trigger:* {proj.get('trigger', '—')}\n\n"
+            f"🌌 *τ_r:* {proj.get('trigger', '—')}\n\n"
             "*First 10 projected bars:*\n"
             f"{path_preview or '  (no path computed)'}\n"
             "_The projection is drawn on the chart ahead of the current bar. "
@@ -6439,15 +6391,15 @@ class AEI_Bot:
             "🧠 *State Reset:*\n"
             "• All 13 indicator arrays reset\n"
             "• Regime classification seeded to 'sRange'\n"
-            "• Premium/Discount/HH/LL reset to current bar data\n"
-            "• k/l signal flags cleared\n"
+            "• Π/Δ/H_H/L_L reset to current bar data\n"
+            "• k/l σ flags cleared\n"
             "• FVG anchor map cleared\n"
             "• Arc-length projection recomputed\n"
             "• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
             f"• 📈 OnTrack runs preserved: {prev_on_track}\n"
             f"• 📉 OnStand runs preserved: {prev_on_stand}\n"
-            f"• 🎯 Signal history preserved: {prev_signals}\n"
+            f"• 🎯 σ history preserved: {prev_signals}\n"
             f"• ⚖️ Authoritative m/n preserved: {prev_auth_m}/{prev_auth_n}\n\n"
             "📊 *Ready for new regime classification...*"
         )
@@ -6488,12 +6440,12 @@ class AEI_Bot:
             f"📈 *Symbol:* {SYMBOL}\n"
             f"🔄 *Update Interval:* {UPDATE_INTERVAL}s\n"
             f"📊 *Historical Data:* {hist_count} bars loaded\n"
-            f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
-            f"📦 *Volume:* `{self.engine.state.last_volume}`\n"
+            f"🛰️ *Π_r:* `{self.engine.state.last_provider or '—'}`\n"
+            f"📦 *V:* `{self.engine.state.last_volume}`\n"
             f"🧠 *Initialization Mode:* {init_mode}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
-            f"🌌 *Projection:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
-            f"🔮 *Status:* Monitoring for signals..."
+            f"🌌 *Λ_A:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
+            f"🔮 *Status:* Monitoring for σ..."
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(reply_text, parse_mode="Markdown")
@@ -6522,8 +6474,8 @@ class AEI_Bot:
             f"*Relay Gated:* {'🔐 yes' if RELAY_KEY else '🔓 no'}",
             f"*Primary symbol:* `{info.get('primary_symbol')}`",
             f"*Active symbol:* `{info.get('active_symbol')}`",
-            f"*Provider:* `{info.get('provider') or '—'}`",
-            f"*Last volume:* `{info.get('last_volume') or '0'}`",
+            f"*Π_r:* `{info.get('provider') or '—'}`",
+            f"*Last V:* `{info.get('last_volume') or '0'}`",
             f"*Chain index:* {info.get('chain_index')}",
             f"*Failure count:* {info.get('failure_count')}",
             f"*Fallback count:* {info.get('fallback_count')}",
@@ -6572,7 +6524,7 @@ class AEI_Bot:
             await update.message.reply_text(
                 f"✅ *Symbol changed*\n"
                 f"📈 *New Symbol:* `{result.get('symbol')}`\n"
-                f"🛰️ *Provider:* `{result.get('provider') or '—'}`\n"
+                f"🛰️ *Π_r:* `{result.get('provider') or '—'}`\n"
                 f"🧠 *Engine reinitialized*\n"
                 f"🌌 *Projection seeded for the new symbol*",
                 parse_mode="Markdown",
@@ -6589,8 +6541,8 @@ class AEI_Bot:
             f"📈 *Symbol:* {SYMBOL}\n"
             f"📛 *Name:* {info.get('name', 'Unknown')}\n"
             f"💵 *Currency:* {info.get('currency', 'USD')}\n"
-            f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
-            f"📦 *Last Volume:* `{self.engine.state.last_volume}`\n"
+            f"🛰️ *Π_r:* `{self.engine.state.last_provider or '—'}`\n"
+            f"📦 *Last V:* `{self.engine.state.last_volume}`\n"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -6619,7 +6571,7 @@ class AEI_Bot:
             "  📐 Draw FVGs with long-press\n"
             "  🎯 Place simulated orders\n"
             "  ⚙ Engine settings panel\n"
-            "  📋 Regime map, log bar, signal markers\n"
+            "  📋 Regime map, log bar, σ markers\n"
             "  🌌 Arc-length price projection ahead of the current bar\n"
             "  ➡️ Scroll-ahead viewport to the projected take-profit level\n"
             "  🔔 Toast + Telegram push notifications on every execution\n"
@@ -6644,7 +6596,7 @@ class AEI_Bot:
             f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
             f"*Diagnostics endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
             f"*OHLCV endpoint:* `{public_url.rstrip('/')}/ohlcv`\n"
-            f"*Signals endpoint:* `{public_url.rstrip('/')}/signals`\n"
+            f"*σs endpoint:* `{public_url.rstrip('/')}/signals`\n"
             f"*Orders endpoint:* `{public_url.rstrip('/')}/orders`\n"
             f"*Regime map endpoint:* `{public_url.rstrip('/')}/regime-map`\n"
             f"*Log endpoint:* `{public_url.rstrip('/')}/log`\n"
@@ -6694,9 +6646,6 @@ class AEI_Bot:
         # E-10: capture the running event loop so synchronous callers (the
         # price-feed thread, the toast worker thread, the tick loop) can
         # schedule coroutines onto it via asyncio.run_coroutine_threadsafe.
-        # python-telegram-bot 21.x makes Bot.send_message a coroutine; calling
-        # it without await constructs the coroutine and garbage-collects it,
-        # silently dropping the message and emitting a RuntimeWarning.
         try:
             self._loop = asyncio.get_running_loop()
             logger.info("🔁 Event loop captured for cross-thread send")
@@ -6739,28 +6688,28 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.4.2).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.0).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
-        logger.info("🎯 Signal logging enabled for all imbalance events.")
+        logger.info("🎯 σ logging enabled for all imbalance events.")
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
         logger.info("🛑 Trailing stop: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
         logger.info("🎯 Kronecker gate: LOCAL m/n from authoritative H()/L() stamps.")
         logger.info("🔄 O() regime mutation preserved as FF no-op.")
-        logger.info("📊 OnBar per-j HH/LL anchoring.")
+        logger.info("📊 OnBar per-j H_H/L_L anchoring.")
         logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (aliased S, not grown copy).")
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
-        logger.info("📈 Chart endpoint & signal history tracking enabled.")
+        logger.info("📈 Chart endpoint & σ history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
         logger.info("🛰️ Multi-provider relay: Binance → CoinGecko → Yahoo for crypto; Yahoo for equities/futures.")
         logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
         logger.info("🌌 Arc-length projection computed per bar close and on demand.")
-        logger.info("🔔 Push notification on every signal, every execution, every FVG, every close.")
-        logger.info("🔔 /toasts endpoint serves incremental signal+execution+fvg toasts with first_available_seq.")
+        logger.info("🔔 Push notification on every σ, every execution, every FVG, every close.")
+        logger.info("🔔 /toasts endpoint serves incremental σ+execution+fvg toasts with first_available_seq.")
         logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
         logger.info("🖱️ Scroll-ahead viewport: drag past the last bar to the projected TP.")
-        logger.info("🎯 Execution-gated projection: recomputed on Bull/Bear/Hawk/Dove/Whisky/Wine/Watter/Blood/Diamond/Ruby.")
+        logger.info("🎯 Execution-gated projection: recomputed on ↑/↓/↑_H/↓_D/↑_W/↓_W/↑_T/↓_B/◆/◆_R.")
         logger.info("💬 Push threading: every push is a reply to the user's most recent inbound message.")
         logger.info("📮 Bounded push dispatch: single queue.Queue(maxsize=512) with one daemon consumer.")
         logger.info("🔁 Cross-thread send: enabled via asyncio.run_coroutine_threadsafe")
