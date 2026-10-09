@@ -1,6 +1,6 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Codex-Symbolica v4.5.0: every user-visible FF label replaced with its CODEX SYMBOLICA equivalent — K_C, I_v, τ_g, π', δ_m, μ_m, ↑, ↓, ↑_H, ↓_D, ↑_W, ↓_W, ↑_T, ↓_B, ◆, ◆_R, ▲, ▼, σ, p, P, o, H_H, L_L, Π, Δ, m, n, f, g, γ_f, Z, z, O, o, W, w, I, i_I, J, i_J, X_s, Y_s, S, T, r, i_r, i_ATR, i_σ, i_IHKk, i_IHKt, Π_r, V, λ_m, Λ_A, τ_r, β, H_z, s_l, A_m, C_n, D_p; carries forward v4.4.2 Send-Hardened (reply-target hardening, Markdown escaping, plain-text final fallback), v4.4.1 Await-Corrected (cross-thread async send), v4.4.0 Scroll-Ahead (execution-gated arc-length projection, scroll-ahead viewport to the projected TP, bot replies threaded to the user's last command, bounded push dispatch, FVG merge, legend stacking), v4.3.0 Enhancement (Telegram push on every σ/execution/FVG/close, multi-provider relay with real Binance/CoinGecko volume, arc-length future price projection), and v4.2.0 semantics-restored baseline (FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Scroll-Ahead v4.4.0: execution-gated arc-length projection, scroll-ahead viewport to the projected TP, bot replies threaded to the user's last command, bounded push dispatch, FVG merge, legend stacking; carries forward v4.3.0 Enhancement: Telegram push on every signal/execution/FVG/close, multi-provider relay with real Binance/CoinGecko volume, arc-length future price projection; semantics-restored v4.2.0 baseline preserved: FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
   "repository": "https://github.com/yourusername/aea-bot",
   "keywords": [
     "trading",
@@ -21,11 +21,7 @@
     "exact-arithmetic",
     "scroll-ahead",
     "execution-gated",
-    "reply-threaded",
-    "send-hardened",
-    "await-corrected",
-    "codex-symbolica",
-    "cs-labels"
+    "reply-threaded"
   ],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
@@ -85,7 +81,7 @@
       "required": false
     },
     "PUSH_ON_SIGNAL": {
-      "description": "Send a Telegram push on every σ. Defaults to '1'.",
+      "description": "Send a Telegram push on every signal. Defaults to '1'.",
       "required": false
     },
     "PUSH_ON_EXECUTION": {

@@ -136,7 +136,7 @@ code {
 <div class="container">
 
 <h1>⚡ ÆEA BRIDGE</h1>
-<div class="subtitle">HEROKU BACKEND · MQL4-PARITY PORT · v4.5.0</div>
+<div class="subtitle">HEROKU BACKEND · MQL4-PARITY PORT · v4.4.0</div>
 
 <div class="status-line">
     <div class="status-dot wait" id="dot"></div>
@@ -149,16 +149,15 @@ code {
     <div class="row"><span class="lbl">Version</span><span class="val" id="version">—</span></div>
     <div class="row"><span class="lbl">Engine Initialized</span><span class="val" id="engineInit">—</span></div>
     <div class="row"><span class="lbl">Symbol</span><span class="val" id="symbol">—</span></div>
-    <div class="row"><span class="lbl">Π_r</span><span class="val proj" id="provider">—</span></div>
+    <div class="row"><span class="lbl">Provider</span><span class="val proj" id="provider">—</span></div>
     <div class="row"><span class="lbl">OHLCV Bars</span><span class="val" id="ohlcv">—</span></div>
     <div class="row"><span class="lbl">Bar Closes</span><span class="val" id="barCloses">—</span></div>
-    <div class="row"><span class="lbl">σ Count</span><span class="val" id="signals">—</span></div>
+    <div class="row"><span class="lbl">Signals</span><span class="val" id="signals">—</span></div>
     <div class="row"><span class="lbl">Indicator Passes</span><span class="val" id="indPasses">—</span></div>
     <div class="row"><span class="lbl">Imbalance Fires</span><span class="val" id="imbFires">—</span></div>
     <div class="row"><span class="lbl">Relay Healthy</span><span class="val" id="relayHealthy">—</span></div>
     <div class="row"><span class="lbl">Last Price Update</span><span class="val" id="lastUpdate">—</span></div>
-    <div class="row"><span class="lbl">Λ_A Computed</span><span class="val proj" id="projComputed">—</span></div>
-    <div class="row"><span class="lbl">Λ_A Trigger</span><span class="val proj" id="projTrigger">—</span></div>
+    <div class="row"><span class="lbl">Projection Computed</span><span class="val proj" id="projComputed">—</span></div>
 </div>
 
 <div class="panel">
@@ -168,11 +167,11 @@ code {
         <li><span class="method">GET</span><span class="path">/config</span><span class="desc">bridge configuration</span></li>
         <li><span class="method">GET</span><span class="path">/settings</span><span class="desc">11 FF inputs</span></li>
         <li><span class="method">GET</span><span class="path">/toasts</span><span class="desc">incremental notifications</span></li>
-        <li><span class="method">GET</span><span class="path">/projection</span><span class="desc">arc-length forward path (Λ_A)</span></li>
+        <li><span class="method">GET</span><span class="path">/projection</span><span class="desc">arc-length forward path</span></li>
         <li><span class="method">GET</span><span class="path">/state</span><span class="desc">engine state (legacy)</span></li>
         <li><span class="method">GET</span><span class="path">/miniapp-state</span><span class="desc">authoritative TWA state</span></li>
         <li><span class="method">GET</span><span class="path">/ohlcv</span><span class="desc">historical bars</span></li>
-        <li><span class="method">GET</span><span class="path">/signals</span><span class="desc">recent σ history</span></li>
+        <li><span class="method">GET</span><span class="path">/signals</span><span class="desc">recent signal history</span></li>
         <li><span class="method">GET</span><span class="path">/fvg</span><span class="desc">user FVG anchors</span></li>
         <li><span class="method">GET</span><span class="path">/probe</span><span class="desc">relay diagnostics</span></li>
         <li><span class="method">GET</span><span class="path">/diagnostics</span><span class="desc">full engine snapshot</span></li>
@@ -181,7 +180,7 @@ code {
         <li><span class="method">GET</span><span class="path">/indicators</span><span class="desc">indicator series</span></li>
         <li><span class="method">GET</span><span class="path">/log</span><span class="desc">server log buffer</span></li>
         <li><span class="method">POST</span><span class="path">/handshake</span><span class="desc">Telegram initData exchange</span></li>
-        <li><span class="method">POST</span><span class="path">/projection/refresh</span><span class="desc">recompute Λ_A projection</span></li>
+        <li><span class="method">POST</span><span class="path">/projection/refresh</span><span class="desc">recompute projection</span></li>
         <li><span class="method">POST</span><span class="path">/fvg</span><span class="desc">commit FVG anchor</span></li>
         <li><span class="method">POST</span><span class="path">/reset</span><span class="desc">manual state reset</span></li>
         <li><span class="method">POST</span><span class="path">/settings</span><span class="desc">apply FF inputs</span></li>
@@ -208,21 +207,8 @@ code {
     </div>
 </div>
 
-<div class="panel">
-    <div class="panel-title">Codex-Symbolica Labels</div>
-    <div class="row"><span class="lbl">σ</span><span class="val">Signal (was: signal)</span></div>
-    <div class="row"><span class="lbl">p / P / o</span><span class="val">Price / Previous price / Open (was: price / Price / open)</span></div>
-    <div class="row"><span class="lbl">K_C / I_v</span><span class="val">KC gate / Inversion (was: KC / invert)</span></div>
-    <div class="row"><span class="lbl">π' / δ_m / μ_m / τ_g</span><span class="val">Prime / Dime / Mem / Tag</span></div>
-    <div class="row"><span class="lbl">↑ / ↓ / ◆ / ◆_R</span><span class="val">Bull / Bear / Diamond / Ruby</span></div>
-    <div class="row"><span class="lbl">Π / Δ / H_H / L_L</span><span class="val">Premium / Discount / HH / LL</span></div>
-    <div class="row"><span class="lbl">Π_r / V / λ_m</span><span class="val">Provider / Volume / Last inbound message id</span></div>
-    <div class="row"><span class="lbl">Λ_A / τ_r / β / H_z</span><span class="val">Arc-Length Projection / Trigger / Branch / Horizon</span></div>
-    <div class="row"><span class="lbl">s_l / A_m / C_n / D_p</span><span class="val">Slope / Amplitude / Center / Damping</span></div>
-</div>
-
 <div class="footer">
-    ÆEA v4.5.0 (Codex-Symbolica Edition) · Natalia Tanyatia · LOGOS = Φ = Truth = Path = Origin
+    ÆEA v4.4.0 · Natalia Tanyatia · LOGOS = Φ = Truth = Path = Origin
 </div>
 
 </div>
@@ -268,7 +254,6 @@ async function probe() {
         setText('relayHealthy', data.relay_healthy ? 'yes' : 'no', data.relay_healthy ? 'ok' : 'err');
         setText('lastUpdate', data.last_price_update || 'never');
         setText('projComputed', data.projection_computed_at || 'never', 'proj');
-        setText('projTrigger', data.projection_trigger || '—', 'proj');
     } catch (e) {
         dot.className = 'status-dot err';
         statusText.textContent = 'Bridge unreachable: ' + (e.message || e);
