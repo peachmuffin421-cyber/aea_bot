@@ -8,96 +8,26 @@ Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
 Version: 4.5.0 (Codex-Symbolica Edition)
 
-v4.5.0 is a label-substitution release on top of v4.4.2 (Send-Hardened
-Edition). It does not alter any FF-invariant logic. Every user-visible
-natural-language name that originates from ÆEA.mq4 and is displayed to the
-user — via Telegram push, bot command response, or bridge payload consumed
-by the TWA — is substituted with the plain-text Maths of the Foundational
-Framework in the CODEX SYMBOLICA (CS) notation of LOGOS.MD.
+This is the corrected v4.5.0 that removes the arc-length projection
+feature (which was never part of ÆEA.mq4), moves Bollinger family
+computation to the backend (restoring single-source-of-truth), and
+hardens the Telegram send path against the HTTP 400 failures observed
+in production.
 
-The mapping is exhaustive and one-to-one:
+FF-invariant logic is preserved exactly. Every state transition,
+every indicator formula, every regime classification, and every
+Kronecker-gate subblock remains at its MQL4-parity semantics.
 
-    KC        → K_C       (Keep Constant/Change Constant gate; 𝒜₁₄, ℋ₁₁)
-    invert    → I_v       (Inversion operator; 𝒜₁₄)
-    tag       → τ_g       (Tag index; 𝒜₁₄)
-    prime     → π'        (Prime branch; 𝒜₁₄)
-    dime      → δ_m       (Dimensional state; 𝒜₁₄)
-    mem       → μ_m       (Memory state; 𝒜₁₄)
-    Bull      → ↑         (Bullish execution; ℋ₁₇)
-    Bear      → ↓         (Bearish execution; ℋ₁₇)
-    Hawk      → ↑_H       (Bullish count-based)
-    Dove      → ↓_D       (Bearish count-based)
-    Whisky    → ↑_W       (Bullish fallback)
-    Wine      → ↓_W       (Bearish fallback)
-    Watter    → ↑_T       (Bullish count-based)
-    Blood     → ↓_B       (Bearish count-based)
-    Diamond   → ◆         (δ(m−n−2)=1 bullish)
-    Ruby      → ◆_R       (δ(m−n−2)=1 bearish)
-    Top       → ▲         (Top FVG; 𝒜₁₄)
-    Bott      → ▼         (Bott FVG; 𝒜₁₄)
-    signal    → σ         (Signal level; 𝒜₁₄)
-    price     → p         (Price; 𝒜₁₄)
-    Price     → P         (Previous price; 𝒜₁₄)
-    open      → o         (Open price; 𝒜₁₄)
-    HH        → H_H       (Highest High; 𝒜₁₄)
-    LL        → L_L       (Lowest Low; 𝒜₁₄)
-    Premium   → Π         (Premium anchor; 𝒜₁₄)
-    Discount  → Δ         (Discount anchor; 𝒜₁₄)
-    m         → m         (Bullish count; ℋ₁, ℋ₂)
-    n         → n         (Bearish count; ℋ₁, ℋ₂)
-    f         → f         (Overbought threshold 200/3; 𝒜₁₄)
-    g         → g         (Oversold threshold 100/3; 𝒜₁₄)
-    gf        → γ_f       (Tolerance 40/15; 𝒜₁₄)
-    Z         → Z         (Directional derivative; 𝒜₁₄)
-    z         → z         (Directional derivative; 𝒜₁₄)
-    O         → O         (Directional derivative; 𝒜₁₄)
-    o (deriv) → o         (Directional derivative; 𝒜₁₄)
-    W         → W         (Directional derivative; 𝒜₁₄)
-    w         → w         (Directional derivative; 𝒜₁₄)
-    I         → I         (Directional derivative; 𝒜₁₄)
-    iI        → i_I       (Directional derivative; 𝒜₁₄)
-    J         → J         (Directional derivative; 𝒜₁₄)
-    iJ        → i_J       (Directional derivative; 𝒜₁₄)
-    X_scan    → X_s       (Scan index; 𝒜₁₄)
-    Y_scan    → Y_s       (Scan index; 𝒜₁₄)
-    S         → S         (Scan bound; 𝒜₁₄)
-    T         → T         (Scan bound; 𝒜₁₄)
-    r         → r         (Radius; 𝒜₂)
-    ir        → i_r       (Radius; 𝒜₂)
-    iATR      → i_ATR     (ATR normalized; 𝒜₁₄)
-    iStdDev   → i_σ       (StdDev normalized; 𝒜₁₄)
-    iIHKk     → i_IHKk    (Ichimoku Kijun normalized; 𝒜₁₄)
-    iIHKt     → i_IHKt    (Ichimoku Tenkan normalized; 𝒜₁₄)
-    Provider  → Π_r       (Relay provider)
-    Volume    → V         (Volume; 𝒜₁₄)
-    LastMsg   → λ_m       (Last inbound message ID; E-6)
-    Arc Proj. → Λ_A       (Arc-Length Projection; 𝒜₂, 𝒜₃)
-    Trigger   → τ_r       (Projection trigger; E-4)
-    Branch    → β         (Projection branch; E-4)
-    Horizon   → H_z       (Projection horizon; E-4)
-    Slope     → s_l       (Projection slope; E-4)
-    Amplitude → A_m       (Projection amplitude; E-4)
-    Center    → C_n       (Projection center; E-4)
-    Damping   → D_p       (Projection damping; E-4)
+The Codex-Symbolica label mapping is unchanged from the intended v4.5.0:
 
-The emojis that appear in the FF's Alert() and Print() strings are preserved
-verbatim. The message templates keep their bold markers, code spans, and
-emojis; only the interpolated values are renamed.
+    KC → K_C, invert → I_v, tag → τ_g, prime → π', dime → δ_m, mem → μ_m,
+    Bull → ↑, Bear → ↓, Hawk → ↑_H, Dove → ↓_D, Whisky → ↑_W, Wine → ↓_W,
+    Watter → ↑_T, Blood → ↓_B, Diamond → ◆, Ruby → ◆_R, Top → ▲, Bott → ▼,
+    signal → σ, price → p, Price → P, open → o, HH → H_H, LL → L_L,
+    Premium → Π, Discount → Δ, m → m, n → n, f → f, g → g, gf → γ_f,
+    Provider → Π_r, Volume → V, LastMsg → λ_m.
 
-v4.5.0 carries forward v4.4.2 (Send-Hardened Edition) unchanged:
-  E-11 (reply-target hardening), E-12 (Markdown escaping), E-13 (plain-text
-  final fallback) are all in force. v4.4.2 carried forward v4.4.1 (Await-
-  Corrected Edition): E-10 (cross-thread async send via
-  run_coroutine_threadsafe). v4.4.1 carried forward v4.4.0 (Scroll-Ahead
-  Edition): E-4 (execution-gated projection), E-5 (scroll-ahead viewport),
-  E-6 (bot replies threaded), E-7 (bounded push dispatch), E-8 (FVG merge),
-  E-9 (legend stacking). v4.4.0 carried forward v4.3.0 (Enhancement Edition):
-  E-1 (push on every event), E-2 (multi-provider real volume), E-3 (arc-
-  length projection parameters).
-
-Every FF-preserved line, Print() string, Alert() emoji, and state transition
-is reproduced verbatim from v4.4.2; only the user-visible labels are
-substituted with their CS equivalents.
+Emojis from the FF's Alert() and Print() strings are retained verbatim.
 """
 import asyncio
 import hashlib
@@ -292,7 +222,7 @@ class Fraction:
         return f"Fraction({self._f.numerator}/{self._f.denominator})"
 
 # ============================================================================
-# D-46 / E-12: LEGACY-MARKDOWN ESCAPING
+# TELEGRAM ERROR HANDLING HELPERS
 # ============================================================================
 def _md_escape(value) -> str:
     """Escape every legacy-Markdown control character in an interpolated value.
@@ -340,6 +270,21 @@ def _looks_like_parse_error(desc: str) -> bool:
     d = desc.lower()
     return ('parse' in d) or ("can't parse" in d) or ('entities' in d) or ('entity' in d)
 
+def _extract_telegram_error(exc: Exception) -> Tuple[str, str]:
+    """Extract the full Telegram API error description from a caught exception.
+
+    The python-telegram-bot library raises telegram.error.BadRequest with a
+    message that contains the API's `description` field. This helper reads
+    that field if present, and falls back to str(exc) otherwise. It never
+    raises.
+    """
+    try:
+        if hasattr(exc, 'message') and exc.message:
+            return (str(exc.message), str(exc))
+    except Exception:
+        pass
+    return (str(exc), str(exc))
+
 # ============================================================================
 # CONSTANTS & CONFIGURATION — MQL4 PARITY
 # ============================================================================
@@ -361,27 +306,6 @@ MAX_PERIOD_MIN: int = MIN_PERIOD_FLOOR + MAX_MIN_GAP
 MAX_PERIOD_MAX: int = 1000
 MIN_PERIOD_MIN: int = MIN_PERIOD_FLOOR
 MIN_PERIOD_MAX: int = 1000
-
-# ============================================================================
-# E-3: ARC-LENGTH PROJECTION PARAMETERS
-# ============================================================================
-# D-32: validated at module load. The previous silent Decimal('0.94') fallback
-# in _project_arc_length() masked operator error (e.g. scientific-notation env
-# values or trailing whitespace). We now fail fast at import time.
-ARC_PROJECTION_HORIZON: int = int(os.getenv("ARC_PROJECTION_HORIZON", "30"))
-ARC_PROJECTION_STEP: int = int(os.getenv("ARC_PROJECTION_STEP", "1"))
-_ARC_PROJECTION_DAMPING_RAW: str = os.getenv("ARC_PROJECTION_DAMPING", "0.94").strip()
-try:
-    ARC_PROJECTION_DAMPING_D: Decimal = Decimal(_ARC_PROJECTION_DAMPING_RAW)
-    if not (Decimal('0.0') < ARC_PROJECTION_DAMPING_D < Decimal('1.0')):
-        raise ValueError(
-            f"ARC_PROJECTION_DAMPING must be in (0, 1); got {_ARC_PROJECTION_DAMPING_RAW!r}"
-        )
-except Exception as _arc_damp_exc:
-    raise RuntimeError(
-        f"ARC_PROJECTION_DAMPING could not be parsed as a Decimal in (0, 1): "
-        f"{_ARC_PROJECTION_DAMPING_RAW!r} ({_arc_damp_exc})"
-    ) from _arc_damp_exc
 
 # ============================================================================
 # M-9: EXACT SYMBOLIC THRESHOLDS + FLOAT64 ULP-MATCHED SHADOWS
@@ -529,13 +453,8 @@ _PUSH_DEDUP_LOCK = threading.Lock()
 _PUSH_DEDUP: Dict[str, float] = {}
 
 # ============================================================================
-# E-7: BOUNDED PUSH DISPATCH QUEUE
+# BOUNDED PUSH DISPATCH QUEUE
 # ============================================================================
-# A single queue.Queue(maxsize=512) consumed by one daemon thread replaces the
-# per-toast threading.Thread spawn. Under sustained signals the previous code
-# created unbounded threads; the queue bounds memory and thread count to O(1).
-# If the queue is full, the oldest entry is dropped and a warning is logged —
-# the toast buffer remains the authoritative record.
 _PUSH_QUEUE: "queue.Queue[Optional[Tuple[str, Dict[str, Any]]]]" = queue.Queue(maxsize=512)
 _PUSH_WORKER_STARTED: bool = False
 _PUSH_WORKER_LOCK = threading.Lock()
@@ -584,7 +503,7 @@ logger.addHandler(_RingHandler())
 logger.propagate = False
 
 # ============================================================================
-# E-1 + E-6 + E-12 + CS-LABELS: TOAST EMISSION + TELEGRAM PUSH
+# TOAST EMISSION + TELEGRAM PUSH
 # ============================================================================
 def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
     if kind == "signal" and not PUSH_ON_SIGNAL:
@@ -656,23 +575,12 @@ def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
     if bot is None:
         return
     st = engine.state
-    # D-31: prefer chat_id strictly; fall back to webapp_user_id only when
-    # chat_id is None. Previously the code picked whichever was set, which
-    # could double-send or send to the wrong chat in group contexts.
     target_chat = st.chat_id
     if target_chat is None:
         target_chat = st.webapp_user_id
     if not target_chat:
         return
-    # E-6: thread the push as a reply to the user's most recent inbound
-    # message. If none has been recorded, the push is a standalone message.
     reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
-    # E-10: route through the cross-thread send helper so the coroutine is
-    # actually awaited on the bot's event loop. The old direct call to
-    # app.bot.send_message(...) constructed the coroutine and dropped it.
-    # E-11: the helper internally retries without reply_to_message_id and
-    # without parse_mode on 400s, so a stale reply id or an unparseable
-    # field no longer silences the push.
     if not hasattr(bot, "_send_message_sync"):
         logger.warning("📲 Push skipped: bot has no _send_message_sync")
         return
@@ -962,16 +870,9 @@ class AEI_CoreState:
 
     execution_fired: bool = False
 
-    projection_path: List[Dict[str, Any]] = field(default_factory=list)
-    projection_meta: Dict[str, Any] = field(default_factory=dict)
-    projection_computed_at: Optional[str] = None
-    projection_trigger: str = ""
-
     last_provider: str = ""
     last_volume: Decimal = Decimal('0.0')
 
-    # E-6: message id of the user's most recent inbound message in chat_id.
-    # _telegram_push() threads every push as reply_to_message_id to this id.
     last_inbound_message_id: Optional[int] = None
 
 # ============================================================================
@@ -1101,7 +1002,7 @@ def to_decimal(value):
         return Decimal('0.0')
 
 # ============================================================================
-# M-1: SYMBOL POINT-SIZE
+# SYMBOL POINT-SIZE
 # ============================================================================
 def symbol_point(symbol: str) -> Decimal:
     digits = _symbol_digits(symbol)
@@ -1235,7 +1136,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.5.0",
+                    "User-Agent": "AEI-Bridge/4.5.0",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1480,7 +1381,8 @@ class AEEA_Engine:
         self._last_telegram_toast_seq: int = 0
         self._last_dispatch_event: str = ""
         self._last_comment_line: str = ""
-        self._last_projection_bar: int = -1
+        self._bb_family_cache: Optional[Dict[str, Any]] = None
+        self._bb_family_cache_key: str = ""
 
     def _com_price(self) -> Decimal:
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
@@ -1490,12 +1392,6 @@ class AEEA_Engine:
         logger.info("⚡ OnInit(): EA engine lifecycle beginning")
         self.OnReInit()
         logger.info("🟢 OnInit(): state reset to baseline")
-        # E-4: seed the projection once on engine init so the TWA has a path
-        # to scroll into before the first execution fires.
-        try:
-            self._project_arc_length(trigger="init")
-        except Exception as e:
-            logger.warning(f"Initial projection seed failed: {e}")
 
     def OnReInit(self) -> None:
         st = self.state
@@ -1601,10 +1497,6 @@ class AEEA_Engine:
         st.kPass = Decimal('0.0')
         st.ikPass = Decimal('0.0')
         st.execution_fired = False
-        st.projection_path = []
-        st.projection_meta = {}
-        st.projection_computed_at = None
-        st.projection_trigger = ""
 
         self.ohlcv_history = saved_ohlcv
         st.price = saved_price
@@ -1632,7 +1524,8 @@ class AEEA_Engine:
         st.last_inbound_message_id = saved_inbound_msg
         self._last_kronecker_bar = saved_lk_bar
         self._last_comment_line = saved_comment
-        self._last_projection_bar = -1
+        self._bb_family_cache = None
+        self._bb_family_cache_key = ""
 
         logger.info("ReSet   ")
 
@@ -2658,11 +2551,6 @@ class AEEA_Engine:
             self._Bott(emit_toast=False)
             st.D = st.price
             if not st.safety: st.safety = True
-        # E-4: execution-gated projection refresh.
-        try:
-            self._project_arc_length(trigger="execution")
-        except Exception as e:
-            logger.warning(f"Projection refresh (diamond) failed: {e}")
 
     def _dispatch_ruby_subblock(self, fg: str) -> None:
         st = self.state
@@ -2739,11 +2627,6 @@ class AEEA_Engine:
             self._Top(emit_toast=False)
             st.E = st.price
             if not st.safety: st.safety = True
-        # E-4: execution-gated projection refresh.
-        try:
-            self._project_arc_length(trigger="execution")
-        except Exception as e:
-            logger.warning(f"Projection refresh (ruby) failed: {e}")
 
     def _dispatch_hawk_subblock(self, fg: str) -> None:
         st = self.state
@@ -2820,11 +2703,6 @@ class AEEA_Engine:
             self._Bott(emit_toast=False)
             st.D = st.price
             if not st.safety: st.safety = True
-        # E-4: execution-gated projection refresh.
-        try:
-            self._project_arc_length(trigger="execution")
-        except Exception as e:
-            logger.warning(f"Projection refresh (hawk) failed: {e}")
 
     def _dispatch_dove_subblock(self, fg: str) -> None:
         st = self.state
@@ -2901,11 +2779,6 @@ class AEEA_Engine:
             self._Top(emit_toast=False)
             st.E = st.price
             if not st.safety: st.safety = True
-        # E-4: execution-gated projection refresh.
-        try:
-            self._project_arc_length(trigger="execution")
-        except Exception as e:
-            logger.warning(f"Projection refresh (dove) failed: {e}")
 
     def _on_call(self) -> None:
         st = self.state
@@ -4204,9 +4077,6 @@ class AEEA_Engine:
                 if provider:
                     self.ohlcv_history[-1]["provider"] = provider
 
-        # E-4: the projection is NOT recomputed on bar close. It is recomputed
-        # on execution events (see the four dispatch subblocks), on engine init,
-        # on symbol change, and on explicit POST /projection/refresh.
         if bar_closed and len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
             self._populate_indicator_matrix()
 
@@ -4230,9 +4100,6 @@ class AEEA_Engine:
         condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-        # D-46 / E-12: every interpolated value is Markdown-escaped before it
-        # is placed into the parse_mode="Markdown" template. The static
-        # template characters (*, _, `) remain meaningful to the parser.
         msg = (
             f"🎯 *ÆEA σ ALERT*\n"
             f"📊 *Direction:* {_md_escape(direction)}\n"
@@ -4280,7 +4147,6 @@ class AEEA_Engine:
         side_str = side if side else "NONE"
         ticket_str = f"#{ticket}" if ticket != -1 else "—"
         reason_str = f" | {_md_escape(reason)}" if reason else ""
-        # D-46 / E-12: escape every interpolated value.
         msg = (
             f"{emoji} *ÆEA EXEC*\n"
             f"📛 *Event:* {_md_escape(event)}\n"
@@ -4404,8 +4270,6 @@ class AEEA_Engine:
             "comment_line": self._format_comment_line(),
             "last_provider": st.last_provider,
             "last_volume": str(st.last_volume),
-            "projection_computed_at": st.projection_computed_at,
-            "projection_trigger": st.projection_trigger,
             "last_inbound_message_id": st.last_inbound_message_id,
         }
 
@@ -4446,6 +4310,72 @@ class AEEA_Engine:
             return []
         row = st.iA[idx] if idx < len(st.iA) else []
         return [float(v) for v in row[-count:]]
+
+    def get_bb_family(self) -> Dict[str, Any]:
+        """Compute all 58 Bollinger pairs (periods 3..60) with MQL4 parity.
+
+        The computation uses exact Decimal arithmetic for the SMA and variance,
+        with the final sqrt evaluated via Decimal.sqrt() at the configured
+        precision (getcontext().prec = 50). This matches the FF's iBands
+        semantics (dev=2, close, shift=0, population sigma).
+
+        Results are cached by (last_timestamp, last_close) to avoid recomputing
+        on every frontend poll. The cache is invalidated whenever a new bar
+        closes or the active symbol changes.
+        """
+        if not self.ohlcv_history or len(self.ohlcv_history) < BB_MAX_PERIOD + 1:
+            return {"periods": [], "upper": [], "lower": [], "count": 0, "reason": "insufficient_history"}
+        last_bar = self.ohlcv_history[-1]
+        cache_key = f"{last_bar['timestamp'].isoformat() if isinstance(last_bar['timestamp'], datetime) else last_bar['timestamp']}|{last_bar['close']}|{len(self.ohlcv_history)}"
+        if self._bb_family_cache is not None and self._bb_family_cache_key == cache_key:
+            return self._bb_family_cache
+
+        closes = [d["close"] for d in self.ohlcv_history]
+        n = len(closes)
+        upper_all: List[List[Optional[float]]] = []
+        lower_all: List[List[Optional[float]]] = []
+        periods_out: List[int] = []
+
+        for p in range(BB_MIN_PERIOD, BB_MAX_PERIOD + 1):
+            up_arr: List[Optional[float]] = [None] * n
+            lo_arr: List[Optional[float]] = [None] * n
+            p_dec = Decimal(p)
+            dev_dec = Decimal('2.0')
+            for i in range(p - 1, n):
+                window = closes[i - p + 1:i + 1]
+                s = Decimal('0.0')
+                for v in window:
+                    s += v
+                mean = s / p_dec
+                vsum = Decimal('0.0')
+                for v in window:
+                    d = v - mean
+                    vsum += d * d
+                variance = vsum / p_dec
+                if variance > Decimal('0.0'):
+                    sd = variance.sqrt()
+                else:
+                    sd = Decimal('0.0')
+                up_arr[i] = float(mean + dev_dec * sd)
+                lo_arr[i] = float(mean - dev_dec * sd)
+            upper_all.append(up_arr)
+            lower_all.append(lo_arr)
+            periods_out.append(p)
+
+        self._bb_family_cache = {
+            "periods": periods_out,
+            "upper": upper_all,
+            "lower": lower_all,
+            "count": n,
+            "min_period": BB_MIN_PERIOD,
+            "max_period": BB_MAX_PERIOD,
+            "dev": "2.0",
+            "applied_price": "close",
+            "shift": 0,
+            "sigma": "population",
+        }
+        self._bb_family_cache_key = cache_key
+        return self._bb_family_cache
 
     def place_order(self, side: str, lot: Decimal, sl: Decimal, tp: Decimal) -> Dict[str, Any]:
         st = self.state
@@ -4693,139 +4623,11 @@ class AEEA_Engine:
                 self.ohlcv_history = historical
                 self._populate_indicator_matrix()
                 self._force_initialization()
-            # E-4: seed the projection for the newly-selected symbol immediately
-            # rather than waiting for the next execution.
-            self._project_arc_length(trigger="symbol_change")
             logger.info(f"📈 Symbol changed to {yahoo_symbol} (provider={self.feed.last_provider()})")
             return {"ok": True, "symbol": yahoo_symbol, "provider": self.feed.last_provider()}
         except Exception as e:
             logger.exception("change_symbol failed")
             return {"error": "change_symbol_exception", "detail": str(e), "symbol": new_symbol}
-
-    def _project_arc_length(self, trigger: str = "manual_refresh") -> None:
-        st = self.state
-        if len(self.ohlcv_history) < min(MIN_HISTORY_WINDOW, 20):
-            st.projection_path = []
-            st.projection_meta = {"reason": "insufficient_history"}
-            st.projection_computed_at = datetime.now().isoformat()
-            st.projection_trigger = trigger
-            return
-        horizon = max(4, min(120, ARC_PROJECTION_HORIZON))
-        price_now = st.price if st.price > Decimal('0.0') else self.ohlcv_history[-1]["close"]
-        signal_now = st.signal if st.signal != Decimal('0.0') else price_now
-        regime_idx = st.Z - (st.y + 1)
-        regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else "Unknown"
-        projection_kind = "range"
-        if regime in ("sTrend", "tTrend"):
-            projection_kind = "trend"
-        elif regime in ("sVolatile", "tVolatile"):
-            projection_kind = "volatile"
-        elif regime in ("sRange", "tRange", "Stable"):
-            projection_kind = "range"
-        slope = Decimal('0.0')
-        if projection_kind == "trend":
-            window = self.ohlcv_history[-min(10, len(self.ohlcv_history)):]
-            if len(window) >= 2:
-                first_close = window[0]["close"]
-                last_close = window[-1]["close"]
-                n_minus_1 = Decimal(len(window) - 1)
-                slope = (last_close - first_close) / n_minus_1
-        amplitude = Decimal('0.0')
-        center = price_now
-        if projection_kind == "volatile":
-            prem = Decimal('0.0')
-            disc = Decimal('0.0')
-            for i in range(len(st.Premium) - 1, -1, -1):
-                if st.Premium[i] > Decimal('0.0'):
-                    prem = st.Premium[i]
-                    break
-            for i in range(len(st.Discount) - 1, -1, -1):
-                if st.Discount[i] > Decimal('0.0'):
-                    disc = st.Discount[i]
-                    break
-            if prem > Decimal('0.0') and disc > Decimal('0.0') and prem > disc:
-                center = (prem + disc) / Decimal('2.0')
-                amplitude = (prem - disc) / Decimal('2.0')
-            else:
-                atr_val = st.ATR[st.y] if st.y < len(st.ATR) else Decimal('0.0')
-                if atr_val > Decimal('0.0'):
-                    amplitude = atr_val
-                    center = price_now
-        damping = ARC_PROJECTION_DAMPING_D
-        path: List[Dict[str, Any]] = []
-        # D-33: keep the half-period as a Fraction until the cosine call site.
-        # When horizon is odd, Decimal(horizon) / Decimal('2.0') is a
-        # non-terminating base-10 decimal and the later multiplication by pi
-        # accumulated representation error. A Fraction half-period avoids this.
-        half_period_frac = PyFraction(horizon, 2)
-        pi_d = Decimal('3.1415926535897932384626433832795028841971693993751')
-        two_pi_d = Decimal('6.2831853071795864769252867665590057683943387987502')
-        for k in range(1, horizon + 1):
-            t = Decimal(k)
-            if projection_kind == "trend":
-                future_price = price_now + slope * t
-            elif projection_kind == "volatile":
-                t_frac = PyFraction(k, 1)
-                ratio_frac = t_frac / PyFraction(horizon, 1)
-                omega_t = two_pi_d * Decimal(ratio_frac.numerator) / Decimal(ratio_frac.denominator)
-                cos_val = self._decimal_cos(omega_t)
-                decay = damping ** k
-                future_price = center + amplitude * cos_val * decay
-            else:
-                t_frac = PyFraction(k, 1)
-                ratio_frac = t_frac / half_period_frac
-                omega_t = pi_d * Decimal(ratio_frac.numerator) / Decimal(ratio_frac.denominator)
-                cos_val = self._decimal_cos(omega_t)
-                delta = price_now - signal_now
-                future_price = signal_now + delta * cos_val
-            path.append({
-                "step": k,
-                "price": str(future_price.quantize(Decimal('0.00001'))),
-                "t": float(t),
-            })
-        st.projection_path = path
-        st.projection_meta = {
-            "kind": projection_kind,
-            "horizon": horizon,
-            "price_now": str(price_now),
-            "signal_now": str(signal_now),
-            "regime": regime,
-            "slope": str(slope),
-            "amplitude": str(amplitude),
-            "center": str(center),
-            "damping": str(damping),
-            "provider": st.last_provider,
-        }
-        st.projection_computed_at = datetime.now().isoformat()
-        st.projection_trigger = trigger
-        logger.info(f"🌌 Projection recomputed (trigger={trigger}, kind={projection_kind}, horizon={horizon})")
-
-    @staticmethod
-    def _decimal_cos(x: Decimal) -> Decimal:
-        x2 = x * x
-        term = Decimal('1.0')
-        result = Decimal('1.0')
-        sign = -1
-        for n in range(1, 30):
-            term = term * x2 / (Decimal(2 * n - 1) * Decimal(2 * n))
-            result = result + (Decimal(sign) * term)
-            sign = -sign
-        return result
-
-    def get_projection(self) -> Dict[str, Any]:
-        st = self.state
-        if not st.projection_path:
-            self._project_arc_length(trigger="manual_refresh")
-        return {
-            "symbol": SYMBOL,
-            "path": st.projection_path,
-            "meta": st.projection_meta,
-            "computed_at": st.projection_computed_at,
-            "current_price": str(st.price),
-            "signal_level": str(st.signal),
-            "regime": st.projection_meta.get("regime") if st.projection_meta else "Unknown",
-            "trigger": st.projection_trigger,
-        }
 
 # ============================================================================
 # BRIDGE STATE
@@ -5160,8 +4962,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "bar_close_count": int(engine.state.bar_close_count) if engine else 0,
                 "relay_healthy": (engine.feed.failure_count() < 3) if engine else True,
                 "provider": engine.feed.last_provider() if engine else "",
-                "projection_computed_at": engine.state.projection_computed_at if engine else None,
-                "projection_trigger": engine.state.projection_trigger if engine else "",
             })
             return
 
@@ -5181,9 +4981,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "push_on_execution": PUSH_ON_EXECUTION,
                 "push_on_fvg": PUSH_ON_FVG,
                 "push_on_close": PUSH_ON_CLOSE,
-                "arc_projection_horizon": ARC_PROJECTION_HORIZON,
-                "arc_projection_step": ARC_PROJECTION_STEP,
-                "arc_projection_damping": str(ARC_PROJECTION_DAMPING_D),
             })
             return
 
@@ -5210,14 +5007,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "latest_seq": latest_seq,
                 "first_available_seq": first_available,
             })
-            return
-
-        if path == "/projection":
-            engine = BRIDGE_ENGINE_REF.get("engine")
-            if engine is None:
-                self._send_json(503, {"error": "engine_not_ready"})
-                return
-            self._send_json(200, engine.get_projection())
             return
 
         if path == "/state":
@@ -5393,12 +5182,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "comment_line": engine._format_comment_line(),
                 "provider": st.last_provider,
                 "last_volume": str(st.last_volume),
-                "projection_meta": st.projection_meta,
-                "projection_computed_at": st.projection_computed_at,
-                "projection_trigger": st.projection_trigger,
                 "last_inbound_message_id": st.last_inbound_message_id,
             }
             self._send_json(200, payload)
+            return
+
+        if path == "/bb-family":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            self._send_json(200, engine.get_bb_family())
             return
 
         if path == "/ohlcv":
@@ -5510,8 +5304,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 diag["last_bar_close"] = engine.state.bar_close_count
                 diag["recent_signals"] = engine.state.signal_history[-10:]
                 diag["provider"] = engine.state.last_provider
-                diag["projection_meta"] = engine.state.projection_meta
-                diag["projection_trigger"] = engine.state.projection_trigger
                 self._send_json(200, diag)
             except Exception as e:
                 self._send_json(500, {"error": "diagnostics_failed", "detail": str(e)})
@@ -5659,9 +5451,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 engine.feed._fallback_count = 0
                 engine._consecutive_zero_prices = 0
                 engine.OnReInit()
-                # E-4 / D-43: do NOT recompute the projection from a half-reset
-                # state. Only the success path calls _project_arc_length().
-                engine._project_arc_length(trigger="manual_refresh")
                 logger.info("🔄 Manual reset requested via /reset")
                 self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
             except Exception as e:
@@ -5735,19 +5524,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 result = engine.close_order(ticket=ticket)
             code = 200 if result.get("ok") else 400
             self._send_json(code, result)
-            return
-
-        if path == "/projection/refresh":
-            engine = BRIDGE_ENGINE_REF.get("engine")
-            if engine is None:
-                self._send_json(503, {"error": "engine_not_ready"})
-                return
-            try:
-                engine._project_arc_length(trigger="manual_refresh")
-                self._send_json(200, engine.get_projection())
-            except Exception as e:
-                logger.error(f"/projection/refresh error: {e}")
-                self._send_json(500, {"error": "internal", "detail": str(e)})
             return
 
         self._send_json(404, {"error": "not_found", "path": path})
@@ -5884,8 +5660,6 @@ class AEI_Bot:
         return TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
 
     def _track_inbound_message(self, update: Update) -> None:
-        # E-6: record the message_id of the user's most recent inbound message
-        # so the next Telegram push can be threaded as a reply to it.
         try:
             msg = update.effective_message
             if msg is not None and getattr(msg, "message_id", None) is not None:
@@ -5899,19 +5673,21 @@ class AEI_Bot:
     def _send_message_sync(self, chat_id: int, text: str, parse_mode: str = "Markdown",
                            reply_to_message_id: Optional[int] = None,
                            timeout: float = 10.0) -> bool:
-        # E-10: schedule an async Bot.send_message onto the bot's event loop
-        # from a synchronous context. Returns True on success, False otherwise.
-        # Never raises. This is the single point through which every
-        # out-of-loop send (signal alert, execution alert, toast push) flows.
-        #
-        # E-11: three attempts, in this order:
-        #   (1) threaded reply with parse_mode=Markdown
-        #   (2) standalone message with parse_mode=Markdown (only if the first
-        #       failure description mentions "reply" or "message to reply")
-        #   (3) standalone message with parse_mode=None (only if either prior
-        #       failure description mentions "parse" or "can't parse entities")
-        #
-        # E-13: the third attempt is the plain-text final fallback.
+        """Schedule an async Bot.send_message onto the bot's event loop
+        from a synchronous context. Returns True on success, False otherwise.
+        Never raises.
+
+        Three attempts, in this order:
+          (1) threaded reply with the requested parse_mode
+          (2) standalone message with the requested parse_mode
+          (3) standalone message with parse_mode=None (plain-text fallback)
+
+        The second attempt is preferred when the first failure appears to be a
+        reply-target problem (stale message_id). The third attempt is always
+        tried when the first two fail, because an unparseable field can
+        sometimes still fail even after the reply target is removed (the
+        entity error is separate from the reply error).
+        """
         if self.application is None:
             logger.warning("📡 send_message skipped: application is None")
             return False
@@ -5921,61 +5697,58 @@ class AEI_Bot:
             return False
         bot = self.application.bot
 
-        def _attempt(pm: Optional[str], rt: Optional[int]) -> Tuple[bool, str]:
-            coro = bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode=pm,
-                reply_to_message_id=rt,
-            )
+        def _attempt(pm: Optional[str], rt: Optional[int]) -> Tuple[bool, str, str]:
+            """Return (ok, description, full_error). Never raises."""
+            try:
+                coro = bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=pm,
+                    reply_to_message_id=rt,
+                )
+            except Exception as coro_exc:
+                desc, full = _extract_telegram_error(coro_exc)
+                return (False, desc, full)
             try:
                 fut = asyncio.run_coroutine_threadsafe(coro, loop)
                 fut.result(timeout=timeout)
-                return (True, "")
+                return (True, "", "")
             except asyncio.TimeoutError:
-                return (False, "timeout")
-            except Exception as e:
-                return (False, str(e))
+                return (False, "timeout", "asyncio.TimeoutError after {timeout}s".format(timeout=timeout))
+            except Exception as exc:
+                desc, full = _extract_telegram_error(exc)
+                return (False, desc, full)
 
-        ok, err1 = _attempt(parse_mode, reply_to_message_id)
-        if ok:
+        ok1, desc1, full1 = _attempt(parse_mode, reply_to_message_id)
+        if ok1:
             return True
-        logger.info(f"📡 send_message attempt 1 failed (reply+Markdown): {err1}")
+        logger.info(f"📡 send_message attempt 1 failed (threaded {parse_mode}): {desc1} | full={full1}")
 
-        if _looks_like_reply_error(err1):
-            ok2, err2 = _attempt(parse_mode, None)
+        needs_reply_retry = _looks_like_reply_error(desc1) or _looks_like_reply_error(full1)
+        needs_parse_retry = _looks_like_parse_error(desc1) or _looks_like_parse_error(full1)
+
+        if needs_reply_retry:
+            ok2, desc2, full2 = _attempt(parse_mode, None)
             if ok2:
-                logger.info("📡 send_message attempt 2 succeeded (standalone Markdown)")
+                logger.info("📡 send_message attempt 2 succeeded (standalone, same parse_mode)")
                 return True
-            logger.info(f"📡 send_message attempt 2 failed (standalone Markdown): {err2}")
-            ok3, err3 = _attempt(None, None)
-            if ok3:
-                logger.info("📡 send_message attempt 3 succeeded (plain text)")
-                return True
-            logger.warning(f"📡 send_message attempt 3 failed (plain text): {err3}")
-            return False
+            logger.info(f"📡 send_message attempt 2 failed (standalone {parse_mode}): {desc2} | full={full2}")
+            needs_parse_retry = needs_parse_retry or _looks_like_parse_error(desc2) or _looks_like_parse_error(full2)
+        else:
+            ok2, desc2, full2 = (False, "", "")
 
-        if _looks_like_parse_error(err1):
-            ok3, err3 = _attempt(None, reply_to_message_id)
+        if needs_parse_retry or not needs_reply_retry:
+            ok3, desc3, full3 = _attempt(None, None)
             if ok3:
-                logger.info("📡 send_message attempt 3 succeeded (plain text, threaded)")
+                logger.info("📡 send_message attempt 3 succeeded (plain text, standalone)")
                 return True
-            ok3b, err3b = _attempt(None, None)
-            if ok3b:
-                logger.info("📡 send_message attempt 3b succeeded (plain text, standalone)")
-                return True
-            logger.warning(f"📡 send_message attempt 3/3b failed (plain text): {err3b}")
-            return False
+            logger.warning(f"📡 send_message attempt 3 failed (plain text): {desc3} | full={full3}")
 
-        ok2, err2 = _attempt(parse_mode, None)
-        if ok2:
-            logger.info("📡 send_message attempt 2 succeeded (standalone Markdown, unknown class)")
-            return True
-        ok3, err3 = _attempt(None, None)
-        if ok3:
-            logger.info("📡 send_message attempt 3 succeeded (plain text, unknown class)")
-            return True
-        logger.warning(f"📡 send_message failed all attempts: reply_err={err1} standalone_err={err2} plain_err={err3}")
+        logger.warning(
+            f"📡 send_message failed all attempts for chat_id={chat_id} | "
+            f"attempt1_desc={desc1!r} attempt1_full={full1!r} | "
+            f"attempt2_desc={desc2!r} attempt2_full={full2!r}"
+        )
         return False
 
     async def price_feed_loop(self):
@@ -6003,7 +5776,7 @@ class AEI_Bot:
             [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
             [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
             [InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics")],
-            [InlineKeyboardButton("📊 Chart", callback_data="chart"), InlineKeyboardButton("🎯 Λ_A", callback_data="projection")],
+            [InlineKeyboardButton("📊 Chart", callback_data="chart")],
         ]
         if webapp_url:
             rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
@@ -6029,7 +5802,6 @@ class AEI_Bot:
             "`/indicators` - 13D Hilbert Space projection\n"
             "`/fvg` - Fair Value Gap tracking\n"
             "`/chart` - Recent σ summary\n"
-            "`/projection` - Arc-length Λ_A projection\n"
             "`/diagnostics` - Full engine diagnostic snapshot\n"
             "`/reset` - Reset topological branch\n"
             "`/start_feed` - Start price feed\n"
@@ -6108,7 +5880,6 @@ class AEI_Bot:
             f"🔍 *OnTrack Runs:* {state.on_track_runs}  |  *OnStand Runs:* {state.on_stand_runs}\n"
             f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}\n"
             f"🔢 *X_s:* {state.X_scan}  |  *Y_s:* {state.Y_scan}  |  *X_PERIOD:* {X_PERIOD}\n"
-            f"🌌 *Λ_A:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (τ_r={state.projection_trigger or '—'})\n"
             f"💬 *Last Inbound Msg Id:* {state.last_inbound_message_id}"
         )
         reply_markup = self._build_main_keyboard()
@@ -6155,8 +5926,6 @@ class AEI_Bot:
             f"🔢 *i_ATR/i_σ/i_IHKk/i_IHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
             f"🔢 *lPass/ilPass/kPass/ikPass:* {status.get('lPass')}/{status.get('ilPass')}/{status.get('kPass')}/{status.get('ikPass')}\n"
             f"🛰️ *Π_r:* {status.get('last_provider')}  |  *V:* {status.get('last_volume')}\n"
-            f"🌌 *Λ_A Computed:* {status.get('projection_computed_at')}\n"
-            f"🌌 *Λ_A Trigger:* {status.get('projection_trigger')}\n"
             f"💬 *Last Inbound Msg Id:* {status.get('last_inbound_message_id')}"
         )
         if update.callback_query:
@@ -6329,45 +6098,7 @@ class AEI_Bot:
             f"🎯 *Total σ Recorded:* {len(state.signal_history)}\n"
             f"🕐 *Last σ:* {state.last_signal_at or 'never'}\n\n"
             "Open the ÆEA Mini App for the full interactive candlestick chart "
-            "with FVG drawings, σ overlays, and the arc-length projection."
-        )
-        reply_markup = self._build_main_keyboard()
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-
-    async def projection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        self._track_inbound_message(update)
-        engine = self.engine
-        state = engine.state
-        if not state.projection_path:
-            engine._project_arc_length(trigger="manual_refresh")
-        proj = engine.get_projection()
-        meta = proj.get("meta") or {}
-        path = proj.get("path") or []
-        path_preview = ""
-        for step in path[:10]:
-            path_preview += f"  ▸ step {step['step']:>2}: {step['price']}\n"
-        response = (
-            "🌌 *ARC-LENGTH PRICE PROJECTION*\n"
-            f"📈 *Symbol:* {SYMBOL}\n"
-            f"💰 *Current p:* {proj.get('current_price')}\n"
-            f"🎯 *σ Anchor:* {proj.get('signal_level')}\n"
-            f"📊 *Regime:* {proj.get('regime')}\n"
-            f"🧮 *β:* {meta.get('kind', '—')}\n"
-            f"⏱️ *H_z:* {meta.get('horizon', '—')} bars\n"
-            f"📐 *s_l:* {meta.get('slope', '—')}\n"
-            f"📊 *A_m:* {meta.get('amplitude', '—')}\n"
-            f"🎯 *C_n:* {meta.get('center', '—')}\n"
-            f"💧 *D_p:* {meta.get('damping', '—')}\n"
-            f"🛰️ *Π_r:* {meta.get('provider', '—')}\n"
-            f"🕐 *Computed:* {proj.get('computed_at', 'never')}\n"
-            f"🌌 *τ_r:* {proj.get('trigger', '—')}\n\n"
-            "*First 10 projected bars:*\n"
-            f"{path_preview or '  (no path computed)'}\n"
-            "_The projection is drawn on the chart ahead of the current bar. "
-            "Drag left past the last bar to scroll into the projected region._"
+            "with FVG drawings and σ overlays."
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -6383,7 +6114,6 @@ class AEI_Bot:
         prev_auth_m = self.engine.state.authoritative_m
         prev_auth_n = self.engine.state.authoritative_n
         self.engine.OnReInit()
-        self.engine._project_arc_length(trigger="manual_refresh")
         reset_msg = (
             "🔄 *TOPOLOGICAL BRANCH RESET*\n"
             "The Hilbert space projection has been re-anchored to the current\n"
@@ -6394,7 +6124,6 @@ class AEI_Bot:
             "• Π/Δ/H_H/L_L reset to current bar data\n"
             "• k/l σ flags cleared\n"
             "• FVG anchor map cleared\n"
-            "• Arc-length projection recomputed\n"
             "• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
             f"• 📈 OnTrack runs preserved: {prev_on_track}\n"
@@ -6444,7 +6173,6 @@ class AEI_Bot:
             f"📦 *V:* `{self.engine.state.last_volume}`\n"
             f"🧠 *Initialization Mode:* {init_mode}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
-            f"🌌 *Λ_A:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
             f"🔮 *Status:* Monitoring for σ..."
         )
         if update.callback_query:
@@ -6525,8 +6253,7 @@ class AEI_Bot:
                 f"✅ *Symbol changed*\n"
                 f"📈 *New Symbol:* `{result.get('symbol')}`\n"
                 f"🛰️ *Π_r:* `{result.get('provider') or '—'}`\n"
-                f"🧠 *Engine reinitialized*\n"
-                f"🌌 *Projection seeded for the new symbol*",
+                f"🧠 *Engine reinitialized*",
                 parse_mode="Markdown",
             )
         else:
@@ -6572,8 +6299,6 @@ class AEI_Bot:
             "  🎯 Place simulated orders\n"
             "  ⚙ Engine settings panel\n"
             "  📋 Regime map, log bar, σ markers\n"
-            "  🌌 Arc-length price projection ahead of the current bar\n"
-            "  ➡️ Scroll-ahead viewport to the projected take-profit level\n"
             "  🔔 Toast + Telegram push notifications on every execution\n"
             "  🔄 Live state polling",
             parse_mode="Markdown",
@@ -6591,7 +6316,7 @@ class AEI_Bot:
             f"*Public URL:* `{public_url}`\n"
             f"*State endpoint:* `{public_url.rstrip('/')}/state`\n"
             f"*Mini App State:* `{public_url.rstrip('/')}/miniapp-state`\n"
-            f"*Projection endpoint:* `{public_url.rstrip('/')}/projection`\n"
+            f"*BB Family:* `{public_url.rstrip('/')}/bb-family`\n"
             f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
             f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
             f"*Diagnostics endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
@@ -6620,8 +6345,6 @@ class AEI_Bot:
             await self.indicators(update, context)
         elif action == "chart":
             await self.chart(update, context)
-        elif action == "projection":
-            await self.projection(update, context)
         elif action == "start_feed":
             await self.start_feed(update, context)
         elif action == "stop_feed":
@@ -6643,9 +6366,6 @@ class AEI_Bot:
         logger.error(f"Update {update} caused error {context.error}")
 
     async def _post_init(self, application) -> None:
-        # E-10: capture the running event loop so synchronous callers (the
-        # price-feed thread, the toast worker thread, the tick loop) can
-        # schedule coroutines onto it via asyncio.run_coroutine_threadsafe.
         try:
             self._loop = asyncio.get_running_loop()
             logger.info("🔁 Event loop captured for cross-thread send")
@@ -6673,7 +6393,6 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("indicators", self.indicators))
         self.application.add_handler(CommandHandler("chart", self.chart))
         self.application.add_handler(CommandHandler("fvg", self.fvg))
-        self.application.add_handler(CommandHandler("projection", self.projection))
         self.application.add_handler(CommandHandler("diagnostics", self.diagnostics))
         self.application.add_handler(CommandHandler("reset", self.reset))
         self.application.add_handler(CommandHandler("start_feed", self.start_feed))
@@ -6704,18 +6423,16 @@ class AEI_Bot:
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
         logger.info("🛰️ Multi-provider relay: Binance → CoinGecko → Yahoo for crypto; Yahoo for equities/futures.")
         logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
-        logger.info("🌌 Arc-length projection computed per bar close and on demand.")
         logger.info("🔔 Push notification on every σ, every execution, every FVG, every close.")
         logger.info("🔔 /toasts endpoint serves incremental σ+execution+fvg toasts with first_available_seq.")
         logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
-        logger.info("🖱️ Scroll-ahead viewport: drag past the last bar to the projected TP.")
-        logger.info("🎯 Execution-gated projection: recomputed on ↑/↓/↑_H/↓_D/↑_W/↓_W/↑_T/↓_B/◆/◆_R.")
         logger.info("💬 Push threading: every push is a reply to the user's most recent inbound message.")
         logger.info("📮 Bounded push dispatch: single queue.Queue(maxsize=512) with one daemon consumer.")
         logger.info("🔁 Cross-thread send: enabled via asyncio.run_coroutine_threadsafe")
-        logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
-        logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
-        logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
+        logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value.")
+        logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id.")
+        logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors.")
+        logger.info("📊 BB family: computed on backend, exposed via GET /bb-family.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
