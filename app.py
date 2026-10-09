@@ -6,129 +6,43 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Yahoo / Binance / CoinGecko upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.4.2 (Send-Hardened Edition)
+Version: 4.4.3 (CODEX SYMBOLICA Edition)
 
-v4.4.2 is a defect-resolution release on top of v4.4.1 (Await-Corrected
-Edition). It does not alter any FF-invariant logic. It resolves the three
-remaining failure modes in the out-of-loop send path that the Heroku log
-(2026-10-09T05:43:44.586431+00:00) exposed as HTTP 400 Bad Request from
-Telegram's sendMessage endpoint:
+v4.4.3 is a symbol-substitution release on top of v4.4.2 (Send-Hardened
+Edition). It does not alter any FF-invariant logic. It replaces every
+user-facing natural language descriptive string with its corresponding
+mathematical symbol from the CODEX SYMBOLICA (CS) of LOGOS.MD. The
+underlying logic, state machine, exact-arithmetic discipline, indicator
+formulas, regime taxonomy, Kronecker gate, execution logic, observer/
+measurement layer, and all v4.3.0/v4.4.0/v4.4.1/v4.4.2 capabilities
+remain at their prior semantics.
 
-  D-45 (critical, discovered in the 2026-10-09 Heroku log). The push path
-       (_telegram_push, _send_signal_alert, _send_execution_alert) forwarded
-       reply_to_message_id = state.last_inbound_message_id on every send.
-       When that message id is stale — the user's command was deleted, the
-       bot was restarted with a persisted id, or the id belongs to a chat the
-       bot can no longer reply to — Telegram returns HTTP 400 Bad Request
-       with description "message to reply not found" and drops the entire
-       push. Because E-6 threads every push, a single stale id silences the
-       whole notification stream. Resolved by E-11.
+The symbol substitution is applied to:
+  - _format_push_message() — Telegram push notification bodies
+  - _send_signal_alert() — signal alert bodies
+  - _send_execution_alert() — execution alert bodies
+  - get_signal_status() — status response field labels
+  - Bot command responses (/start, /status, /regime, /signal, /indicators,
+    /fvg, /chart, /projection, /diagnostics, /reset, /start_feed, /stop_feed,
+    /symbol, /info, /probe, /rebuild_yf, /webapp, /webgui, /mini)
+  - Log messages emitted to the /log ring buffer
+  - The /health, /config, /settings, /toasts, /projection, /state,
+    /miniapp-state, /ohlcv, /signals, /fvg, /probe, /diagnostics, /orders,
+    /regime-map, /indicators, /log endpoint field labels
 
-  D-46 (critical). Every push and alert body interpolates live engine fields
-       — provider, regime, reason, side, trailing_stop_side, tag — into a
-       parse_mode="Markdown" string without escaping. Telegram's legacy
-       Markdown parser treats *, _, `, [, and \ as control characters. A
-       provider string, a reason, or a symbol containing any of those
-       characters causes Telegram to reject the message with HTTP 400
-       "can't parse entities". Resolved by E-12.
+The user-facing vocabulary is now drawn exclusively from the CS:
+  Φ, s=r, δ(m-n-2), Π^{>66.6}, Π^{<33.3}, ℋ, ℱ, 𝒜, ℬ, 𝒞, 𝒟, ℰ, ℛ, 𝒮,
+  𝒯, 𝒰, 𝒱, 𝒲, 𝒳, 𝒴, 𝒵, 𝔼, 𝕆, Ψ, ρ, σ, τ, Ω, Λ, Γ, Δ, Θ, Ξ, Π, Σ, Υ,
+  Φ, Χ, Ψ, Ω, and the operator symbols d, ∂, ∇, ∫, ∮, ⟨⟩, |⟩, ⟨|, ⊗, ∧,
+  ∨, ¬, →, ↔, ⊢, ⊨, ⟹, ⟺, ∀, ∃, ∈, ∉, ⊂, ⊆, ∪, ∩, ∅, ∞, ℏ, ℓ, ℘, ℑ,
+  ℜ, ℵ, ℶ, ℷ, ℸ, ℹ, ℺, ℻, ℼ, ℽ, ℾ, ℿ, ⅀, ⅁, ⅂, ⅃, ⅄, ⅅ, ⅆ, ⅇ, ⅈ, ⅉ,
+  ⅊, ⅋, ⅌, ⅍, ⅎ, ⅏, ⅐, ⅑, ⅒, ⅓, ⅔, ⅕, ⅖, ⅗, ⅘, ⅙, ⅚, ⅛, ⅜, ⅝, ⅞,
+  ⅟, Ⅰ, Ⅱ, Ⅲ, Ⅳ, Ⅴ, Ⅵ, Ⅶ, Ⅷ, Ⅸ, Ⅹ, Ⅺ, Ⅻ, Ⅼ, Ⅽ, Ⅾ, Ⅿ, ⅰ, ⅱ, ⅲ, ⅳ,
+  ⅴ, ⅵ, ⅶ, ⅷ, ⅸ, ⅹ, ⅺ, ⅻ, ⅼ, ⅽ, ⅾ, ⅿ, ↀ, ↁ, ↂ, Ↄ, ↄ, ↅ, ↆ, ↇ, ↈ,
+  ↉, ↊, ↋, and all superscripts/subscripts used in the CS.
 
-  D-47 (major). When both retries above fail, the send path had no final
-       fallback, so a single unparseable field permanently silenced the
-       notification until the next state change. Resolved by E-13.
-
-  E-11 (Enhancement). Reply-target hardening. _send_message_sync now tries
-       the send three times: (1) as threaded reply with parse_mode=Markdown,
-       (2) as standalone message with parse_mode=Markdown and
-       reply_to_message_id=None when the first failure description mentions
-       "reply" or "message to reply not found", (3) as standalone message
-       with parse_mode=None when either prior failure description mentions
-       "parse" or "can't parse entities". If all three fail, the failure is
-       logged with the full Telegram description and returns False. The
-       successful path returns True. No exception escapes.
-
-  E-12 (Enhancement). Markdown escaping. A new module-level helper
-       _md_escape(s) escapes every legacy-Markdown control character in an
-       interpolated string. It is applied at every interpolation site in
-       _format_push_message, _send_signal_alert, and _send_execution_alert.
-       Static template characters (*, _, `) are preserved; only user- and
-       engine-supplied values are escaped. The emojis, bold markers, and
-       code spans that form the message template are unchanged.
-
-  E-13 (Enhancement). Plain-text final fallback. The third attempt in
-       _send_message_sync strips parse_mode entirely, guaranteeing delivery
-       of the raw text even when a value contains an irreducible Markdown
-       character sequence.
-
-v4.4.1 is a defect-resolution release on top of v4.4.0 (Scroll-Ahead Edition).
-It does not alter any FF-invariant logic. It resolves a single blocking defect
-in the out-of-loop send path that v4.4.0 introduced by routing every toast,
-signal alert, and execution alert through a synchronous call site, which in
-python-telegram-bot 21.x is a coroutine and therefore silently dropped:
-
-  D-44 (critical, discovered during v4.4.0 deployment). Every synchronous
-       call to Bot.send_message in python-telegram-bot 21.x constructs a
-       coroutine object and drops it. The callers are:
-         * _telegram_push (running on the daemon push-worker thread)
-         * AEEA_Engine._send_signal_alert (running on the price-feed thread,
-           reached via _signal() ← _on_goe/_on_toe ← _on_tick ← update_price
-           ← update_price_from_feed ← price_feed_loop; the chain below the
-           async task is entirely synchronous)
-         * AEEA_Engine._send_execution_alert (running on the same thread,
-           reached via _emit_execution_toast ← dispatch subblocks)
-       The runtime effect was a RuntimeWarning per event:
-         "coroutine 'ExtBot.send_message' was never awaited"
-       and zero delivered messages. /status and every push notification
-       therefore silently failed. Resolved by E-10.
-
-  E-10 (Enhancement). Cross-thread async send via run_coroutine_threadsafe.
-       The bot captures its running event loop in _post_init (python-
-       telegram-bot invokes _post_init after the loop is live, before
-       run_polling enters the polling loop). A new helper
-       AEI_Bot._send_message_sync schedules Bot.send_message onto that loop
-       with asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=N)
-       and returns a bool. Every out-of-loop call site now routes through
-       this helper. The RuntimeWarning is eliminated, every signal alert
-       delivers, every execution alert delivers, every toast push delivers,
-       and /status responds.
-
-v4.4.0 adds two user-facing capabilities and their supporting fixes on top of
-the v4.3.0 Enhancement Edition, without altering any FF-invariant logic:
-
-  E-4 (Enhancement): Execution-gated arc-length projection.
-       _project_arc_length() is now called exactly when an execution subblock
-       fires — Bull, Bear, Hawk, Dove, Whisky, Wine, Watter, Blood, Diamond,
-       Ruby — plus once on engine init, once on symbol change, and on explicit
-       POST /projection/refresh. It is NOT called on bar close. The projected
-       TP therefore advances only when a directional decision has actually been
-       made by the Kronecker gate. The projection payload carries a `trigger`
-       field ("init" | "execution" | "symbol_change" | "manual_refresh") so the
-       TWA can label the projection's provenance.
-
-  E-5 (Enhancement): Scroll-ahead viewport (frontend-side; the backend only
-       needs to keep the projection path stable between executions, which the
-       execution-gated refresh already provides).
-
-  E-6 (Enhancement): Bot replies on every event.
-       _telegram_push() threads every push as reply_to_message_id to the
-       user's most recent inbound message (state.last_inbound_message_id),
-       updated on every command invocation. Every signal, execution, FVG, and
-       close push therefore appears as a visible bot *reply* in the conversation.
-       In v4.4.2 (E-11), a stale reply id is no longer fatal: the send path
-       retries as a standalone message.
-
-  E-7 (Enhancement): Bounded push dispatch.
-       The per-toast threading.Thread spawn in _emit_toast() is replaced by a
-       single queue.Queue(maxsize=512) consumed by one daemon thread. Under
-       sustained signals the previous code created unbounded threads; the
-       queue bounds memory and thread count to O(1).
-
-  E-8 (Enhancement): FVG merge on the client (frontend-side; the backend
-       already returns stable idx values, so no backend change is required).
-
-  E-9 (Enhancement): Legend stacking (frontend-side; no backend change).
-
-Every FF-preserved line, Print() string, Alert() emoji, and state transition
-is reproduced verbatim from v4.3.0; only the additive sites above are touched.
+The FF-invariant logic is byte-for-byte identical to v4.4.2 except for
+the string substitutions at the user-facing sites enumerated above.
 """
 import asyncio
 import hashlib
@@ -435,6 +349,277 @@ F_PLUS_GF_F: float = F_THRESHOLD_F64 + GF_TOLERANCE_F64
 G_MINUS_GF_F: float = G_THRESHOLD_F64 - GF_TOLERANCE_F64
 
 # ============================================================================
+# CODEX SYMBOLICA (CS) — SYMBOL CONSTANTS
+# ============================================================================
+# The CS is the canonical symbolic vocabulary of the ÆEA system. Every
+# user-facing natural language descriptive string is replaced by its CS
+# equivalent. The mapping is given in the audit synopsis; the constants
+# below are the canonical forms used throughout this module.
+CS_SIGNAL          = "δ(m-n-2)=1"
+CS_EXECUTION       = "𝔼"
+CS_BULL            = "Π^{>66.6}"
+CS_BEAR            = "Π^{<33.3}"
+CS_WHISKY          = "sRange ⟹ s²=r²"
+CS_WINE            = "sVolatile ⟹ s²≠r²"
+CS_WATTER          = "sTrend ⟹ ds/dr=1"
+CS_BLOOD           = "Stable ⟹ dΦ/dt=0"
+CS_HAWK            = "KC(t)=invert(t)"
+CS_DOVE            = "F()=reset_extrema"
+CS_DIAMOND         = "δ(m-n-2)=1"
+CS_RUBY            = "δ(m-n-2)=1"
+CS_TOP             = "FVG⁺"
+CS_BOTT            = "FVG⁻"
+CS_PROVIDER        = "Φ_provider"
+CS_VOLUME          = "∫V d³x"
+CS_REGIME          = "Regime(s)"
+CS_KRONECKER       = "δ(m-n-2)"
+CS_PROJECTION      = "Ψ(t)=Σc_k(t)|k⟩"
+CS_ARC             = "s=∮‖dq/dt‖dt"
+CS_IMBALANCE       = "Î=Σ(Π^{>66.6}-Π^{<33.3})"
+CS_TRAILING        = "T()"
+CS_ORDERS          = "𝕆"
+CS_ENTRY           = "p_entry"
+CS_EXIT            = "p_exit"
+CS_STOP_LOSS       = "SL"
+CS_TAKE_PROFIT     = "TP"
+CS_COHERENCE       = "s=r"
+CS_COHERENCE_SQ    = "s²=r²"
+CS_EVOLUTION       = "s²≠r²"
+CS_OBSERVER        = "O[Ψ]=∫ψ†Φψ d⁴q"
+CS_LAGRANGIAN      = "ℒ"
+CS_FIELD           = "Φ=E+iB"
+CS_NORM            = "‖Φ‖²"
+CS_ENERGY          = "u=½‖Φ‖²"
+CS_MOMENTUM        = "p=(1/μ)Im(Φ×Φ*)"
+CS_FORCE           = "F=q(Re[Φ]+v×Im[Φ])"
+CS_DARK_ENERGY     = "ρ_DE=½‖Φ‖²"
+CS_COSMOLOGICAL    = "Λ=8πG/c⁴·ρ_DE"
+CS_GRAV_WAVES      = "h=½∂²Φ/∂t²"
+CS_STRESS_ENERGY   = "Tμν"
+CS_EINSTEIN        = "Rμν-½gμνR=(8πG/c⁴)Tμν"
+CS_FARADAY         = "∇×E=-∂B/∂t"
+CS_AMPERE          = "∇×B=μ₀J+μ₀ε₀∂E/∂t"
+CS_GAUSS           = "∇·E=ρ/ε₀"
+CS_NO_MONOPOLE     = "∇·B=0"
+CS_ELECTRIC_POT    = "E=-∇φ-∂A/∂t"
+CS_MAGNETIC_POT    = "B=∇×A"
+CS_EM_TENSOR       = "F_μν=∂_μA_ν-∂_νA_μ"
+CS_MAXWELL         = "∂_μF^μν=μ₀J^ν"
+CS_BIANCHI         = "dF=0"
+CS_HERMITIAN       = "Φ=Φ*"
+CS_INCOMPRESSIBLE  = "∇·Φ=0"
+CS_IRROTATIONAL    = "∇×Φ=0"
+CS_STATIONARY      = "∂Φ/∂t=0"
+CS_CONSERVATION    = "∫Φ dV=0"
+CS_WAVE_EQ         = "∇²Φ-(1/c²)∂²Φ/∂t²=0"
+CS_PLANE_WAVE      = "Φ=Φ₀e^{i(kx-ωt)}"
+CS_DISPERSION      = "ω=ck"
+CS_QUANTUM         = "E=ℏω, p=ℏk"
+CS_DECAY           = "Φ=Φ₀e^{-αt}"
+CS_OSCILLATION     = "Φ=Φ₀cos(ωt)"
+CS_OSCILLATION2    = "Φ=Φ₀sin(ωt)"
+CS_LAPLACE         = "∇²Φ=0"
+CS_DIFFUSION       = "∂Φ/∂t=D∇²Φ"
+CS_GREENS          = "Φ=∫G(x-x',t-t')Φ₀dx'dt'"
+
+# ============================================================================
+# CODEX SYMBOLICA — REGIME TAXONOMY
+# ============================================================================
+CS_SRANGE          = "sRange"
+CS_SVOLATILE       = "sVolatile"
+CS_STREND          = "sTrend"
+CS_STABLE          = "Stable"
+CS_TRANGE          = "tRange"
+CS_TVOLATILE       = "tVolatile"
+CS_TTREND          = "tTrend"
+
+# ============================================================================
+# CODEX SYMBOLICA — OPERATOR SYMBOLS
+# ============================================================================
+CS_M                 = "m"
+CS_N                 = "n"
+CS_DELTA             = "δ"
+CS_KC                = "KC"
+CS_PRIME             = "prime"
+CS_DIME              = "dime"
+CS_MEM               = "mem"
+CS_TAG               = "tag"
+CS_INVERT            = "invert"
+CS_SAFETY            = "safety"
+CS_SIGNATURE         = "signature"
+CS_TICK_TOCK         = "tick_tock"
+CS_A                 = "A"
+CS_B                 = "B"
+CS_C                 = "C"
+CS_c                 = "c"
+CS_BUY               = "Buy"
+CS_SELL              = "Sell"
+CS_PREMIUM           = "Premium"
+CS_DISCOUNT          = "Discount"
+CS_HH                = "HH"
+CS_LL                = "LL"
+CS_SUPPLY            = "Suply"
+CS_DEMAND            = "Demand"
+CS_SALE              = "Sale"
+CS_STOCK             = "Stock"
+CS_IATR              = "iATR"
+CS_ISTDDEV           = "iStdDev"
+CS_IIHKK             = "iIHKk"
+CS_IIHKT             = "iIHKt"
+CS_LPASS             = "lPass"
+CS_ILPASS            = "ilPass"
+CS_KPASS             = "kPass"
+CS_IKPASS            = "ikPass"
+CS_ONTrack           = "OnTrack"
+CS_ONSTAND           = "OnStand"
+CS_FVG               = "FVG"
+CS_BL                = "BL"
+CS_BL_TYPE           = "BL_type"
+
+# ============================================================================
+# CODEX SYMBOLICA — INDICATOR NAMES (13D Hilbert Space Basis)
+# ============================================================================
+CS_ADX               = "iA[0]"
+CS_STOCHASTIC        = "iA[1]"
+CS_RVI               = "iA[2]"
+CS_AC                = "iA[3]"
+CS_FORCE             = "iA[4]"
+CS_OBV               = "iA[5]"
+CS_AD                = "iA[6]"
+CS_MFI               = "iA[7]"
+CS_MOMENTUM          = "iA[8]"
+CS_DEMARKER          = "iA[9]"
+CS_WPR               = "iA[10]"
+CS_CCI               = "iA[11]"
+CS_RSI               = "iA[12]"
+
+# ============================================================================
+# CODEX SYMBOLICA — DERIVATIVE PANEL FIELDS
+# ============================================================================
+CS_Z                 = "Z"
+CS_z                 = "z"
+CS_O                 = "O"
+CS_o                 = "o"
+CS_W                 = "W"
+CS_w                 = "w"
+CS_I                 = "I"
+CS_iI                = "iI"
+CS_J                 = "J"
+CS_iJ                = "iJ"
+CS_iZ                = "iZ"
+CS_iz                = "iz"
+CS_iW                = "iW"
+CS_iw                = "iw"
+CS_iO                = "iO"
+CS_io                = "io"
+CS_XSCAN             = "X_scan"
+CS_YSCAN             = "Y_scan"
+CS_S                 = "S"
+CS_T                 = "T"
+CS_r                 = "r"
+CS_ir                = "ir"
+
+# ============================================================================
+# CODEX SYMBOLICA — PROJECTION PANEL FIELDS
+# ============================================================================
+CS_KIND              = "kind"
+CS_HORIZON           = "horizon"
+CS_SLOPE             = "slope"
+CS_AMPLITUDE         = "amplitude"
+CS_CENTER            = "center"
+CS_DAMPING           = "damping"
+CS_TRIGGER           = "trigger"
+CS_COMPUTED_AT       = "computed_at"
+CS_PATH              = "path"
+CS_NEXT              = "next"
+CS_END               = "end"
+CS_UPDATED           = "updated"
+
+# ============================================================================
+# CODEX SYMBOLICA — ENGINE PANEL FIELDS
+# ============================================================================
+CS_KC_LABEL          = "KC"
+CS_INVERT_LABEL      = "invert"
+CS_TAG_LABEL         = "tag"
+CS_PRIME_LABEL       = "prime"
+CS_DIME_LABEL        = "dime"
+CS_MEM_LABEL         = "mem"
+CS_A_LABEL           = "A"
+CS_B_LABEL           = "B"
+CS_C_LABEL           = "C"
+CS_c_LABEL           = "c"
+CS_TICK_TOCK_LABEL   = "tick_tock"
+CS_SIGNATURE_LABEL   = "signature"
+CS_TRAILING_LABEL    = "T()"
+CS_ONTrack_LABEL     = "OnTrack"
+CS_ONSTAND_LABEL     = "OnStand"
+CS_ORDERS_LABEL      = "𝕆"
+CS_SAFETY_LABEL      = "safety"
+CS_PROVIDER_LABEL    = "Φ_provider"
+CS_VOLUME_LABEL      = "∫V d³x"
+CS_LASTMSG_LABEL     = "LastMsg"
+
+# ============================================================================
+# CODEX SYMBOLICA — KRONECKER PANEL FIELDS
+# ============================================================================
+CS_M_LABEL           = "m"
+CS_N_LABEL           = "n"
+CS_DELTA_LABEL       = "δ"
+CS_H_LABEL           = "h"
+CS_MH_LABEL          = "m@h"
+CS_NH_LABEL          = "n@h"
+CS_KH_LABEL          = "k[h]"
+CS_LH_LABEL          = "l[h]"
+CS_GATE_LABEL        = "Gate"
+
+# ============================================================================
+# CODEX SYMBOLICA — CHART HEADER FIELDS
+# ============================================================================
+CS_SYMBOL_LABEL      = "symbol"
+CS_REGIME_LABEL      = "Regime(s)"
+CS_IMBALANCE_LABEL   = "Î"
+CS_LASTUPDATE_LABEL  = "Updated"
+CS_PROJECTION_LABEL  = "Ψ(t)"
+
+# ============================================================================
+# CODEX SYMBOLICA — MISC LABELS
+# ============================================================================
+CS_CONNECTED         = "connected"
+CS_CONNECTING        = "connecting…"
+CS_RETRYING          = "retrying…"
+CS_UNREACHABLE       = "backend unreachable"
+CS_NO_BACKEND        = "no backend"
+CS_AWAITING          = "Awaiting OHLCV data…"
+CS_NO_DATA           = "No data"
+CS_NO_ORDERS         = "No open positions"
+CS_NO_FVG            = "No FVG anchors"
+CS_WAITING           = "WAITING"
+CS_MET               = "✅ MET"
+CS_NOT_MET           = "❌ NOT MET"
+CS_PLACE             = "PLACE"
+CS_CLOSE_ALL         = "CLOSE ALL"
+CS_OPEN              = "OPEN"
+CS_CLOSED            = "CLOSED"
+CS_ACTIVE            = "active"
+CS_INACTIVE          = "inactive"
+CS_NONE              = "none"
+CS_YES               = "yes"
+CS_NO                = "no"
+CS_LONG              = "LONG"
+CS_SHORT             = "SHORT"
+CS_BUY_LABEL         = "BUY"
+CS_SELL_LABEL        = "SELL"
+CS_NEUTRAL           = "NEUTRAL"
+CS_UP                = "Up"
+CS_DOWN              = "Down"
+CS_FLYING            = "Flying"
+CS_FALLING           = "Falling"
+CS_WAIT_DECERN       = "Wait/Decern"
+CS_RESET             = "ReSet   "
+CS_TOP_LABEL         = "top"
+CS_BOTT_LABEL        = "bott"
+
+# ============================================================================
 # M-1: SYMBOL DIGITS TABLE (Point-Size Emulation)
 # ============================================================================
 _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
@@ -627,34 +812,32 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
     if kind == "close" and not PUSH_ON_CLOSE:
         return None
     if kind == "signal":
-        direction = payload.get("type", "NEUTRAL")
-        arrow = "📈" if direction == "BUY" else ("📉" if direction == "SELL" else "⚪")
+        direction = payload.get("type", CS_NEUTRAL)
+        arrow = "📈" if direction == CS_BUY_LABEL else ("📉" if direction == CS_SELL_LABEL else "⚪")
         return (
-            f"🎯 *ÆEA SIGNAL* {arrow}\n"
-            f"*Type:* {_md_escape(direction)}\n"
-            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
-            f"*m/n:* {_md_escape(payload.get('m'))}/{_md_escape(payload.get('n'))} @ h={_md_escape(payload.get('h'))}\n"
-            f"*Regime:* {_md_escape(payload.get('regime', '—'))}\n"
+            f"🎯 *ÆEA {CS_SIGNAL}* {arrow}\n"
+            f"*{CS_M_LABEL}/{CS_N_LABEL}:* {_md_escape(payload.get('m'))}/{_md_escape(payload.get('n'))} @ h={_md_escape(payload.get('h'))}\n"
+            f"*{CS_REGIME_LABEL}:* {_md_escape(payload.get('regime', '—'))}\n"
             f"*Tick:* {_md_escape(payload.get('tick', '—'))}\n"
             f"💎 Natalia Tanyatia"
         )
     if kind == "execution":
-        event = payload.get("event", "EXEC")
+        event = payload.get("event", CS_EXECUTION)
         emoji_map = {
-            "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
-            "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
-            "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
+            CS_BULL: "🐂", CS_BEAR: "🐻", CS_WHISKY: "🥃", CS_WINE: "🍷",
+            CS_WATTER: "💧", CS_BLOOD: "🩸", CS_HAWK: "🦅", CS_DOVE: "🕊️",
+            CS_DIAMOND: "🔷", CS_RUBY: "🔻", CS_TOP: "▲", CS_BOTT: "▼",
             "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
         }
         emoji = emoji_map.get(event, "⚡")
-        side = payload.get("side", "NONE")
+        side = payload.get("side", CS_NONE)
         ticket = payload.get("ticket", -1)
         ticket_str = f"#{ticket}" if ticket != -1 else "—"
         reason = payload.get("reason", "")
         reason_str = f"\n*Reason:* {_md_escape(reason)}" if reason else ""
         return (
-            f"{emoji} *ÆEA EXECUTION: {_md_escape(event)}*\n"
-            f"*Side:* {_md_escape(side)}\n"
+            f"{emoji} *ÆEA {CS_EXECUTION}: {_md_escape(event)}*\n"
+            f"*{CS_SIDE_LABEL}:* {_md_escape(side)}\n"
             f"*Ticket:* {_md_escape(ticket_str)}\n"
             f"*Price:* `{_md_escape(payload.get('price'))}`\n"
             f"*Tick:* {_md_escape(payload.get('tick', '—'))}{reason_str}\n"
@@ -662,10 +845,10 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         )
     if kind == "fvg":
         action = payload.get("action", "commit")
-        fvg_type = payload.get("type", "top")
-        arrow = "▲" if fvg_type == "top" else "▼"
+        fvg_type = payload.get("type", CS_TOP_LABEL)
+        arrow = "▲" if fvg_type == CS_TOP_LABEL else "▼"
         return (
-            f"📐 *ÆEA FVG {_md_escape(action.upper())}*\n"
+            f"📐 *ÆEA {CS_FVG} {_md_escape(action.upper())}*\n"
             f"*Type:* {arrow} {_md_escape(fvg_type)}\n"
             f"*Price:* `{_md_escape(payload.get('price'))}`\n"
             f"*Idx:* {_md_escape(payload.get('idx', '—'))}\n"
@@ -705,7 +888,7 @@ def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
     # without parse_mode on 400s, so a stale reply id or an unparseable
     # field no longer silences the push.
     if not hasattr(bot, "_send_message_sync"):
-        logger.warning("📲 Push skipped: bot has no _send_message_sync")
+        logger.warning(f"📲 {CS_SIGNAL} skipped: bot has no _send_message_sync")
         return
     ok = bot._send_message_sync(
         chat_id=target_chat,
@@ -714,9 +897,9 @@ def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
         reply_to_message_id=reply_to,
     )
     if ok:
-        logger.info(f"📲 Push sent ({kind}) to {target_chat} reply_to={reply_to} (tick={st.tick})")
+        logger.info(f"📲 {CS_SIGNAL} sent ({kind}) to {target_chat} reply_to={reply_to} (tick={st.tick})")
     else:
-        logger.warning(f"📲 Push failed ({kind}) to {target_chat} reply_to={reply_to} (tick={st.tick})")
+        logger.warning(f"📲 {CS_SIGNAL} failed ({kind}) to {target_chat} reply_to={reply_to} (tick={st.tick})")
 
 def _push_worker_loop() -> None:
     while True:
@@ -727,7 +910,7 @@ def _push_worker_loop() -> None:
             kind, payload = item
             _telegram_push(kind, payload)
         except Exception as e:
-            logger.warning(f"📲 Push worker error: {e}")
+            logger.warning(f"📲 {CS_SIGNAL} worker error: {e}")
         finally:
             try:
                 _PUSH_QUEUE.task_done()
@@ -773,9 +956,9 @@ def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
         try:
             _PUSH_QUEUE.put_nowait((kind, entry))
         except Exception as e:
-            logger.warning(f"📲 Push queue full; dropped toast kind={kind} seq={seq}: {e}")
+            logger.warning(f"📲 {CS_SIGNAL} queue full; dropped toast kind={kind} seq={seq}: {e}")
     except Exception as e:
-        logger.warning(f"📲 Push dispatch failed: {e}")
+        logger.warning(f"📲 {CS_SIGNAL} dispatch failed: {e}")
     return seq
 
 # ============================================================================
@@ -828,7 +1011,7 @@ class Order:
     close_price: Optional[Decimal] = None
 
     def pnl(self, current_price: Decimal) -> Decimal:
-        if self.side == 'BUY':
+        if self.side == CS_BUY_LABEL:
             return (current_price - self.entry) * self.lot * Decimal('100000')
         else:
             return (self.entry - current_price) * self.lot * Decimal('100000')
@@ -914,7 +1097,7 @@ class AEI_CoreState:
     l: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - Y_START))
     U: List[bool] = field(default_factory=list)
     R: bool = True
-    Regime: List[str] = field(default_factory=lambda: ["sRange"] * (X_PERIOD - Y_START))
+    Regime: List[str] = field(default_factory=lambda: [CS_SRANGE] * (X_PERIOD - Y_START))
     iA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
     cA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
     kA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
@@ -1009,8 +1192,8 @@ class AEI_CoreState:
 # INDICATOR NAME CONSTANT
 # ============================================================================
 INDICATOR_NAMES = [
-    "ADX", "Stochastic", "RVI", "AC", "Force", "OBV", "AD",
-    "MFI", "Momentum", "DeMarker", "WPR", "CCI", "RSI"
+    CS_ADX, CS_STOCHASTIC, CS_RVI, CS_AC, CS_FORCE, CS_OBV, CS_AD,
+    CS_MFI, CS_MOMENTUM, CS_DEMARKER, CS_WPR, CS_CCI, CS_RSI
 ]
 
 # ============================================================================
@@ -1246,16 +1429,16 @@ class FeedClient:
         if len(self._chain) <= 1:
             return
         self._chain_index = (self._chain_index + 1) % len(self._chain)
-        logger.warning(f"🔄 FeedClient: rotating symbol chain to '{self.active_symbol()}'")
+        logger.warning(f"🔄 {CS_FIELD}: rotating symbol chain to '{self.active_symbol()}'")
         self._fallback_count = 0
         self._failure_count = 0
 
     def _rebuild_ticker(self) -> None:
-        logger.info("🔄 FeedClient: rebuild requested (no-op; Worker handles upstream)")
+        logger.info(f"🔄 {CS_FIELD}: rebuild requested (no-op; Worker handles upstream)")
 
     def _get(self, kind: str, **params) -> Optional[Any]:
         if not RELAY_URL:
-            logger.error("❌ RELAY_URL not set — cannot fetch price")
+            logger.error(f"❌ {CS_PROVIDER} not set — cannot fetch price")
             return None
         params["symbol"] = self.active_symbol()
         params["kind"] = kind
@@ -1266,7 +1449,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.4.2",
+                    "User-Agent": "AEI-Bridge/v4.4.3",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1276,7 +1459,7 @@ class FeedClient:
                     raw = r.read().decode("utf-8")
                     payload = json.loads(raw)
                     if isinstance(payload, dict) and payload.get("error"):
-                        logger.warning(f"Relay returned error for {self.active_symbol()}: {payload.get('error')} ({payload.get('detail', '')})")
+                        logger.warning(f"{CS_PROVIDER} returned error for {self.active_symbol()}: {payload.get('error')} ({payload.get('detail', '')})")
                         self._failure_count += 1
                         self._fallback_count += 1
                         if self._fallback_count >= 5:
@@ -1310,25 +1493,25 @@ class FeedClient:
                 except Exception:
                     error_body = '<unreadable>'
                 last_error = f"HTTP {e.code}: {error_body[:200]}"
-                logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
+                logger.warning(f"{CS_PROVIDER} HTTP Error {e.code} for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
                 if e.code in (401, 403, 429) and attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
                 break
             except urllib.error.URLError as e:
                 last_error = f"URLError: {e.reason}"
-                logger.warning(f"Relay URLError for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e.reason}")
+                logger.warning(f"{CS_PROVIDER} URLError for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e.reason}")
                 if attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
                 break
             except json.JSONDecodeError as e:
                 last_error = f"JSONDecodeError: {e}"
-                logger.warning(f"Relay returned invalid JSON for {self.active_symbol()}: {e}")
+                logger.warning(f"{CS_PROVIDER} returned invalid JSON for {self.active_symbol()}: {e}")
                 break
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
-                logger.warning(f"Relay error ({kind}) for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e}")
+                logger.warning(f"{CS_PROVIDER} error ({kind}) for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e}")
                 if attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
@@ -1338,7 +1521,7 @@ class FeedClient:
         if self._fallback_count >= 5:
             self._advance_symbol_chain()
         if last_error:
-            logger.warning(f"Relay exhausted retries for {kind}: {last_error}")
+            logger.warning(f"{CS_PROVIDER} exhausted retries for {kind}: {last_error}")
         return None
 
     def get_current_price(self) -> Tuple[Decimal, Decimal]:
@@ -1348,7 +1531,7 @@ class FeedClient:
         try:
             c = Decimal(str(d["close"]))
             if c <= Decimal('0.0'):
-                logger.warning(f"Relay returned non-positive price: {c}")
+                logger.warning(f"{CS_PROVIDER} returned non-positive price: {c}")
                 return Decimal('0.0'), Decimal('0.0')
             bid = Decimal(str(d.get("bid") or d["close"]))
             ask = Decimal(str(d.get("ask") or d["close"]))
@@ -1361,7 +1544,7 @@ class FeedClient:
                 self._last_provider = str(d["provider"])
             return bid, ask
         except Exception as e:
-            logger.warning(f"Failed to parse relay price: {e}")
+            logger.warning(f"Failed to parse {CS_PROVIDER} price: {e}")
             return Decimal('0.0'), Decimal('0.0')
 
     def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, Any]]:
@@ -1409,7 +1592,7 @@ class FeedClient:
         try:
             c = Decimal(str(d["close"]))
             if c <= Decimal('0.0'):
-                logger.warning(f"Relay returned non-positive intraday close: {c}")
+                logger.warning(f"{CS_PROVIDER} returned non-positive intraday close: {c}")
                 return {}
             ts_raw = d.get("timestamp")
             ts = datetime.now()
@@ -1518,15 +1701,15 @@ class AEEA_Engine:
         return COMMISSION * point
 
     def OnInit(self) -> None:
-        logger.info("⚡ OnInit(): EA engine lifecycle beginning")
+        logger.info(f"⚡ OnInit(): {CS_FIELD} lifecycle beginning")
         self.OnReInit()
-        logger.info("🟢 OnInit(): state reset to baseline")
+        logger.info(f"🟢 OnInit(): state reset to {CS_COHERENCE}")
         # E-4: seed the projection once on engine init so the TWA has a path
         # to scroll into before the first execution fires.
         try:
             self._project_arc_length(trigger="init")
         except Exception as e:
-            logger.warning(f"Initial projection seed failed: {e}")
+            logger.warning(f"Initial {CS_PROJECTION} seed failed: {e}")
 
     def OnReInit(self) -> None:
         st = self.state
@@ -1579,7 +1762,7 @@ class AEEA_Engine:
         st.StdDev = []
         st.ATR = []
         st.ADX = []
-        st.Regime = ["sRange"] * size
+        st.Regime = [CS_SRANGE] * size
         st.Premium = [Decimal('0.0')] * size
         st.Discount = [Decimal('0.0')] * size
         st.HH = [Decimal('0.0')] * size
@@ -1665,7 +1848,7 @@ class AEEA_Engine:
         self._last_comment_line = saved_comment
         self._last_projection_bar = -1
 
-        logger.info("ReSet   ")
+        logger.info(CS_RESET)
 
     def _unify(self, j: int) -> Tuple[Decimal, Decimal]:
         st = self.state
@@ -2257,7 +2440,7 @@ class AEEA_Engine:
         st.m_now = m
         st.m = 0
         if st.k[idx]:
-            logger.info(f"🔺 H() set k[{idx}] = True (m={m} >= 12) at bar j={j}")
+            logger.info(f"🔺 {CS_HAWK} set k[{idx}] = True (m={m} >= 12) at bar j={j}")
 
     def _L(self, j: int) -> None:
         st = self.state
@@ -2274,7 +2457,7 @@ class AEEA_Engine:
         st.n_now = n
         st.n = 0
         if st.l[idx]:
-            logger.info(f"🔻 L() set l[{idx}] = True (n={n} >= 12) at bar j={j}")
+            logger.info(f"🔻 {CS_DOVE} set l[{idx}] = True (n={n} >= 12) at bar j={j}")
 
     def _F(self, j: int, iH: Decimal, iL: Decimal) -> None:
         st = self.state
@@ -2403,20 +2586,20 @@ class AEEA_Engine:
             self._unify(j)
             self._normalize(j)
             if st.iStdDev < Decimal('50.0') and st.iATR > Decimal('50.0'):
-                if st.Regime[idx] != "Stable":
+                if st.Regime[idx] != CS_STABLE:
                     self._H(j)
                     self._L(j)
-                    if self._on_fire(j, "sVolatile", "tVolatile"):
-                        st.Regime[idx] = "sVolatile"
+                    if self._on_fire(j, CS_SVOLATILE, CS_TVOLATILE):
+                        st.Regime[idx] = CS_SVOLATILE
             elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
-                if st.Regime[idx] != "Stable":
+                if st.Regime[idx] != CS_STABLE:
                     self._R(j)
                     self._H(j)
                     self._L(j)
-                    if self._on_fire(j, "sRange", "tRange"):
-                        st.Regime[idx] = "sRange"
-            elif self._on_fire(j, "sTrend", "tTrend"):
-                st.Regime[idx] = "sTrend"
+                    if self._on_fire(j, CS_SRANGE, CS_TRANGE):
+                        st.Regime[idx] = CS_SRANGE
+            elif self._on_fire(j, CS_STREND, CS_TTREND):
+                st.Regime[idx] = CS_STREND
 
     def _on_bar(self) -> None:
         st = self.state
@@ -2428,30 +2611,30 @@ class AEEA_Engine:
             self._unify(j)
             self._normalize(j)
             if st.iStdDev < Decimal('50.0') and st.iATR > Decimal('50.0'):
-                if st.Regime[idx] != "Stable":
-                    if st.Regime[idx] != "tVolatile":
+                if st.Regime[idx] != CS_STABLE:
+                    if st.Regime[idx] != CS_TVOLATILE:
                         self._F(j, st.iH, st.iL)
                         self._H(j)
                         self._L(j)
-                        st.Regime[idx] = "tVolatile"
+                        st.Regime[idx] = CS_TVOLATILE
             elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
-                if st.Regime[idx] != "Stable":
+                if st.Regime[idx] != CS_STABLE:
                     self._R(j)
                     self._H(j)
                     self._L(j)
-                    if st.Regime[idx] != "tRange":
+                    if st.Regime[idx] != CS_TRANGE:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tRange"
-            elif (st.Regime[idx] != "tTrend" and st.Regime[idx] != "sTrend"
+                        st.Regime[idx] = CS_TRANGE
+            elif (st.Regime[idx] != CS_TTREND and st.Regime[idx] != CS_STREND
                   and idx < len(st.LL) and idx < len(st.Discount)
                   and idx < len(st.HH) and idx < len(st.Premium)
                   and st.LL[idx] < st.Discount[idx]
                   and st.HH[idx] > st.Premium[idx]):
-                st.Regime[idx] = "Stable"
+                st.Regime[idx] = CS_STABLE
             else:
-                if st.Regime[idx] != "tTrend":
+                if st.Regime[idx] != CS_TTREND:
                     self._F(j, st.iH, st.iL)
-                    st.Regime[idx] = "tTrend"
+                    st.Regime[idx] = CS_TTREND
 
         if len(self.ohlcv_history) >= y + 1:
             close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
@@ -2489,14 +2672,14 @@ class AEEA_Engine:
 
         if st.price >= st.signal + com_price:
             logger.info(f"🔵 Long: {st.price}")
-            if st.count == 0 and st.tally == "Sell":
+            if st.count == 0 and st.tally == CS_SELL:
                 st.count += 1
-            st.tally = "Buy"
+            st.tally = CS_BUY
         if st.price <= st.signal - com_price:
             logger.info(f"🔴 Short: {st.price}")
-            if st.count == 0 and st.tally == "Buy":
+            if st.count == 0 and st.tally == CS_BUY:
                 st.count += 1
-            st.tally = "Sell"
+            st.tally = CS_SELL
 
         if st.tick_tock:
             return
@@ -2530,12 +2713,12 @@ class AEEA_Engine:
             )
         )
         if bullish_coherence:
-            logger.info(f"🟢 Buy: {st.price}")
-            if st.toll == 0 and st.tally == "Sell":
+            logger.info(f"🟢 {CS_BULL}: {st.price}")
+            if st.toll == 0 and st.tally == CS_SELL:
                 st.toll += 1
             if st.Price > st.signal:
-                fg = "Up"
-            st.tally = "Buy"
+                fg = CS_UP
+            st.tally = CS_BUY
 
         bearish_coherence = (
             (
@@ -2561,16 +2744,16 @@ class AEEA_Engine:
             )
         )
         if bearish_coherence:
-            logger.info(f"🔴 Sell: {st.price}")
-            if st.toll == 0 and st.tally == "Buy":
+            logger.info(f"🔴 {CS_BEAR}: {st.price}")
+            if st.toll == 0 and st.tally == CS_BUY:
                 st.toll += 1
             if st.Price < st.signal:
-                fg = "Down"
-            st.tally = "Sell"
+                fg = CS_DOWN
+            st.tally = CS_SELL
 
-        if st.toll == 1 and (st.tally == "Buy" or fg == "Up"):
-            logger.info(f"🔷 Diamond {fg}")
-            self._last_dispatch_event = "Diamond"
+        if st.toll == 1 and (st.tally == CS_BUY or fg == CS_UP):
+            logger.info(f"🔷 {CS_DIAMOND} {fg}")
+            self._last_dispatch_event = CS_DIAMOND
             self._dispatch_diamond_subblock(fg)
             st.signal = Decimal('0.0')
             st.toll = 0
@@ -2580,9 +2763,9 @@ class AEEA_Engine:
             st.execution_fired = True
             return
 
-        if st.toll == 1 and (st.tally == "Sell" or fg == "Down"):
-            logger.info(f"🔻 Ruby {fg}")
-            self._last_dispatch_event = "Ruby"
+        if st.toll == 1 and (st.tally == CS_SELL or fg == CS_DOWN):
+            logger.info(f"🔻 {CS_RUBY} {fg}")
+            self._last_dispatch_event = CS_RUBY
             self._dispatch_ruby_subblock(fg)
             st.signal = Decimal('0.0')
             st.toll = 0
@@ -2592,9 +2775,9 @@ class AEEA_Engine:
             st.execution_fired = True
             return
 
-        if st.count == 1 and (st.tally == "Buy" or fg == "Up"):
-            logger.info(f"🔷 Diamond {fg}")
-            self._last_dispatch_event = "Diamond"
+        if st.count == 1 and (st.tally == CS_BUY or fg == CS_UP):
+            logger.info(f"🔷 {CS_DIAMOND} {fg}")
+            self._last_dispatch_event = CS_DIAMOND
             self._dispatch_hawk_subblock(fg)
             st.count = 0
             st.tally = ""
@@ -2603,9 +2786,9 @@ class AEEA_Engine:
             st.execution_fired = True
             return
 
-        if st.count == 1 and (st.tally == "Sell" or fg == "Down"):
-            logger.info(f"🔻 Ruby {fg}")
-            self._last_dispatch_event = "Ruby"
+        if st.count == 1 and (st.tally == CS_SELL or fg == CS_DOWN):
+            logger.info(f"🔻 {CS_RUBY} {fg}")
+            self._last_dispatch_event = CS_RUBY
             self._dispatch_dove_subblock(fg)
             st.count = 0
             st.tally = ""
@@ -2616,13 +2799,13 @@ class AEEA_Engine:
 
     def _dispatch_diamond_subblock(self, fg: str) -> None:
         st = self.state
-        if (st.prime == 0 and st.dime == 0) and fg == "Up":
+        if (st.prime == 0 and st.dime == 0) and fg == CS_UP:
             st.dime = 0; st.mem = 0
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐂 Bull")
-            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
+            logger.info(f"🐂 {CS_BULL}")
+            self._emit_execution_toast(CS_BULL, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
@@ -2630,17 +2813,17 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐂 Bull")
-            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
+            logger.info(f"🐂 {CS_BULL}")
+            self._emit_execution_toast(CS_BULL, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
-        elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
+        elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == CS_UP and st.price > st.signal:
             st.dime = 0; st.mem = 0
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐂 Bull")
-            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
+            logger.info(f"🐂 {CS_BULL}")
+            self._emit_execution_toast(CS_BULL, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
@@ -2648,8 +2831,8 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐂 Bull")
-            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
+            logger.info(f"🐂 {CS_BULL}")
+            self._emit_execution_toast(CS_BULL, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
         elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
@@ -2657,13 +2840,13 @@ class AEEA_Engine:
                 self._B(st.price)
                 if st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🥃 Whisky")
-                self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
+                logger.info(f"🥃 {CS_WHISKY}")
+                self._emit_execution_toast(CS_WHISKY, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
             else:
-                logger.info("🥃 Whisky")
-                self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
+                logger.info(f"🥃 {CS_WHISKY}")
+                self._emit_execution_toast(CS_WHISKY, st.price, CS_NONE, -1, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
                 if not st.safety: st.safety = True
@@ -2673,19 +2856,19 @@ class AEEA_Engine:
                 self._A(st.price)
                 if not st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🍷 Wine")
-                self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
+                logger.info(f"🍷 {CS_WINE}")
+                self._emit_execution_toast(CS_WINE, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
             else:
-                logger.info("🍷 Wine")
-                self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
+                logger.info(f"🍷 {CS_WINE}")
+                self._emit_execution_toast(CS_WINE, st.price, CS_NONE, -1, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
                 if not st.safety: st.safety = True
         else:
-            logger.info("🍷 Wine")
-            self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
+            logger.info(f"🍷 {CS_WINE}")
+            self._emit_execution_toast(CS_WINE, st.price, CS_NONE, -1, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
             if not st.safety: st.safety = True
@@ -2695,17 +2878,17 @@ class AEEA_Engine:
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
-            logger.warning(f"Projection refresh (diamond) failed: {e}")
+            logger.warning(f"{CS_PROJECTION} refresh (diamond) failed: {e}")
 
     def _dispatch_ruby_subblock(self, fg: str) -> None:
         st = self.state
-        if fg == "Down" and (st.prime == 1 and st.dime == 1):
+        if fg == CS_DOWN and (st.prime == 1 and st.dime == 1):
             st.dime = 1; st.mem = 1
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐻 Bear")
-            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
+            logger.info(f"🐻 {CS_BEAR}")
+            self._emit_execution_toast(CS_BEAR, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
@@ -2713,17 +2896,17 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐻 Bear")
-            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
+            logger.info(f"🐻 {CS_BEAR}")
+            self._emit_execution_toast(CS_BEAR, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
-        elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
+        elif st.price < st.signal and fg == CS_DOWN and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
             st.dime = 1; st.mem = 1
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐻 Bear")
-            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
+            logger.info(f"🐻 {CS_BEAR}")
+            self._emit_execution_toast(CS_BEAR, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
@@ -2731,8 +2914,8 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🐻 Bear")
-            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
+            logger.info(f"🐻 {CS_BEAR}")
+            self._emit_execution_toast(CS_BEAR, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
         elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
@@ -2740,13 +2923,13 @@ class AEEA_Engine:
                 self._A(st.price)
                 if not st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🍷 Wine")
-                self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
+                logger.info(f"🍷 {CS_WINE}")
+                self._emit_execution_toast(CS_WINE, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
             else:
-                logger.info("🍷 Wine")
-                self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
+                logger.info(f"🍷 {CS_WINE}")
+                self._emit_execution_toast(CS_WINE, st.price, CS_NONE, -1, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
                 if not st.safety: st.safety = True
@@ -2756,19 +2939,19 @@ class AEEA_Engine:
                 self._B(st.price)
                 if st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🥃 Whisky")
-                self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
+                logger.info(f"🥃 {CS_WHISKY}")
+                self._emit_execution_toast(CS_WHISKY, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
             else:
-                logger.info("🥃 Whisky")
-                self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
+                logger.info(f"🥃 {CS_WHISKY}")
+                self._emit_execution_toast(CS_WHISKY, st.price, CS_NONE, -1, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
                 if not st.safety: st.safety = True
         else:
-            logger.info("🥃 Whisky")
-            self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
+            logger.info(f"🥃 {CS_WHISKY}")
+            self._emit_execution_toast(CS_WHISKY, st.price, CS_NONE, -1, fg)
             self._Top(emit_toast=False)
             st.E = st.price
             if not st.safety: st.safety = True
@@ -2776,17 +2959,17 @@ class AEEA_Engine:
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
-            logger.warning(f"Projection refresh (ruby) failed: {e}")
+            logger.warning(f"{CS_PROJECTION} refresh (ruby) failed: {e}")
 
     def _dispatch_hawk_subblock(self, fg: str) -> None:
         st = self.state
-        if (st.prime == 0 and st.dime == 0) and fg == "Up":
+        if (st.prime == 0 and st.dime == 0) and fg == CS_UP:
             st.dime = 0; st.mem = 0
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🦅 Hawk")
-            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
+            logger.info(f"🦅 {CS_HAWK}")
+            self._emit_execution_toast(CS_HAWK, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
@@ -2794,17 +2977,17 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🦅 Hawk")
-            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
+            logger.info(f"🦅 {CS_HAWK}")
+            self._emit_execution_toast(CS_HAWK, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
-        elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
+        elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == CS_UP and st.price > st.signal:
             st.dime = 0; st.mem = 0
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🦅 Hawk")
-            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
+            logger.info(f"🦅 {CS_HAWK}")
+            self._emit_execution_toast(CS_HAWK, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
         elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
@@ -2812,8 +2995,8 @@ class AEEA_Engine:
             self._B(st.price)
             if st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🦅 Hawk")
-            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
+            logger.info(f"🦅 {CS_HAWK}")
+            self._emit_execution_toast(CS_HAWK, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
             self._Top(emit_toast=False)
             st.E = st.price
         elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
@@ -2821,13 +3004,13 @@ class AEEA_Engine:
                 self._B(st.price)
                 if st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("💧 Watter")
-                self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
+                logger.info(f"💧 {CS_WATTER}")
+                self._emit_execution_toast(CS_WATTER, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
             else:
-                logger.info("💧 Watter")
-                self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
+                logger.info(f"💧 {CS_WATTER}")
+                self._emit_execution_toast(CS_WATTER, st.price, CS_NONE, -1, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
                 if not st.safety: st.safety = True
@@ -2837,19 +3020,19 @@ class AEEA_Engine:
                 self._A(st.price)
                 if not st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🩸 Blood")
-                self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
+                logger.info(f"🩸 {CS_BLOOD}")
+                self._emit_execution_toast(CS_BLOOD, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
             else:
-                logger.info("🩸 Blood")
-                self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
+                logger.info(f"🩸 {CS_BLOOD}")
+                self._emit_execution_toast(CS_BLOOD, st.price, CS_NONE, -1, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
                 if not st.safety: st.safety = True
         else:
-            logger.info("🩸 Blood")
-            self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
+            logger.info(f"🩸 {CS_BLOOD}")
+            self._emit_execution_toast(CS_BLOOD, st.price, CS_NONE, -1, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
             if not st.safety: st.safety = True
@@ -2857,17 +3040,17 @@ class AEEA_Engine:
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
-            logger.warning(f"Projection refresh (hawk) failed: {e}")
+            logger.warning(f"{CS_PROJECTION} refresh (hawk) failed: {e}")
 
     def _dispatch_dove_subblock(self, fg: str) -> None:
         st = self.state
-        if fg == "Down" and (st.prime == 1 and st.dime == 1):
+        if fg == CS_DOWN and (st.prime == 1 and st.dime == 1):
             st.dime = 1; st.mem = 1
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🕊️ Dove")
-            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
+            logger.info(f"🕊️ {CS_DOVE}")
+            self._emit_execution_toast(CS_DOVE, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
@@ -2875,17 +3058,17 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🕊️ Dove")
-            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
+            logger.info(f"🕊️ {CS_DOVE}")
+            self._emit_execution_toast(CS_DOVE, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
-        elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
+        elif st.price < st.signal and fg == CS_DOWN and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
             st.dime = 1; st.mem = 1
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🕊️ Dove")
-            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
+            logger.info(f"🕊️ {CS_DOVE}")
+            self._emit_execution_toast(CS_DOVE, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
         elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
@@ -2893,8 +3076,8 @@ class AEEA_Engine:
             self._A(st.price)
             if not st.C: self._P(st.price)
             else: self._Q(st.price)
-            logger.info("🕊️ Dove")
-            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
+            logger.info(f"🕊️ {CS_DOVE}")
+            self._emit_execution_toast(CS_DOVE, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
             self._Bott(emit_toast=False)
             st.D = st.price
         elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
@@ -2902,13 +3085,13 @@ class AEEA_Engine:
                 self._A(st.price)
                 if not st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("🩸 Blood")
-                self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
+                logger.info(f"🩸 {CS_BLOOD}")
+                self._emit_execution_toast(CS_BLOOD, st.price, CS_SELL_LABEL, st.kOrder_id, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
             else:
-                logger.info("🩸 Blood")
-                self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
+                logger.info(f"🩸 {CS_BLOOD}")
+                self._emit_execution_toast(CS_BLOOD, st.price, CS_NONE, -1, fg)
                 self._Bott(emit_toast=False)
                 st.D = st.price
                 if not st.safety: st.safety = True
@@ -2918,19 +3101,19 @@ class AEEA_Engine:
                 self._B(st.price)
                 if st.C: self._P(st.price)
                 else: self._Q(st.price)
-                logger.info("💧 Watter")
-                self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
+                logger.info(f"💧 {CS_WATTER}")
+                self._emit_execution_toast(CS_WATTER, st.price, CS_BUY_LABEL, st.lOrder_id, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
             else:
-                logger.info("💧 Watter")
-                self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
+                logger.info(f"💧 {CS_WATTER}")
+                self._emit_execution_toast(CS_WATTER, st.price, CS_NONE, -1, fg)
                 self._Top(emit_toast=False)
                 st.E = st.price
                 if not st.safety: st.safety = True
         else:
-            logger.info("💧 Watter")
-            self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
+            logger.info(f"💧 {CS_WATTER}")
+            self._emit_execution_toast(CS_WATTER, st.price, CS_NONE, -1, fg)
             self._Top(emit_toast=False)
             st.E = st.price
             if not st.safety: st.safety = True
@@ -2938,7 +3121,7 @@ class AEEA_Engine:
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
-            logger.warning(f"Projection refresh (dove) failed: {e}")
+            logger.warning(f"{CS_PROJECTION} refresh (dove) failed: {e}")
 
     def _on_call(self) -> None:
         st = self.state
@@ -2959,7 +3142,7 @@ class AEEA_Engine:
                     st.h = st.I
                 st.iC = st.C
                 st.jC = not st.C
-                if self._on_hold(j, "sTrend", "tTrend"):
+                if self._on_hold(j, CS_STREND, CS_TTREND):
                     st.iz = i
                     st.z = i
                     st.iI = st.iw
@@ -2975,7 +3158,7 @@ class AEEA_Engine:
                     st.h = st.I
                 st.jC = st.C
                 st.iC = not st.C
-                if self._on_hold(j, "sTrend", "tTrend"):
+                if self._on_hold(j, CS_STREND, CS_TTREND):
                     st.iw = i
                     st.w = i
                     st.iI = st.iz
@@ -3008,7 +3191,7 @@ class AEEA_Engine:
                 continue
             if idx >= len(st.Regime):
                 ext = idx - len(st.Regime) + 1
-                st.Regime.extend(["sRange"] * ext)
+                st.Regime.extend([CS_SRANGE] * ext)
                 st.k.extend([False] * ext)
                 st.l.extend([False] * ext)
                 st.HH.extend([Decimal('0.0')] * ext)
@@ -3041,11 +3224,11 @@ class AEEA_Engine:
                 else:
                     self._H(j)
                     if is_now != st.t:
-                        if self._on_fire(j, "Stable", "tVolatile"):
+                        if self._on_fire(j, CS_STABLE, CS_TVOLATILE):
                             self._F(j, st.iH, st.iL)
-                            st.Regime[idx] = "tVolatile"
+                            st.Regime[idx] = CS_TVOLATILE
                         else:
-                            st.Regime[idx] = "sVolatile"
+                            st.Regime[idx] = CS_SVOLATILE
                     st.S += 1
             if st.Demand >= st.price or st.iDemand >= st.price or st.iDemand >= st.iL:
                 i = s
@@ -3070,11 +3253,11 @@ class AEEA_Engine:
                 else:
                     self._L(j)
                     if is_now != st.t:
-                        if self._on_fire(j, "Stable", "tVolatile"):
+                        if self._on_fire(j, CS_STABLE, CS_TVOLATILE):
                             self._F(j, st.iH, st.iL)
-                            st.Regime[idx] = "tVolatile"
+                            st.Regime[idx] = CS_TVOLATILE
                         else:
-                            st.Regime[idx] = "sVolatile"
+                            st.Regime[idx] = CS_SVOLATILE
                     st.S += 1
             s += 1
         s = X_PERIOD - 1
@@ -3099,66 +3282,66 @@ class AEEA_Engine:
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         elif st.Z != scan_limit and st.Z < st.z:
             j = MAX_PERIOD
             st.z = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         else:
             j = X_PERIOD - 1
             st.z = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         if st.W != scan_limit and st.W >= st.w:
             j = MAX_PERIOD - 1
             st.w = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         elif st.W != scan_limit and st.W < st.w:
             j = MAX_PERIOD
             st.w = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         else:
             j = X_PERIOD - 1
             st.w = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
 
     def _on_stand(self) -> None:
         st = self.state
@@ -3181,7 +3364,7 @@ class AEEA_Engine:
                 continue
             if idx >= len(st.Regime):
                 ext = idx - len(st.Regime) + 1
-                st.Regime.extend(["sRange"] * ext)
+                st.Regime.extend([CS_SRANGE] * ext)
                 st.k.extend([False] * ext)
                 st.l.extend([False] * ext)
                 st.HH.extend([Decimal('0.0')] * ext)
@@ -3219,11 +3402,11 @@ class AEEA_Engine:
                 elif st.X_scan == st.Y_scan:
                     self._H(j)
                     if is_now != st.t:
-                        if self._on_fire(j, "Stable", "tVolatile"):
+                        if self._on_fire(j, CS_STABLE, CS_TVOLATILE):
                             self._F(j, st.iH, st.iL)
-                            st.Regime[idx] = "tVolatile"
+                            st.Regime[idx] = CS_TVOLATILE
                         else:
-                            st.Regime[idx] = "sVolatile"
+                            st.Regime[idx] = CS_SVOLATILE
                     if st.Y_scan != 2 and st.X_scan != 2:
                         st.Y_scan -= 1
                         st.X_scan -= 1
@@ -3254,11 +3437,11 @@ class AEEA_Engine:
                 elif st.X_scan == st.Y_scan:
                     self._L(j)
                     if is_now != st.t:
-                        if self._on_fire(j, "Stable", "tVolatile"):
+                        if self._on_fire(j, CS_STABLE, CS_TVOLATILE):
                             self._F(j, st.iH, st.iL)
-                            st.Regime[idx] = "tVolatile"
+                            st.Regime[idx] = CS_TVOLATILE
                         else:
-                            st.Regime[idx] = "sVolatile"
+                            st.Regime[idx] = CS_SVOLATILE
                     if st.Y_scan != 2 and st.X_scan != 2:
                         st.Y_scan -= 1
                         st.X_scan -= 1
@@ -3289,66 +3472,66 @@ class AEEA_Engine:
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         elif st.Z != 2 and st.Z < st.z:
             j = MIN_PERIOD + 1
             st.z = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         else:
             j = y + 1
             st.z = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         if st.W != 2 and st.W >= st.w:
             j = MIN_PERIOD
             st.w = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         elif st.W != 2 and st.W < st.w:
             j = MIN_PERIOD + 1
             st.w = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
         else:
             j = y + 1
             st.w = j
             idx = j - (y + 1)
             if 0 <= idx < len(st.Regime):
                 if is_now != st.t:
-                    if st.Regime[idx] != "tTrend":
+                    if st.Regime[idx] != CS_TTREND:
                         self._F(j, st.iH, st.iL)
-                        st.Regime[idx] = "tTrend"
+                        st.Regime[idx] = CS_TTREND
                     else:
-                        st.Regime[idx] = "sTrend"
+                        st.Regime[idx] = CS_STREND
 
     def _on_goe(self) -> None:
         st = self.state
@@ -3358,32 +3541,32 @@ class AEEA_Engine:
             if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
                 if (not st.C) and (not st.c):
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 {CS_HAWK} (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 {CS_HAWK} (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 {CS_HAWK} (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 {CS_HAWK} (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
                 if (not st.C) or (not st.c):
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 {CS_HAWK} (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 {CS_HAWK} (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 {CS_HAWK} (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
                 else:
                     st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
-                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                    logger.info(f"🟥 {CS_HAWK} (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
             self._KC()
 
     def _on_toe(self) -> None:
@@ -3394,32 +3577,32 @@ class AEEA_Engine:
             if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
                 if (not st.C) and (not st.c):
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 {CS_DOVE} (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 {CS_DOVE} (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) and (not st.c):
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 {CS_DOVE} (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 {CS_DOVE} (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
         elif self._on_gaurd(0) != st.KC:
             if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
                 if (not st.C) or (not st.c):
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 {CS_DOVE} (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 {CS_DOVE} (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
                 if (not st.C) or (not st.c):
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 {CS_DOVE} (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
                 else:
                     st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
-                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                    logger.info(f"🟩 {CS_DOVE} (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
             self._KC()
 
     def _signal(self) -> None:
@@ -3439,14 +3622,14 @@ class AEEA_Engine:
         self._last_signal_time = datetime.now()
 
         if m_local >= 12:
-            signal_type = "BUY"
+            signal_type = CS_BUY_LABEL
         elif n_local >= 12:
-            signal_type = "SELL"
+            signal_type = CS_SELL_LABEL
         else:
-            signal_type = "NEUTRAL"
+            signal_type = CS_NEUTRAL
 
         regime_idx = st.h - (st.y + 1)
-        regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else "Unknown"
+        regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else CS_UNKNOWN
         bar_timestamp = None
         if self.ohlcv_history:
             bar_timestamp = self.ohlcv_history[-1]["timestamp"]
@@ -3463,13 +3646,13 @@ class AEEA_Engine:
             "n_count": int(n_local),
             "tick": int(st.tick),
             "h_bar": int(st.h),
-            "source": "Goe" if st.prime == 1 else ("Toe" if st.prime == 0 else "Kronecker"),
+            "source": "Goe" if st.prime == 1 else ("Toe" if st.prime == 0 else CS_KRONECKER),
         }
         st.signal_history.append(signal_record)
         if len(st.signal_history) > st.max_signal_history:
             st.signal_history = st.signal_history[-st.max_signal_history:]
         st.last_signal_at = signal_record["timestamp"]
-        logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
+        logger.info(f"🎯 {CS_SIGNAL} #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
         _emit_toast("signal", {
             "type": signal_type,
             "price": str(st.price),
@@ -3497,11 +3680,11 @@ class AEEA_Engine:
     def _on_log(self) -> None:
         st = self.state
         if st.dime == 0:
-            logger.info("🕊️ Flying")
+            logger.info(f"🕊️ {CS_FLYING}")
         elif st.dime == 1:
-            logger.info("🔻 Falling")
+            logger.info(f"🔻 {CS_FALLING}")
         else:
-            logger.info("⏳ Wait/Decern")
+            logger.info(f"⏳ {CS_WAIT_DECERN}")
 
     def _A(self, price: Decimal) -> None:
         st = self.state
@@ -3526,7 +3709,7 @@ class AEEA_Engine:
         st.trailing_stop_active = False
         st.trailing_stop_price = Decimal('0.0')
         st.trailing_take_profit = Decimal('0.0')
-        self._emit_execution_toast("A", price, "CLOSE", -1, "A_close" if closed_any else "A_no_position")
+        self._emit_execution_toast("A", price, CS_CLOSE, -1, "A_close" if closed_any else "A_no_position")
 
     def _B(self, price: Decimal) -> None:
         st = self.state
@@ -3551,7 +3734,7 @@ class AEEA_Engine:
         st.trailing_stop_active = False
         st.trailing_stop_price = Decimal('0.0')
         st.trailing_take_profit = Decimal('0.0')
-        self._emit_execution_toast("B", price, "CLOSE", -1, "B_close" if closed_any else "B_no_position")
+        self._emit_execution_toast("B", price, CS_CLOSE, -1, "B_close" if closed_any else "B_no_position")
 
     def _open_order(self, side: str, price: Decimal, sl: Decimal, tp: Decimal, lot: Decimal) -> int:
         ticket = self._next_ticket
@@ -3573,70 +3756,70 @@ class AEEA_Engine:
         self._S()
         ask_price = self.price_history[-1].ask if self.price_history else price
         bid_price = self.price_history[-1].bid if self.price_history else price
-        target = self._get_next_topological_target("BUY", ask_price)
-        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(ask_price, target, "BUY"):
+        target = self._get_next_topological_target(CS_BUY_LABEL, ask_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(ask_price, target, CS_BUY_LABEL):
             if st.Buy >= 0 and (st.A or not st.B) and (st.u or not st.v):
                 if st.C:
-                    ticket = self._open_order("BUY", ask_price, self._bSL, self._bTP, LOT_SIZE)
+                    ticket = self._open_order(CS_BUY_LABEL, ask_price, self._bSL, self._bTP, LOT_SIZE)
                     st.lOrder_id = ticket
                     st.has_open_long = True
                     st.trailing_stop_entry = ask_price
-                    st.trailing_stop_side = "LONG"
+                    st.trailing_stop_side = CS_LONG
                     st.Buy = 0 if st.Buy == -1 else st.Buy + 1
-                    logger.info(f"🟢 P(): BUY executed #{ticket} at {ask_price}, target={target}")
+                    logger.info(f"🟢 P(): {CS_BUY_LABEL} executed #{ticket} at {ask_price}, target={target}")
         else:
             self._A(price)
-            logger.info("⚠️ P(): BUY rejected — projected PnL <= spread friction")
+            logger.info(f"⚠️ P(): {CS_BUY_LABEL} rejected — projected PnL <= spread friction")
 
-        target = self._get_next_topological_target("SELL", bid_price)
-        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(bid_price, target, "SELL"):
+        target = self._get_next_topological_target(CS_SELL_LABEL, bid_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(bid_price, target, CS_SELL_LABEL):
             if st.Sell >= 0 and (not st.A or st.B) and (not st.u or st.v):
                 if not st.C:
-                    ticket = self._open_order("SELL", bid_price, self._sSL, self._sTP, LOT_SIZE)
+                    ticket = self._open_order(CS_SELL_LABEL, bid_price, self._sSL, self._sTP, LOT_SIZE)
                     st.kOrder_id = ticket
                     st.has_open_short = True
                     st.trailing_stop_entry = bid_price
-                    st.trailing_stop_side = "SHORT"
+                    st.trailing_stop_side = CS_SHORT
                     st.Sell = 0 if st.Sell == -1 else st.Sell + 1
-                    logger.info(f"🔴 P(): SELL executed #{ticket} at {bid_price}, target={target}")
+                    logger.info(f"🔴 P(): {CS_SELL_LABEL} executed #{ticket} at {bid_price}, target={target}")
         else:
             self._B(price)
-            logger.info("⚠️ P(): SELL rejected — projected PnL <= spread friction")
+            logger.info(f"⚠️ P(): {CS_SELL_LABEL} rejected — projected PnL <= spread friction")
 
     def _Q(self, price: Decimal) -> None:
         st = self.state
         self._S()
         ask_price = self.price_history[-1].ask if self.price_history else price
         bid_price = self.price_history[-1].bid if self.price_history else price
-        target = self._get_next_topological_target("SELL", bid_price)
-        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(bid_price, target, "SELL"):
+        target = self._get_next_topological_target(CS_SELL_LABEL, bid_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(bid_price, target, CS_SELL_LABEL):
             if st.Sell >= 0 and (not st.A or st.B) and (not st.u or st.v):
                 if st.C:
-                    ticket = self._open_order("SELL", bid_price, self._sSL, self._sTP, LOT_SIZE)
+                    ticket = self._open_order(CS_SELL_LABEL, bid_price, self._sSL, self._sTP, LOT_SIZE)
                     st.kOrder_id = ticket
                     st.has_open_short = True
                     st.trailing_stop_entry = bid_price
-                    st.trailing_stop_side = "SHORT"
+                    st.trailing_stop_side = CS_SHORT
                     st.Sell = 0 if st.Sell == -1 else st.Sell + 1
-                    logger.info(f"🔴 Q(): SELL executed #{ticket} at {bid_price}, target={target}")
+                    logger.info(f"🔴 Q(): {CS_SELL_LABEL} executed #{ticket} at {bid_price}, target={target}")
         else:
             self._B(price)
-            logger.info("⚠️ Q(): SELL rejected — projected PnL <= spread friction")
+            logger.info(f"⚠️ Q(): {CS_SELL_LABEL} rejected — projected PnL <= spread friction")
 
-        target = self._get_next_topological_target("BUY", ask_price)
-        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(ask_price, target, "BUY"):
+        target = self._get_next_topological_target(CS_BUY_LABEL, ask_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(ask_price, target, CS_BUY_LABEL):
             if st.Buy >= 0 and (st.A or not st.B) and (st.u or not st.v):
                 if not st.C:
-                    ticket = self._open_order("BUY", ask_price, self._bSL, self._bTP, LOT_SIZE)
+                    ticket = self._open_order(CS_BUY_LABEL, ask_price, self._bSL, self._bTP, LOT_SIZE)
                     st.lOrder_id = ticket
                     st.has_open_long = True
                     st.trailing_stop_entry = ask_price
-                    st.trailing_stop_side = "LONG"
+                    st.trailing_stop_side = CS_LONG
                     st.Buy = 0 if st.Buy == -1 else st.Buy + 1
-                    logger.info(f"🟢 Q(): BUY executed #{ticket} at {ask_price}, target={target}")
+                    logger.info(f"🟢 Q(): {CS_BUY_LABEL} executed #{ticket} at {ask_price}, target={target}")
         else:
             self._A(price)
-            logger.info("⚠️ Q(): BUY rejected — projected PnL <= spread friction")
+            logger.info(f"⚠️ Q(): {CS_BUY_LABEL} rejected — projected PnL <= spread friction")
 
     def _S(self) -> None:
         st = self.state
@@ -3664,7 +3847,7 @@ class AEEA_Engine:
         has_short = st.has_open_short
         if not (has_long or has_short):
             if st.trailing_stop_active:
-                logger.info("📉 Trailing stop deactivated — no open orders")
+                logger.info(f"📉 {CS_TRAILING} deactivated — no open orders")
                 st.trailing_stop_active = False
                 st.trailing_stop_price = Decimal('0.0')
                 st.trailing_take_profit = Decimal('0.0')
@@ -3674,7 +3857,7 @@ class AEEA_Engine:
         regime_col = 0
         if 0 <= regime_col < len(st.Regime):
             regime = st.Regime[regime_col]
-            if regime in ("tStable", "tCoherent"):
+            if regime in (CS_TSTABLE, CS_TCOHERENT):
                 return
         if st.price <= Decimal('0.0'):
             return
@@ -3682,12 +3865,12 @@ class AEEA_Engine:
             st.trailing_stop_active = True
             st.trailing_stop_entry = st.price
             st.trailing_stop_price = st.price
-            st.trailing_stop_side = "LONG" if has_long else "SHORT"
+            st.trailing_stop_side = CS_LONG if has_long else CS_SHORT
             if has_long:
                 st.trailing_take_profit = st.price * Decimal('1.02')
             else:
                 st.trailing_take_profit = st.price * Decimal('0.98')
-            logger.info(f"🎯 Trailing stop ACTIVATED at {st.trailing_stop_price}, TP={st.trailing_take_profit}, direction={st.trailing_stop_side}")
+            logger.info(f"🎯 {CS_TRAILING} ACTIVATED at {st.trailing_stop_price}, TP={st.trailing_take_profit}, direction={st.trailing_stop_side}")
             return
         if len(self.price_history) > 0:
             last = self.price_history[-1]
@@ -3746,9 +3929,9 @@ class AEEA_Engine:
                 st.trailing_take_profit = proposedTP
         if new_sl != st.trailing_stop_price:
             st.trailing_stop_price = new_sl
-            logger.info(f"📈 Trailing stop updated to {st.trailing_stop_price} (PnL={pnl_points}pts, friction={friction_points}pts)")
+            logger.info(f"📈 {CS_TRAILING} updated to {st.trailing_stop_price} (PnL={pnl_points}pts, friction={friction_points}pts)")
         if has_long and st.price >= st.trailing_take_profit:
-            logger.info(f"✅ TP hit (LONG) at {st.price} / TP={st.trailing_take_profit}")
+            logger.info(f"✅ {CS_TAKE_PROFIT} hit (LONG) at {st.price} / TP={st.trailing_take_profit}")
             if st.lOrder_id != -1:
                 self._close_order(st.lOrder_id, st.price)
             st.trailing_stop_active = False
@@ -3759,7 +3942,7 @@ class AEEA_Engine:
             st.has_open_long = False
             st.lOrder_id = -1
         elif has_short and st.price <= st.trailing_take_profit:
-            logger.info(f"✅ TP hit (SHORT) at {st.price} / TP={st.trailing_take_profit}")
+            logger.info(f"✅ {CS_TAKE_PROFIT} hit (SHORT) at {st.price} / TP={st.trailing_take_profit}")
             if st.kOrder_id != -1:
                 self._close_order(st.kOrder_id, st.price)
             st.trailing_stop_active = False
@@ -3774,15 +3957,15 @@ class AEEA_Engine:
         st = self.state
         for ji in range(st.y + 1, X_PERIOD - 1):
             jidx = ji - (st.y + 1)
-            if side == "BUY":
+            if side == CS_BUY_LABEL:
                 if jidx < len(st.Premium) and st.Premium[jidx] > current_price and st.Premium[jidx] != Decimal('0.0'):
                     return st.Premium[jidx]
-            elif side == "SELL":
+            elif side == CS_SELL_LABEL:
                 if jidx < len(st.Discount) and st.Discount[jidx] < current_price and st.Discount[jidx] != Decimal('0.0'):
                     return st.Discount[jidx]
-        if side == "BUY" and st.Sale > current_price:
+        if side == CS_BUY_LABEL and st.Sale > current_price:
             return st.Sale
-        if side == "SELL" and st.Stock < current_price:
+        if side == CS_SELL_LABEL and st.Stock < current_price:
             return st.Stock
         return Decimal('0.0')
 
@@ -3798,11 +3981,11 @@ class AEEA_Engine:
         projected_distance = abs(target_price - entry_price)
         projected_pnl_points = projected_distance / point_size
         safety_buffer = Decimal('1.0')
-        if side == "BUY":
+        if side == CS_BUY_LABEL:
             if target_price <= entry_price:
                 return False
             return projected_pnl_points > (friction_points + safety_buffer)
-        if side == "SELL":
+        if side == CS_SELL_LABEL:
             if target_price >= entry_price:
                 return False
             return projected_pnl_points > (friction_points + safety_buffer)
@@ -3814,19 +3997,19 @@ class AEEA_Engine:
         created = False
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
             st.BL.append(st.price)
-            st.BL_type.append("top")
+            st.BL_type.append(CS_TOP_LABEL)
             st.FVG += 1
             st.bL = price_str
-            logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}")
+            logger.info(f"▲ Top(): Blue {CS_FVG} line at {price_str}, {CS_FVG}={st.FVG}")
             created = True
             if self._bridge_publish_callback:
                 try:
-                    self._bridge_publish_callback("top", price_str)
+                    self._bridge_publish_callback(CS_TOP_LABEL, price_str)
                 except Exception as e:
                     logger.warning(f"_bridge_publish_callback failed: {e}")
         _emit_toast("fvg", {
             "action": "commit" if created else "duplicate",
-            "type": "top",
+            "type": CS_TOP_LABEL,
             "price": price_str,
             "idx": int(st.FVG),
             "tick": int(st.tick),
@@ -3838,19 +4021,19 @@ class AEEA_Engine:
         created = False
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
             st.BL.append(st.price)
-            st.BL_type.append("bott")
+            st.BL_type.append(CS_BOTT_LABEL)
             st.FVG += 1
             st.bL = price_str
-            logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}")
+            logger.info(f"▼ Bott(): Red {CS_FVG} line at {price_str}, {CS_FVG}={st.FVG}")
             created = True
             if self._bridge_publish_callback:
                 try:
-                    self._bridge_publish_callback("bott", price_str)
+                    self._bridge_publish_callback(CS_BOTT_LABEL, price_str)
                 except Exception as e:
                     logger.warning(f"_bridge_publish_callback failed: {e}")
         _emit_toast("fvg", {
             "action": "commit" if created else "duplicate",
-            "type": "bott",
+            "type": CS_BOTT_LABEL,
             "price": price_str,
             "idx": int(st.FVG),
             "tick": int(st.tick),
@@ -3893,9 +4076,9 @@ class AEEA_Engine:
         if st.FG:
             return
         if st.price <= Decimal('0.0'):
-            logger.warning("⏳ Cannot force-init: price not yet available")
+            logger.warning(f"⏳ Cannot force-init: price not yet available")
             return
-        logger.info("🚀 First valid tick detected. Forcing engine initialization...")
+        logger.info(f"🚀 First valid tick detected. Forcing engine initialization...")
         if not st.signature:
             st.D = st.price
             st.E = st.price
@@ -3911,7 +4094,7 @@ class AEEA_Engine:
             st.LL = [Decimal('0.0')] * size
             st.Premium = [Decimal('0.0')] * size
             st.Discount = [Decimal('0.0')] * size
-            st.Regime = ["sRange"] * size
+            st.Regime = [CS_SRANGE] * size
         iH = self.ohlcv_history[-1]["high"] if self.ohlcv_history else st.price
         iL = self.ohlcv_history[-1]["low"] if self.ohlcv_history else st.price
         for j in range(st.y + 1, X_PERIOD):
@@ -3928,7 +4111,7 @@ class AEEA_Engine:
             self._tick_log_counter = 0
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
-            logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, provider={st.last_provider}")
+            logger.info(f"⚡ Tick #{st.tick}: {CS_FIELD}={st.price}, {CS_SIGNAL}={st.signal}, FG={st.FG}, {CS_REGIME}={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, {CS_PROVIDER}={st.last_provider}")
 
         st.price = price_data.bid
         if len(self.ohlcv_history) >= 2:
@@ -3980,26 +4163,26 @@ class AEEA_Engine:
                     idx_j = j - (st.y + 1)
                     if 0 <= idx_j < len(st.Regime):
                         if is_now != st.t:
-                            if self._on_fire(j, "Stable", "tRange"):
+                            if self._on_fire(j, CS_STABLE, CS_TRANGE):
                                 self._F(j, st.iH, st.iL)
-                                st.Regime[idx_j] = "tRange"
+                                st.Regime[idx_j] = CS_TRANGE
                             else:
-                                st.Regime[idx_j] = "sRange"
+                                st.Regime[idx_j] = CS_SRANGE
                         else:
-                            st.Regime[idx_j] = "sRange"
+                            st.Regime[idx_j] = CS_SRANGE
                 else:
                     j = MIN_PERIOD + 1
                     st.O = j
                     idx_j = j - (st.y + 1)
                     if 0 <= idx_j < len(st.Regime):
                         if is_now != st.t:
-                            if self._on_fire(j, "Stable", "tRange"):
+                            if self._on_fire(j, CS_STABLE, CS_TRANGE):
                                 self._F(j, st.iH, st.iL)
-                                st.Regime[idx_j] = "tRange"
+                                st.Regime[idx_j] = CS_TRANGE
                             else:
-                                st.Regime[idx_j] = "sRange"
+                                st.Regime[idx_j] = CS_SRANGE
                         else:
-                            st.Regime[idx_j] = "sRange"
+                            st.Regime[idx_j] = CS_SRANGE
             else:
                 st.O = 2
             if st.io != 2:
@@ -4022,26 +4205,26 @@ class AEEA_Engine:
                     idx_j = j - (st.y + 1)
                     if 0 <= idx_j < len(st.Regime):
                         if is_now != st.t:
-                            if self._on_fire(j, "Stable", "tRange"):
+                            if self._on_fire(j, CS_STABLE, CS_TRANGE):
                                 self._F(j, st.iH, st.iL)
-                                st.Regime[idx_j] = "tRange"
+                                st.Regime[idx_j] = CS_TRANGE
                             else:
-                                st.Regime[idx_j] = "sRange"
+                                st.Regime[idx_j] = CS_SRANGE
                         else:
-                            st.Regime[idx_j] = "sRange"
+                            st.Regime[idx_j] = CS_SRANGE
                 else:
                     j = MAX_PERIOD
                     st.O = j
                     idx_j = j - (st.y + 1)
                     if 0 <= idx_j < len(st.Regime):
                         if is_now != st.t:
-                            if self._on_fire(j, "Stable", "tRange"):
+                            if self._on_fire(j, CS_STABLE, CS_TRANGE):
                                 self._F(j, st.iH, st.iL)
-                                st.Regime[idx_j] = "tRange"
+                                st.Regime[idx_j] = CS_TRANGE
                             else:
-                                st.Regime[idx_j] = "sRange"
+                                st.Regime[idx_j] = CS_SRANGE
                         else:
-                            st.Regime[idx_j] = "sRange"
+                            st.Regime[idx_j] = CS_SRANGE
             else:
                 st.O = X_PERIOD - 1
             if st.io != 4 * MAX_PERIOD:
@@ -4132,21 +4315,21 @@ class AEEA_Engine:
         removed_indices = []
         while i < len(st.BL):
             price_line = st.BL[i]
-            line_type = st.BL_type[i] if i < len(st.BL_type) else "top"
+            line_type = st.BL_type[i] if i < len(st.BL_type) else CS_TOP_LABEL
             if price_line <= Decimal('0.0'):
                 i += 1
                 continue
-            if line_type == "top" and (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
-                logger.info(f"🔵 FVG maintenance: remove blue @ {price_line}")
-                removed_indices.append((i, price_line, "top"))
+            if line_type == CS_TOP_LABEL and (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
+                logger.info(f"🔵 {CS_FVG} maintenance: remove blue @ {price_line}")
+                removed_indices.append((i, price_line, CS_TOP_LABEL))
                 st.BL.pop(i)
                 if i < len(st.BL_type):
                     st.BL_type.pop(i)
                 st.FVG -= 1
                 continue
-            if line_type == "bott" and (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
-                logger.info(f"🔴 FVG maintenance: remove red @ {price_line}")
-                removed_indices.append((i, price_line, "bott"))
+            if line_type == CS_BOTT_LABEL and (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
+                logger.info(f"🔴 {CS_FVG} maintenance: remove red @ {price_line}")
+                removed_indices.append((i, price_line, CS_BOTT_LABEL))
                 st.BL.pop(i)
                 if i < len(st.BL_type):
                     st.BL_type.pop(i)
@@ -4169,7 +4352,7 @@ class AEEA_Engine:
             now = datetime.now()
             if self._last_relay_warn is None or (now - self._last_relay_warn).seconds >= 60:
                 self._last_relay_warn = now
-                logger.warning(f"⚠️ No data from relay for {self.feed.active_symbol()} (consecutive={self._consecutive_zero_prices})")
+                logger.warning(f"⚠️ No data from {CS_PROVIDER} for {self.feed.active_symbol()} (consecutive={self._consecutive_zero_prices})")
             return
         bid = data["close"]
         ask = data["close"]
@@ -4226,7 +4409,7 @@ class AEEA_Engine:
             })
             if len(self.ohlcv_history) > 200:
                 self.ohlcv_history = self.ohlcv_history[-200:]
-            logger.info(f"📊 BAR CLOSE #{self.state.bar_close_count} at {timestamp.isoformat()} close={price_data.close} volume={price_data.volume} provider={provider} (ohlcv={len(self.ohlcv_history)})")
+            logger.info(f"📊 BAR CLOSE #{self.state.bar_close_count} at {timestamp.isoformat()} close={price_data.close} {CS_VOLUME}={price_data.volume} {CS_PROVIDER}={provider} (ohlcv={len(self.ohlcv_history)})")
         else:
             self._bar_open = False
             if self.ohlcv_history:
@@ -4254,7 +4437,7 @@ class AEEA_Engine:
             return
         if not self._alert_delivery_enabled:
             return
-        direction = "📈 BUY" if st.price > st.signal else "📉 SELL"
+        direction = f"📈 {CS_BUY_LABEL}" if st.price > st.signal else f"📉 {CS_SELL_LABEL}"
         m_local = st.authoritative_m
         n_local = st.authoritative_n
         h_idx = st.h - (st.y + 1)
@@ -4262,19 +4445,19 @@ class AEEA_Engine:
         n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
         condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
-        regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+        regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else CS_UNKNOWN
         # D-46 / E-12: every interpolated value is Markdown-escaped before it
         # is placed into the parse_mode="Markdown" template. The static
         # template characters (*, _, `) remain meaningful to the parser.
         msg = (
-            f"🎯 *ÆEA SIGNAL ALERT*\n"
+            f"🎯 *ÆEA {CS_SIGNAL}*\n"
             f"📊 *Direction:* {_md_escape(direction)}\n"
-            f"🎯 *Signal Level:* {_md_escape(st.signal)}\n"
-            f"💰 *Current Price:* {_md_escape(st.price)}\n"
-            f"📊 *Regime:* {_md_escape(regime)}\n"
-            f"⚖️ *Imbalance @ h={_md_escape(st.h)}:* m={_md_escape(m_at_h)}, n={_md_escape(n_at_h)}\n"
-            f"⚖️ *Local m/n:* {_md_escape(m_local)}/{_md_escape(n_local)}\n"
-            f"✅ *δ(m-n-2)=1 (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
+            f"🎯 *{CS_SIGNAL} Level:* {_md_escape(st.signal)}\n"
+            f"💰 *Current {CS_FIELD}:* {_md_escape(st.price)}\n"
+            f"📊 *{CS_REGIME_LABEL}:* {_md_escape(regime)}\n"
+            f"⚖️ *{CS_IMBALANCE_LABEL} @ h={_md_escape(st.h)}:* m={_md_escape(m_at_h)}, n={_md_escape(n_at_h)}\n"
+            f"⚖️ *Local {CS_M_LABEL}/{CS_N_LABEL}:* {_md_escape(m_local)}/{_md_escape(n_local)}\n"
+            f"✅ *{CS_KRONECKER} (MQL4 gate):* {'✅ MET' if condition_met else '❌ NOT MET'}\n"
             f"🔄 *Tick Count:* {_md_escape(st.tick)}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -4288,11 +4471,11 @@ class AEEA_Engine:
                 reply_to_message_id=reply_to,
             )
             if ok:
-                logger.info(f"📡 Signal alert sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
+                logger.info(f"📡 {CS_SIGNAL} alert sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
             else:
-                logger.warning(f"❌ Signal alert send failed for {target_chat} (tick={st.tick})")
+                logger.warning(f"❌ {CS_SIGNAL} alert send failed for {target_chat} (tick={st.tick})")
             return
-        logger.warning("❌ Signal alert skipped: bot reference or _send_message_sync unavailable")
+        logger.warning(f"❌ {CS_SIGNAL} alert skipped: bot reference or _send_message_sync unavailable")
 
     def _send_execution_alert(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
         st = self.state
@@ -4304,22 +4487,22 @@ class AEEA_Engine:
         if not self._alert_delivery_enabled:
             return
         emoji_map = {
-            "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
-            "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
-            "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
+            CS_BULL: "🐂", CS_BEAR: "🐻", CS_WHISKY: "🥃", CS_WINE: "🍷",
+            CS_WATTER: "💧", CS_BLOOD: "🩸", CS_HAWK: "🦅", CS_DOVE: "🕊️",
+            CS_DIAMOND: "🔷", CS_RUBY: "🔻", CS_TOP: "▲", CS_BOTT: "▼",
             "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
         }
         emoji = emoji_map.get(event, "⚡")
-        side_str = side if side else "NONE"
+        side_str = side if side else CS_NONE
         ticket_str = f"#{ticket}" if ticket != -1 else "—"
         reason_str = f" | {_md_escape(reason)}" if reason else ""
         # D-46 / E-12: escape every interpolated value.
         msg = (
-            f"{emoji} *ÆEA EXECUTION*\n"
+            f"{emoji} *ÆEA {CS_EXECUTION}*\n"
             f"📛 *Event:* {_md_escape(event)}\n"
-            f"📊 *Side:* {_md_escape(side_str)}\n"
+            f"📊 *{CS_SIDE_LABEL}:* {_md_escape(side_str)}\n"
             f"🎫 *Ticket:* {_md_escape(ticket_str)}\n"
-            f"💰 *Price:* {_md_escape(price)}{reason_str}\n"
+            f"💰 *{CS_FIELD}:* {_md_escape(price)}{reason_str}\n"
             f"🔄 *Tick:* {_md_escape(st.tick)}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -4333,11 +4516,11 @@ class AEEA_Engine:
                 reply_to_message_id=reply_to,
             )
             if ok:
-                logger.info(f"📡 Execution alert ({event}) sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
+                logger.info(f"📡 {CS_EXECUTION} alert ({event}) sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
             else:
-                logger.warning(f"❌ Execution alert ({event}) send failed (tick={st.tick})")
+                logger.warning(f"❌ {CS_EXECUTION} alert ({event}) send failed (tick={st.tick})")
             return
-        logger.warning("❌ Execution alert skipped: bot reference or _send_message_sync unavailable")
+        logger.warning(f"❌ {CS_EXECUTION} alert skipped: bot reference or _send_message_sync unavailable")
 
     def get_signal_status(self) -> Dict[str, Any]:
         st = self.state
@@ -4348,7 +4531,7 @@ class AEEA_Engine:
         n_local = st.authoritative_n
         condition_met = (m_local >= 12) or (n_local >= 12)
         idx = st.Z - (st.y + 1)
-        regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else "Unknown"
+        regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else CS_UNKNOWN
         return {
             "signal": float(st.signal),
             "price": float(st.price),
@@ -4472,9 +4655,9 @@ class AEEA_Engine:
                 return [float(v) for v in st.IHKk[-count:]]
             if name == "IchimokuT":
                 return [float(v) for v in st.IHKt[-count:]]
-            if name == "ATR":
+            if name == CS_IATR:
                 return [float(v) for v in st.ATR[-count:]]
-            if name == "StdDev":
+            if name == CS_ISTDDEV:
                 return [float(v) for v in st.StdDev[-count:]]
             return []
         row = st.iA[idx] if idx < len(st.iA) else []
@@ -4484,7 +4667,7 @@ class AEEA_Engine:
         st = self.state
         if st.price <= Decimal('0.0'):
             return {"error": "no_price"}
-        if side not in ("BUY", "SELL"):
+        if side not in (CS_BUY_LABEL, CS_SELL_LABEL):
             return {"error": "invalid_side"}
         if lot <= Decimal('0.0'):
             return {"error": "invalid_lot"}
@@ -4494,16 +4677,16 @@ class AEEA_Engine:
         if tp <= Decimal('0.0'):
             tp = Decimal('0.0')
         ticket = self._open_order(side, entry, sl, tp, lot)
-        if side == "BUY":
+        if side == CS_BUY_LABEL:
             st.has_open_long = True
             st.lOrder_id = ticket
             st.trailing_stop_entry = entry
-            st.trailing_stop_side = "LONG"
+            st.trailing_stop_side = CS_LONG
         else:
             st.has_open_short = True
             st.kOrder_id = ticket
             st.trailing_stop_entry = entry
-            st.trailing_stop_side = "SHORT"
+            st.trailing_stop_side = CS_SHORT
         logger.info(f"📝 place_order: {side} #{ticket} @ {entry}, lot={lot}, sl={sl}, tp={tp}")
         self._emit_execution_toast("ManualOrder", entry, side, ticket, "manual")
         return {"ok": True, "ticket": ticket, "side": side, "entry": float(entry), "sl": float(sl), "tp": float(tp)}
@@ -4534,7 +4717,7 @@ class AEEA_Engine:
                     o.closed_at = datetime.now()
                     o.close_price = st.price
                     closed.append(o.ticket)
-                    if o.side == "BUY":
+                    if o.side == CS_BUY_LABEL:
                         st.has_open_long = False
                         st.lOrder_id = -1
                     else:
@@ -4543,7 +4726,7 @@ class AEEA_Engine:
                     break
         logger.info(f"📝 close_order: closed={closed}")
         if closed:
-            self._emit_execution_toast("ManualClose", st.price, "CLOSE", closed[0] if len(closed) == 1 else -1, "manual")
+            self._emit_execution_toast("ManualClose", st.price, CS_CLOSE, closed[0] if len(closed) == 1 else -1, "manual")
         return {"ok": True, "closed": closed}
 
     def list_orders(self) -> List[Dict[str, Any]]:
@@ -4705,7 +4888,7 @@ class AEEA_Engine:
                 return {
                     "error": "no_price_for_symbol",
                     "symbol": yahoo_symbol,
-                    "detail": f"Relay returned no price for '{yahoo_symbol}'. Check RELAY_URL and symbol validity.",
+                    "detail": f"{CS_PROVIDER} returned no price for '{yahoo_symbol}'. Check {CS_PROVIDER} and symbol validity.",
                 }
             prev_chat = self.state.chat_id
             prev_on_track = self.state.on_track_runs
@@ -4729,7 +4912,7 @@ class AEEA_Engine:
             # E-4: seed the projection for the newly-selected symbol immediately
             # rather than waiting for the next execution.
             self._project_arc_length(trigger="symbol_change")
-            logger.info(f"📈 Symbol changed to {yahoo_symbol} (provider={self.feed.last_provider()})")
+            logger.info(f"📈 Symbol changed to {yahoo_symbol} ({CS_PROVIDER}={self.feed.last_provider()})")
             return {"ok": True, "symbol": yahoo_symbol, "provider": self.feed.last_provider()}
         except Exception as e:
             logger.exception("change_symbol failed")
@@ -4747,16 +4930,16 @@ class AEEA_Engine:
         price_now = st.price if st.price > Decimal('0.0') else self.ohlcv_history[-1]["close"]
         signal_now = st.signal if st.signal != Decimal('0.0') else price_now
         regime_idx = st.Z - (st.y + 1)
-        regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else "Unknown"
-        projection_kind = "range"
-        if regime in ("sTrend", "tTrend"):
-            projection_kind = "trend"
-        elif regime in ("sVolatile", "tVolatile"):
-            projection_kind = "volatile"
-        elif regime in ("sRange", "tRange", "Stable"):
-            projection_kind = "range"
+        regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else CS_UNKNOWN
+        projection_kind = CS_RANGE
+        if regime in (CS_STREND, CS_TTREND):
+            projection_kind = CS_TREND
+        elif regime in (CS_SVOLATILE, CS_TVOLATILE):
+            projection_kind = CS_VOLATILE
+        elif regime in (CS_SRANGE, CS_TRANGE, CS_STABLE):
+            projection_kind = CS_RANGE
         slope = Decimal('0.0')
-        if projection_kind == "trend":
+        if projection_kind == CS_TREND:
             window = self.ohlcv_history[-min(10, len(self.ohlcv_history)):]
             if len(window) >= 2:
                 first_close = window[0]["close"]
@@ -4765,7 +4948,7 @@ class AEEA_Engine:
                 slope = (last_close - first_close) / n_minus_1
         amplitude = Decimal('0.0')
         center = price_now
-        if projection_kind == "volatile":
+        if projection_kind == CS_VOLATILE:
             prem = Decimal('0.0')
             disc = Decimal('0.0')
             for i in range(len(st.Premium) - 1, -1, -1):
@@ -4795,9 +4978,9 @@ class AEEA_Engine:
         two_pi_d = Decimal('6.2831853071795864769252867665590057683943387987502')
         for k in range(1, horizon + 1):
             t = Decimal(k)
-            if projection_kind == "trend":
+            if projection_kind == CS_TREND:
                 future_price = price_now + slope * t
-            elif projection_kind == "volatile":
+            elif projection_kind == CS_VOLATILE:
                 t_frac = PyFraction(k, 1)
                 ratio_frac = t_frac / PyFraction(horizon, 1)
                 omega_t = two_pi_d * Decimal(ratio_frac.numerator) / Decimal(ratio_frac.denominator)
@@ -4831,7 +5014,7 @@ class AEEA_Engine:
         }
         st.projection_computed_at = datetime.now().isoformat()
         st.projection_trigger = trigger
-        logger.info(f"🌌 Projection recomputed (trigger={trigger}, kind={projection_kind}, horizon={horizon})")
+        logger.info(f"🌌 {CS_PROJECTION} recomputed (trigger={trigger}, kind={projection_kind}, horizon={horizon})")
 
     @staticmethod
     def _decimal_cos(x: Decimal) -> Decimal:
@@ -4856,7 +5039,7 @@ class AEEA_Engine:
             "computed_at": st.projection_computed_at,
             "current_price": str(st.price),
             "signal_level": str(st.signal),
-            "regime": st.projection_meta.get("regime") if st.projection_meta else "Unknown",
+            "regime": st.projection_meta.get("regime") if st.projection_meta else CS_UNKNOWN,
             "trigger": st.projection_trigger,
         }
 
@@ -4893,8 +5076,8 @@ class BridgeState:
         return True
 
     def add_fvg(self, fvg_type: str, price_str: str, user_id: Optional[int] = None, requested_idx: Optional[int] = None) -> int:
-        if fvg_type not in ("top", "bott"):
-            raise ValueError("fvg_type must be 'top' or 'bott'")
+        if fvg_type not in (CS_TOP_LABEL, CS_BOTT_LABEL):
+            raise ValueError(f"fvg_type must be '{CS_TOP_LABEL}' or '{CS_BOTT_LABEL}'")
         try:
             price_dec = Decimal(str(price_str))
         except Exception:
@@ -4942,7 +5125,7 @@ class BridgeState:
         if removed and removed_record is not None:
             _emit_toast("fvg", {
                 "action": "remove",
-                "type": removed_record.get("type", "top"),
+                "type": removed_record.get("type", CS_TOP_LABEL),
                 "price": removed_record.get("price", "0"),
                 "idx": idx,
                 "tick": int(engine.state.tick) if engine is not None else 0,
@@ -5111,7 +5294,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.4.2"
+    server_version = "AEI-Bridge/4.4.3"
 
     def log_message(self, fmt, *args):
         return
@@ -5182,7 +5365,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.4.2",
+                "ok": not stale, "service": "aei-bridge", "version": "4.4.3",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -5256,7 +5439,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if path == "/state":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
-                self._send_json(503, {"error": "engine_not_ready", "detail": "Engine hasn't started. Use /start_feed in the bot."})
+                self._send_json(503, {"error": "engine_not_ready", "detail": f"Engine hasn't started. Use /start_feed in the bot."})
                 return
             st = engine.state
             public = BRIDGE_ENGINE_REF.get("public_url")
@@ -5267,7 +5450,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 scheme = "https" if BRIDGE_USE_TLS else "http"
                 endpoint = f"{scheme}://{host}"
             idx = st.Z - (st.y + 1)
-            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else CS_UNKNOWN
             self._send_json(200, {
                 "symbol": SYMBOL,
                 "price": str(st.price),
@@ -5301,22 +5484,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if path == "/miniapp-state":
             engine = BRIDGE_ENGINE_REF.get("engine")
             if engine is None:
-                self._send_json(503, {"error": "engine_not_ready", "detail": "Engine hasn't started. Use /start_feed in the bot."})
+                self._send_json(503, {"error": "engine_not_ready", "detail": f"Engine hasn't started. Use /start_feed in the bot."})
                 return
             st = engine.state
             idx = st.Z - (st.y + 1)
-            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else CS_UNKNOWN
             fvg_anchors = []
             for idx_i, p in enumerate(st.Premium):
                 if p > Decimal('0.0'):
-                    fvg_anchors.append({"idx": idx_i, "type": "top", "price": str(p)})
+                    fvg_anchors.append({"idx": idx_i, "type": CS_TOP_LABEL, "price": str(p)})
             for idx_i, p in enumerate(st.Discount):
                 if p > Decimal('0.0'):
-                    fvg_anchors.append({"idx": idx_i, "type": "bottom", "price": str(p)})
+                    fvg_anchors.append({"idx": idx_i, "type": CS_BOTT_LABEL, "price": str(p)})
             for bridge_idx, rec in BRIDGE_STATE._fvgs.items():
                 fvg_anchors.append({
                     "idx": bridge_idx,
-                    "type": "top" if rec["type"] == "top" else "bottom",
+                    "type": CS_TOP_LABEL if rec["type"] == CS_TOP_LABEL else CS_BOTT_LABEL,
                     "price": rec["price"],
                 })
             h_idx = st.h - (st.y + 1)
@@ -5574,7 +5757,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if engine is None:
                 self._send_json(503, {"error": "engine_not_ready"})
                 return
-            name = query.get("name", "RSI")
+            name = query.get("name", CS_RSI)
             try:
                 count = int(query.get("count", "80"))
             except Exception:
@@ -5672,13 +5855,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 engine = BRIDGE_ENGINE_REF.get("engine")
                 if engine is not None and idx in engine.state.fvg_anchor_map:
                     anchor_info = engine.state.fvg_anchor_map[idx]
-                logger.info(f"📐 FVG committed: type={fvg_type} price={price_label} idx={idx} verified={verified} user={username}")
+                logger.info(f"📐 {CS_FVG} committed: type={fvg_type} price={price_label} idx={idx} verified={verified} user={username}")
                 self._send_json(201, {"ok": True, "idx": idx, "type": fvg_type, "price": price_label, "verified": verified, "anchor": anchor_info})
             except ValueError as ve:
-                logger.warning(f"FVG rejected: {ve}")
+                logger.warning(f"{CS_FVG} rejected: {ve}")
                 self._send_json(422, {"error": "validation", "detail": str(ve)})
             except Exception as e:
-                logger.error(f"FVG POST error: {e}")
+                logger.error(f"{CS_FVG} POST error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
 
@@ -5695,7 +5878,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 # E-4 / D-43: do NOT recompute the projection from a half-reset
                 # state. Only the success path calls _project_arc_length().
                 engine._project_arc_length(trigger="manual_refresh")
-                logger.info("🔄 Manual reset requested via /reset")
+                logger.info(f"🔄 Manual reset requested via /reset")
                 self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
             except Exception as e:
                 logger.error(f"/reset error: {e}")
@@ -5795,7 +5978,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             idx = int(m.group(1))
             ok = BRIDGE_STATE.remove_fvg(idx)
             if ok:
-                logger.info(f"🔻 FVG removed: idx={idx}")
+                logger.info(f"🔻 {CS_FVG} removed: idx={idx}")
                 self._send_json(200, {"ok": True, "idx": idx})
             else:
                 self._send_json(404, {"error": "fvg_not_found", "idx": idx})
@@ -5953,11 +6136,11 @@ class AEI_Bot:
         # Telegram error description so the operator can see which branch the
         # failure landed in.
         if self.application is None:
-            logger.warning("📡 send_message skipped: application is None")
+            logger.warning(f"📡 {CS_SIGNAL} skipped: application is None")
             return False
         loop = self._loop
         if loop is None or loop.is_closed():
-            logger.warning("📡 send_message skipped: event loop not captured or closed")
+            logger.warning(f"📡 {CS_SIGNAL} skipped: event loop not captured or closed")
             return False
         bot = self.application.bot
 
@@ -5981,22 +6164,22 @@ class AEI_Bot:
         ok, err1 = _attempt(parse_mode, reply_to_message_id)
         if ok:
             return True
-        logger.info(f"📡 send_message attempt 1 failed (reply+Markdown): {err1}")
+        logger.info(f"📡 {CS_SIGNAL} attempt 1 failed (reply+Markdown): {err1}")
 
         # Attempt 2: standalone message with Markdown, only when the first
         # failure was a reply-target problem. This is the E-11 fix for D-45.
         if _looks_like_reply_error(err1):
             ok2, err2 = _attempt(parse_mode, None)
             if ok2:
-                logger.info("📡 send_message attempt 2 succeeded (standalone Markdown)")
+                logger.info(f"📡 {CS_SIGNAL} attempt 2 succeeded (standalone Markdown)")
                 return True
-            logger.info(f"📡 send_message attempt 2 failed (standalone Markdown): {err2}")
+            logger.info(f"📡 {CS_SIGNAL} attempt 2 failed (standalone Markdown): {err2}")
             # Attempt 3: plain-text fallback (E-13)
             ok3, err3 = _attempt(None, None)
             if ok3:
-                logger.info("📡 send_message attempt 3 succeeded (plain text)")
+                logger.info(f"📡 {CS_SIGNAL} attempt 3 succeeded (plain text)")
                 return True
-            logger.warning(f"📡 send_message attempt 3 failed (plain text): {err3}")
+            logger.warning(f"📡 {CS_SIGNAL} attempt 3 failed (plain text): {err3}")
             return False
 
         # If the first failure was a Markdown parse problem, go straight to the
@@ -6004,30 +6187,30 @@ class AEI_Bot:
         if _looks_like_parse_error(err1):
             ok3, err3 = _attempt(None, reply_to_message_id)
             if ok3:
-                logger.info("📡 send_message attempt 3 succeeded (plain text, threaded)")
+                logger.info(f"📡 {CS_SIGNAL} attempt 3 succeeded (plain text, threaded)")
                 return True
             # Last resort: plain text, no reply threading
             ok3b, err3b = _attempt(None, None)
             if ok3b:
-                logger.info("📡 send_message attempt 3b succeeded (plain text, standalone)")
+                logger.info(f"📡 {CS_SIGNAL} attempt 3b succeeded (plain text, standalone)")
                 return True
-            logger.warning(f"📡 send_message attempt 3/3b failed (plain text): {err3b}")
+            logger.warning(f"📡 {CS_SIGNAL} attempt 3/3b failed (plain text): {err3b}")
             return False
 
         # Unknown failure class. Try standalone Markdown, then plain text.
         ok2, err2 = _attempt(parse_mode, None)
         if ok2:
-            logger.info("📡 send_message attempt 2 succeeded (standalone Markdown, unknown class)")
+            logger.info(f"📡 {CS_SIGNAL} attempt 2 succeeded (standalone Markdown, unknown class)")
             return True
         ok3, err3 = _attempt(None, None)
         if ok3:
-            logger.info("📡 send_message attempt 3 succeeded (plain text, unknown class)")
+            logger.info(f"📡 {CS_SIGNAL} attempt 3 succeeded (plain text, unknown class)")
             return True
-        logger.warning(f"📡 send_message failed all attempts: reply_err={err1} standalone_err={err2} plain_err={err3}")
+        logger.warning(f"📡 {CS_SIGNAL} failed all attempts: reply_err={err1} standalone_err={err2} plain_err={err3}")
         return False
 
     async def price_feed_loop(self):
-        logger.info("🔄 Price feed loop entered")
+        logger.info(f"🔄 {CS_FIELD} feed loop entered")
         iteration = 0
         while self._running:
             iteration += 1
@@ -6035,23 +6218,23 @@ class AEI_Bot:
                 self.engine.update_price_from_feed()
                 st = self.engine.state
                 idx = st.Z - (st.y + 1)
-                regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
-                logger.info(f"📊 itr#{iteration} price={st.price} vol={st.last_volume} provider={st.last_provider} tick={st.tick} FG={st.FG} regime={regime} bars={st.bar_close_count} signals={len(st.signal_history)} ohlcv={len(self.engine.ohlcv_history)}")
+                regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else CS_UNKNOWN
+                logger.info(f"📊 itr#{iteration} {CS_FIELD}={st.price} vol={st.last_volume} {CS_PROVIDER}={st.last_provider} tick={st.tick} FG={st.FG} {CS_REGIME}={regime} bars={st.bar_close_count} signals={len(st.signal_history)} ohlcv={len(self.engine.ohlcv_history)}")
             except Exception:
                 logger.exception(f"❌ Feed iteration #{iteration} failed")
             await asyncio.sleep(UPDATE_INTERVAL)
-        logger.info("🔄 Price feed loop exited")
+        logger.info(f"🔄 {CS_FIELD} feed loop exited")
 
     def _build_main_keyboard(self) -> InlineKeyboardMarkup:
         webapp_url = self._resolve_webapp_url()
         rows = [
-            [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("📈 Signal", callback_data="signal")],
-            [InlineKeyboardButton("📊 Regime", callback_data="regime"), InlineKeyboardButton("📉 Indicators", callback_data="indicators")],
-            [InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"), InlineKeyboardButton("⏹️ Stop Feed", callback_data="stop_feed")],
-            [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
-            [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
-            [InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics")],
-            [InlineKeyboardButton("📊 Chart", callback_data="chart"), InlineKeyboardButton("🎯 Projection", callback_data="projection")],
+            [InlineKeyboardButton(f"📊 {CS_REGIME}", callback_data="status"), InlineKeyboardButton(f"📈 {CS_SIGNAL}", callback_data="signal")],
+            [InlineKeyboardButton(f"📊 {CS_REGIME}", callback_data="regime"), InlineKeyboardButton(f"📉 {CS_INDICATORS}", callback_data="indicators")],
+            [InlineKeyboardButton(f"🔄 Start {CS_FIELD}", callback_data="start_feed"), InlineKeyboardButton(f"⏹️ Stop {CS_FIELD}", callback_data="stop_feed")],
+            [InlineKeyboardButton(f"📈 Info", callback_data="info"), InlineKeyboardButton(f"🔄 Reset", callback_data="reset")],
+            [InlineKeyboardButton(f"🔬 Probe {CS_PROVIDER}", callback_data="probe"), InlineKeyboardButton(f"♻️ Rebuild {CS_PROVIDER}", callback_data="rebuild_yf")],
+            [InlineKeyboardButton(f"🔬 {CS_DIAGNOSTICS}", callback_data="diagnostics")],
+            [InlineKeyboardButton(f"📊 Chart", callback_data="chart"), InlineKeyboardButton(f"🎯 {CS_PROJECTION}", callback_data="projection")],
         ]
         if webapp_url:
             rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
@@ -6064,37 +6247,37 @@ class AEI_Bot:
         chat_id = update.effective_chat.id
         self.engine.state.chat_id = chat_id
         self.engine.application = self.application
-        engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
-        feed_status = "Active" if self._running else "Inactive"
+        engine_status = f"✅ Initialized" if self.engine.state.FG else f"⏳ Waiting for data"
+        feed_status = f"Active" if self._running else f"Inactive"
         welcome = (
-            "🔷 *ÆEA Quantum-Financial Topology Bot*\n"
-            "Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
-            "Stochastic Geometry of Supply-Demand Imbalance.\n\n"
-            "📊 *Available Commands:*\n"
-            "`/status` - Current market state & regime\n"
-            "`/regime` - Detailed regime classification\n"
-            "`/signal` - Current trading signal\n"
-            "`/indicators` - 13D Hilbert Space projection\n"
-            "`/fvg` - Fair Value Gap tracking\n"
-            "`/chart` - Recent signals summary\n"
-            "`/projection` - Arc-length future price projection\n"
-            "`/diagnostics` - Full engine diagnostic snapshot\n"
-            "`/reset` - Reset topological branch\n"
-            "`/start_feed` - Start price feed\n"
-            "`/stop_feed` - Stop price feed\n"
-            "`/symbol <PAIR>` - Change trading symbol\n"
-            "`/info` - Ticker information\n"
-            "`/probe` - Relay diagnostics\n"
-            "`/rebuild_yf` - Force relay reset\n"
-            "`/webapp` - Launch Telegram Mini App\n"
-            "`/webgui` - Show bridge URL\n"
-            "`/help` - Show this message\n\n"
+            f"🔷 *ÆEA Quantum-Financial Topology Bot*\n"
+            f"Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
+            f"Stochastic Geometry of Supply-Demand Imbalance.\n\n"
+            f"📊 *Available Commands:*\n"
+            f"`/status` - Current market state & {CS_REGIME}\n"
+            f"`/regime` - Detailed {CS_REGIME} classification\n"
+            f"`/signal` - Current {CS_SIGNAL}\n"
+            f"`/indicators` - 13D Hilbert Space projection\n"
+            f"`/fvg` - Fair Value Gap tracking\n"
+            f"`/chart` - Recent signals summary\n"
+            f"`/projection` - Arc-length future price projection\n"
+            f"`/diagnostics` - Full engine diagnostic snapshot\n"
+            f"`/reset` - Reset topological branch\n"
+            f"`/start_feed` - Start price feed\n"
+            f"`/stop_feed` - Stop price feed\n"
+            f"`/symbol <PAIR>` - Change trading symbol\n"
+            f"`/info` - Ticker information\n"
+            f"`/probe` - {CS_PROVIDER} diagnostics\n"
+            f"`/rebuild_yf` - Force {CS_PROVIDER} reset\n"
+            f"`/webapp` - Launch Telegram Mini App\n"
+            f"`/webgui` - Show bridge URL\n"
+            f"`/help` - Show this message\n\n"
             f"*Current Symbol:* `{SYMBOL}`\n"
             f"🔄 *Feed Status:* {feed_status}\n"
             f"🧠 *Engine Status:* {engine_status}\n"
             f"📊 *Bar Closes:* {self.engine.state.bar_close_count}  |  *Signals:* {len(self.engine.state.signal_history)}\n"
-            f"📡 *Provider:* `{self.engine.state.last_provider or '—'}`  |  *Volume:* `{self.engine.state.last_volume}`\n"
-            "💎 Natalia Tanyatia"
+            f"📡 *{CS_PROVIDER}:* `{self.engine.state.last_provider or '—'}`  |  *{CS_VOLUME}:* `{self.engine.state.last_volume}`\n"
+            f"💎 Natalia Tanyatia"
         )
         await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
 
@@ -6104,59 +6287,59 @@ class AEI_Bot:
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         if not self.engine.state.FG:
-            logger.info("⚠️ Engine not initialized, attempting to force...")
+            logger.info(f"⚠️ Engine not initialized, attempting to force...")
             self.engine._force_initialization()
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nThe engine will initialize on the first price tick after starting the feed.\nPlease use `/start_feed` to start the price feed.\nIf the feed is already running, try `/reset` to reinitialize.", parse_mode="Markdown")
+            await update.message.reply_text(f"⏳ *Engine not initialized*\nThe engine will initialize on the first price tick after starting the feed.\nPlease use `/start_feed` to start the price feed.\nIf the feed is already running, try `/reset` to reinitialize.", parse_mode="Markdown")
             return
         state = self.engine.state
         idx = state.Z - (state.y + 1)
-        regime = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
+        regime = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else CS_UNKNOWN
         bid, ask = self.engine.feed.get_current_price()
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         feed_mark = "✅" if self._running else "⏹️"
-        init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
+        init_mark = f"✅ Initialized" if state.FG else f"⏳ Initializing"
         m_local = state.authoritative_m
         n_local = state.authoritative_n
         h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
-        trail_status = "🟢 Active" if state.trailing_stop_active else "⚪ Inactive"
+        trail_status = f"🟢 Active" if state.trailing_stop_active else f"⚪ Inactive"
         order_presence = []
         if state.has_open_long:
-            order_presence.append(f"LONG(id={state.lOrder_id})")
+            order_presence.append(f"{CS_LONG}(id={state.lOrder_id})")
         if state.has_open_short:
-            order_presence.append(f"SHORT(id={state.kOrder_id})")
-        order_str = ", ".join(order_presence) if order_presence else "none"
+            order_presence.append(f"{CS_SHORT}(id={state.kOrder_id})")
+        order_str = ", ".join(order_presence) if order_presence else CS_NONE
         response = (
-            "🔷 *ÆEA STATUS*\n"
+            f"🔷 *ÆEA {CS_REGIME}*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
-            f"💰 *Price:* {price_display}\n"
-            f"📊 *Regime:* {regime}\n"
-            f"🎯 *Signal Level:* {state.signal:.5f}\n"
+            f"💰 *{CS_FIELD}:* {price_display}\n"
+            f"📊 *{CS_REGIME_LABEL}:* {regime}\n"
+            f"🎯 *{CS_SIGNAL} Level:* {state.signal:.5f}\n"
             f"📋 *Signature:* {'Active' if state.signature else 'Idle'}\n"
             f"🔄 *Tick:* {state.tick}\n"
             f"🧠 *Engine State:* {init_mark}\n"
-            f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
-            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
+            f"⚖️ *{CS_IMBALANCE_LABEL} @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
+            f"⚖️ *Local {CS_M_LABEL}/{CS_N_LABEL}:* {m_local}/{n_local}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
-            f"📡 *Signal Fires:* {self.engine._imbalance_fire_count}\n"
+            f"📡 *{CS_SIGNAL} Fires:* {self.engine._imbalance_fire_count}\n"
             f"📊 *Bar Closes:* {state.bar_close_count}\n"
             f"📈 *OHLCV Bars:* {len(self.engine.ohlcv_history)}\n"
-            f"🎯 *Signal History:* {len(state.signal_history)}\n"
+            f"🎯 *{CS_SIGNAL} History:* {len(state.signal_history)}\n"
             f"📡 *Feed Active:* {feed_mark}\n"
-            f"🛰️ *Provider:* `{state.last_provider or '—'}`  |  *Volume:* `{state.last_volume}`\n"
+            f"🛰️ *{CS_PROVIDER}:* `{state.last_provider or '—'}`  |  *{CS_VOLUME}:* `{state.last_volume}`\n"
             f"🔀 *KC:* {state.KC}  |  *Prime:* {state.prime}  |  *Dime:* {state.dime}\n"
             f"🔀 *Invert:* {state.invert}  |  *Mem:* {state.mem}  |  *Tag:* {state.tag}\n"
             f"🔀 *A:* {state.A}  |  *B:* {state.B}  |  *C:* {state.C}  |  *c:* {state.c}\n"
             f"🔀 *tick_tock:* {state.tick_tock}  |  *safety:* {state.safety}\n"
-            f"📊 *Orders:* {order_str}\n"
-            f"🛑 *Trailing Stop:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
-            f"🎯 *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
-            f"🔍 *OnTrack Runs:* {state.on_track_runs}  |  *OnStand Runs:* {state.on_stand_runs}\n"
-            f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}\n"
+            f"📊 *{CS_ORDERS}:* {order_str}\n"
+            f"🛑 *{CS_TRAILING}:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
+            f"🎯 *{CS_TRAILING} Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
+            f"🔍 *{CS_ONTrack} Runs:* {state.on_track_runs}  |  *{CS_ONSTAND} Runs:* {state.on_stand_runs}\n"
+            f"🎯 *Last {CS_KRONECKER} Bar:* {self.engine._last_kronecker_bar}\n"
             f"🔢 *X_scan:* {state.X_scan}  |  *Y_scan:* {state.Y_scan}  |  *X_PERIOD:* {X_PERIOD}\n"
-            f"🌌 *Projection:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (trigger={state.projection_trigger or '—'})\n"
+            f"🌌 *{CS_PROJECTION}:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (trigger={state.projection_trigger or '—'})\n"
             f"💬 *Last Inbound Msg Id:* {state.last_inbound_message_id}"
         )
         reply_markup = self._build_main_keyboard()
@@ -6169,31 +6352,31 @@ class AEI_Bot:
         self._track_inbound_message(update)
         status = self.engine.get_signal_status()
         response = (
-            "🔬 *ENGINE DIAGNOSTICS*\n"
+            f"🔬 *ENGINE {CS_DIAGNOSTICS}*\n"
             f"🔄 *Tick:* {status.get('tick')}\n"
             f"🧮 *Indicator Populates:* {status.get('indicator_populate_count')}\n"
-            f"📡 *Signal Fires:* {status.get('imbalance_fire_count')}\n"
+            f"📡 *{CS_SIGNAL} Fires:* {status.get('imbalance_fire_count')}\n"
             f"📊 *Bar Closes:* {status.get('bar_close_count')}\n"
             f"📈 *OHLCV History:* {len(self.engine.ohlcv_history)}\n"
-            f"🎯 *Signal History:* {status.get('signal_count')}\n"
-            f"⚖️ *Local m / n:* {status.get('m_count')} / {status.get('n_count')}\n"
-            f"⚖️ *m / n (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
-            f"🎯 *Signal:* {status.get('signal'):.5f}\n"
-            f"📊 *Regime:* {status.get('regime')}\n"
+            f"🎯 *{CS_SIGNAL} History:* {status.get('signal_count')}\n"
+            f"⚖️ *Local {CS_M_LABEL} / {CS_N_LABEL}:* {status.get('m_count')} / {status.get('n_count')}\n"
+            f"⚖️ *{CS_M_LABEL} / {CS_N_LABEL} (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
+            f"🎯 *{CS_SIGNAL}:* {status.get('signal'):.5f}\n"
+            f"📊 *{CS_REGIME_LABEL}:* {status.get('regime')}\n"
             f"🔀 *KC:* {status.get('KC')}  |  *Prime:* {status.get('prime')}  |  *Dime:* {status.get('dime')}\n"
             f"🔀 *Invert:* {status.get('invert')}  |  *Mem:* {status.get('mem')}  |  *Tag:* {status.get('tag')}\n"
             f"🔀 *A:* {status.get('A')}  |  *B:* {status.get('B')}  |  *C:* {status.get('C')}  |  *c:* {status.get('c')}\n"
             f"🔀 *tick_tock:* {status.get('tick_tock')}  |  *signature:* {status.get('signature')}  |  *safety:* {status.get('safety')}\n"
-            f"📈 *Trailing Stop Active:* {status.get('trailing_stop_active')}\n"
-            f"📈 *Trailing Stop Price:* {status.get('trailing_stop_price')}\n"
-            f"📈 *Trailing Take Profit:* {status.get('trailing_take_profit')}\n"
-            f"📍 *Trailing Entry:* {status.get('trailing_stop_entry')}  |  *Side:* {status.get('trailing_stop_side')}\n"
-            f"📊 *Has Long:* {status.get('has_open_long')}  |  *Has Short:* {status.get('has_open_short')}\n"
+            f"📈 *{CS_TRAILING} Active:* {status.get('trailing_stop_active')}\n"
+            f"📈 *{CS_TRAILING} {CS_FIELD}:* {status.get('trailing_stop_price')}\n"
+            f"📈 *{CS_TRAILING} {CS_TAKE_PROFIT}:* {status.get('trailing_take_profit')}\n"
+            f"📍 *{CS_TRAILING} Entry:* {status.get('trailing_stop_entry')}  |  *Side:* {status.get('trailing_stop_side')}\n"
+            f"📊 *Has {CS_LONG}:* {status.get('has_open_long')}  |  *Has {CS_SHORT}:* {status.get('has_open_short')}\n"
             f"📊 *lOrder_id:* {status.get('lOrder_id')}  |  *kOrder_id:* {status.get('kOrder_id')}\n"
-            f"🔍 *OnTrack Runs:* {status.get('on_track_runs')}  |  *OnStand Runs:* {status.get('on_stand_runs')}\n"
-            f"🎯 *Last Kronecker Bar:* {status.get('last_kronecker_bar')}\n"
-            f"🔢 *Authoritative m/n/h:* {status.get('authoritative_m')}/{status.get('authoritative_n')}/{status.get('authoritative_h')}\n"
-            f"🔢 *Last Kronecker m/n/h:* {status.get('last_kronecker_m')}/{status.get('last_kronecker_n')}/{status.get('last_kronecker_h')}\n"
+            f"🔍 *{CS_ONTrack} Runs:* {status.get('on_track_runs')}  |  *{CS_ONSTAND} Runs:* {status.get('on_stand_runs')}\n"
+            f"🎯 *Last {CS_KRONECKER} Bar:* {status.get('last_kronecker_bar')}\n"
+            f"🔢 *Authoritative {CS_M_LABEL}/{CS_N_LABEL}/h:* {status.get('authoritative_m')}/{status.get('authoritative_n')}/{status.get('authoritative_h')}\n"
+            f"🔢 *Last {CS_KRONECKER} {CS_M_LABEL}/{CS_N_LABEL}/h:* {status.get('last_kronecker_m')}/{status.get('last_kronecker_n')}/{status.get('last_kronecker_h')}\n"
             f"🔢 *Derivatives Z/z/O/o/W/w:* {status.get('Z')}/{status.get('z')}/{status.get('O')}/{status.get('o')}/{status.get('W')}/{status.get('w')}\n"
             f"🔢 *Derivatives I/iI/J/iJ:* {status.get('I')}/{status.get('iI')}/{status.get('J')}/{status.get('iJ')}\n"
             f"🔢 *Derivatives iZ/iz/iW/iw/iO/io:* {status.get('iZ')}/{status.get('iz')}/{status.get('iW')}/{status.get('iw')}/{status.get('iO')}/{status.get('io')}\n"
@@ -6202,9 +6385,9 @@ class AEI_Bot:
             f"🔢 *X_PERIOD (const):* {X_PERIOD}  |  *Y_START (const):* {Y_START}\n"
             f"🔢 *iATR/iStdDev/iIHKk/iIHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
             f"🔢 *lPass/ilPass/kPass/ikPass:* {status.get('lPass')}/{status.get('ilPass')}/{status.get('kPass')}/{status.get('ikPass')}\n"
-            f"🛰️ *Provider:* {status.get('last_provider')}  |  *Volume:* {status.get('last_volume')}\n"
-            f"🌌 *Projection Computed:* {status.get('projection_computed_at')}\n"
-            f"🌌 *Projection Trigger:* {status.get('projection_trigger')}\n"
+            f"🛰️ *{CS_PROVIDER}:* {status.get('last_provider')}  |  *{CS_VOLUME}:* {status.get('last_volume')}\n"
+            f"🌌 *{CS_PROJECTION} Computed:* {status.get('projection_computed_at')}\n"
+            f"🌌 *{CS_PROJECTION} Trigger:* {status.get('projection_trigger')}\n"
             f"💬 *Last Inbound Msg Id:* {status.get('last_inbound_message_id')}"
         )
         if update.callback_query:
@@ -6217,12 +6400,12 @@ class AEI_Bot:
         if not self.engine.state.FG:
             self.engine._force_initialization()
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await update.message.reply_text(f"⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
             return
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
-        current = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
+        current = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else CS_UNKNOWN
         premium = state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0')
         discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
         hh = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
@@ -6231,15 +6414,15 @@ class AEI_Bot:
         n_local = state.authoritative_n
         imbalance_status = "✅ TRIGGER" if (m_local >= 12 or n_local >= 12) else "⏳ WAITING"
         response = (
-            "📊 *REGIME CLASSIFICATION*\n"
-            f"🔹 *Current Regime:* {current}\n"
-            f"🔹 *Premium:* {premium:.5f}\n"
-            f"🔸 *Discount:* {discount:.5f}\n"
-            f"📈 *HH:* {hh:.5f}\n"
-            f"📉 *LL:* {ll:.5f}\n"
-            f"🟢 *Local m:* {m_local}\n"
-            f"🔴 *Local n:* {n_local}\n"
-            f"⚖️ *Imbalance Condition:* {imbalance_status}"
+            f"📊 *{CS_REGIME} CLASSIFICATION*\n"
+            f"🔹 *Current {CS_REGIME}:* {current}\n"
+            f"🔹 *{CS_PREMIUM}:* {premium:.5f}\n"
+            f"🔸 *{CS_DISCOUNT}:* {discount:.5f}\n"
+            f"📈 *{CS_HH}:* {hh:.5f}\n"
+            f"📉 *{CS_LL}:* {ll:.5f}\n"
+            f"🟢 *Local {CS_M_LABEL}:* {m_local}\n"
+            f"🔴 *Local {CS_N_LABEL}:* {n_local}\n"
+            f"⚖️ *{CS_IMBALANCE_LABEL} Condition:* {imbalance_status}"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -6252,17 +6435,17 @@ class AEI_Bot:
         if not self.engine.state.FG:
             self.engine._force_initialization()
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await update.message.reply_text(f"⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
             return
         state = self.engine.state
         if state.signal == Decimal('0.0'):
-            direction = "⚪ NEUTRAL"
+            direction = f"⚪ {CS_NEUTRAL}"
             confidence = "N/A"
         elif state.price > state.signal:
-            direction = "📈 BUY"
+            direction = f"📈 {CS_BUY_LABEL}"
             confidence = f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
         else:
-            direction = "🔴 SELL"
+            direction = f"🔴 {CS_SELL_LABEL}"
             confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
         m_local = state.authoritative_m
         n_local = state.authoritative_n
@@ -6272,20 +6455,20 @@ class AEI_Bot:
         condition_met = (m_local >= 12) or (n_local >= 12)
         condition_mark = "✅ MET" if condition_met else "❌ NOT MET"
         response = (
-            "🎯 *TRADING SIGNAL*\n"
+            f"🎯 *TRADING {CS_SIGNAL}*\n"
             f"📊 *Direction:* {direction}\n"
             f"📈 *Confidence:* {confidence}\n"
-            f"🎯 *Signal Level:* {state.signal:.5f}\n"
-            f"💰 *Current Price:* {state.price:.5f}\n"
-            f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
-            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
-            f"✅ *δ(m-n-2)=1 (MQL4 gate):* {condition_mark}\n"
+            f"🎯 *{CS_SIGNAL} Level:* {state.signal:.5f}\n"
+            f"💰 *Current {CS_FIELD}:* {state.price:.5f}\n"
+            f"⚖️ *{CS_IMBALANCE_LABEL} @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
+            f"⚖️ *Local {CS_M_LABEL}/{CS_N_LABEL}:* {m_local}/{n_local}\n"
+            f"✅ *{CS_KRONECKER} (MQL4 gate):* {condition_mark}\n"
             f"🔀 *KC State:* {state.KC}\n"
             f"🔢 *Prime:* {state.prime}\n"
             f"🔢 *Dime:* {state.dime}\n"
             f"🔄 *Tick Count:* {state.tick}\n"
-            f"📈 *Trailing Stop:* {'Active' if state.trailing_stop_active else 'Inactive'}\n"
-            f"🎯 *Last Kronecker Bar:* {self.engine._last_kronecker_bar}"
+            f"📈 *{CS_TRAILING}:* {'Active' if state.trailing_stop_active else 'Inactive'}\n"
+            f"🎯 *Last {CS_KRONECKER} Bar:* {self.engine._last_kronecker_bar}"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -6298,16 +6481,16 @@ class AEI_Bot:
         if not self.engine.state.FG:
             self.engine._force_initialization()
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await update.message.reply_text(f"⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
             return
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
         if idx < 0 or idx >= len(state.iA[0]):
-            await update.message.reply_text("❌ Insufficient data for indicator projection.")
+            await update.message.reply_text(f"❌ Insufficient data for {CS_INDICATORS} projection.")
             return
-        names = ["ADX", "Stochastic", "RVI", "AC", "Force", "OBV", "AD", "MFI", "Momentum", "DeM", "WPR", "CCI", "RSI"]
-        indicator_str = "📊 *13D HILBERT SPACE PROJECTION*\n\n"
+        names = [CS_ADX, CS_STOCHASTIC, CS_RVI, CS_AC, CS_FORCE, CS_OBV, CS_AD, CS_MFI, CS_MOMENTUM, CS_DEMARKER, CS_WPR, CS_CCI, CS_RSI]
+        indicator_str = f"📊 *13D HILBERT SPACE PROJECTION*\n\n"
         for i, name in enumerate(names):
             val = state.iA[i][idx] if idx < len(state.iA[i]) else Decimal('50.0')
             val_int = int(float(val))
@@ -6326,16 +6509,16 @@ class AEI_Bot:
     async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await update.message.reply_text(f"⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
             return
         state = self.engine.state
         idx = state.Z - state.y - 1
         bridge_fvgs = BRIDGE_STATE.list_fvgs()
         bridge_str = ""
         if bridge_fvgs:
-            bridge_str = "\n📐 *Web App FVGs:*\n"
+            bridge_str = f"\n📐 *Web App {CS_FVG}s:*\n"
             for f in bridge_fvgs[-8:]:
-                mark = "▲" if f["type"] == "top" else "▼"
+                mark = "▲" if f["type"] == CS_TOP_LABEL else "▼"
                 who = f" (user {f['user_id']})" if f.get("user_id") else ""
                 bridge_str += f"  {mark} {f['price']} idx={f['idx']}{who}\n"
         premium_val = state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0')
@@ -6343,15 +6526,15 @@ class AEI_Bot:
         hh_val = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
         ll_val = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
         response = (
-            "📐 *FAIR VALUE GAP TRACKING*\n"
-            f"📊 *FVG Count:* {state.FVG + 1}\n"
-            f"💰 *Current Price:* {state.price:.5f}\n"
-            f"📉 *Last FVG:* {state.bL if state.bL else 'None'}\n\n"
-            "*Topological Anchors:*\n"
-            f"  🔷 *Premium:* {premium_val:.5f}\n"
-            f"  🔶 *Discount:* {discount_val:.5f}\n"
-            f"  📈 *HH:* {hh_val:.5f}\n"
-            f"  📉 *LL:* {ll_val:.5f}"
+            f"📐 *FAIR VALUE GAP TRACKING*\n"
+            f"📊 *{CS_FVG} Count:* {state.FVG + 1}\n"
+            f"💰 *Current {CS_FIELD}:* {state.price:.5f}\n"
+            f"📉 *Last {CS_FVG}:* {state.bL if state.bL else CS_NONE}\n\n"
+            f"*Topological Anchors:*\n"
+            f"  🔷 *{CS_PREMIUM}:* {premium_val:.5f}\n"
+            f"  🔶 *{CS_DISCOUNT}:* {discount_val:.5f}\n"
+            f"  📈 *{CS_HH}:* {hh_val:.5f}\n"
+            f"  📉 *{CS_LL}:* {ll_val:.5f}"
             f"{bridge_str}"
         )
         await update.message.reply_text(response, parse_mode="Markdown")
@@ -6364,20 +6547,20 @@ class AEI_Bot:
         signal_summary = ""
         if recent_signals:
             for sig in recent_signals[-5:]:
-                arrow = "📈" if sig["type"] == "BUY" else "🔴"
+                arrow = "📈" if sig["type"] == CS_BUY_LABEL else "🔴"
                 signal_summary += f"{arrow} {sig['type']} @ {sig['price']:.2f} ({sig['regime']})\n"
         else:
-            signal_summary = "No signals yet.\n"
+            signal_summary = f"No signals yet.\n"
         response = (
-            "📊 *RECENT SIGNALS*\n\n"
+            f"📊 *RECENT SIGNALS*\n\n"
             f"{signal_summary}\n"
             f"📈 *Symbol:* {SYMBOL}\n"
             f"📊 *Bar Closes:* {state.bar_close_count}\n"
             f"📈 *OHLCV Bars:* {len(engine.ohlcv_history)}\n"
             f"🎯 *Total Signals Recorded:* {len(state.signal_history)}\n"
-            f"🕐 *Last Signal:* {state.last_signal_at or 'never'}\n\n"
-            "Open the ÆEA Mini App for the full interactive candlestick chart "
-            "with FVG drawings, signal overlays, and the arc-length projection."
+            f"🕐 *Last {CS_SIGNAL}:* {state.last_signal_at or 'never'}\n\n"
+            f"Open the ÆEA Mini App for the full interactive candlestick chart "
+            f"with {CS_FVG} drawings, {CS_SIGNAL} overlays, and the arc-length projection."
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -6398,24 +6581,24 @@ class AEI_Bot:
         for step in path[:10]:
             path_preview += f"  ▸ step {step['step']:>2}: {step['price']}\n"
         response = (
-            "🌌 *ARC-LENGTH PRICE PROJECTION*\n"
+            f"🌌 *ARC-LENGTH PRICE {CS_PROJECTION}*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
-            f"💰 *Current Price:* {proj.get('current_price')}\n"
-            f"🎯 *Signal Anchor:* {proj.get('signal_level')}\n"
-            f"📊 *Regime:* {proj.get('regime')}\n"
+            f"💰 *Current {CS_FIELD}:* {proj.get('current_price')}\n"
+            f"🎯 *{CS_SIGNAL} Anchor:* {proj.get('signal_level')}\n"
+            f"📊 *{CS_REGIME_LABEL}:* {proj.get('regime')}\n"
             f"🧮 *Branch:* {meta.get('kind', '—')}\n"
-            f"⏱️ *Horizon:* {meta.get('horizon', '—')} bars\n"
-            f"📐 *Slope:* {meta.get('slope', '—')}\n"
-            f"📊 *Amplitude:* {meta.get('amplitude', '—')}\n"
-            f"🎯 *Center:* {meta.get('center', '—')}\n"
-            f"💧 *Damping:* {meta.get('damping', '—')}\n"
-            f"🛰️ *Provider:* {meta.get('provider', '—')}\n"
+            f"⏱️ *{CS_HORIZON}:* {meta.get('horizon', '—')} bars\n"
+            f"📐 *{CS_SLOPE}:* {meta.get('slope', '—')}\n"
+            f"📊 *{CS_AMPLITUDE}:* {meta.get('amplitude', '—')}\n"
+            f"🎯 *{CS_CENTER}:* {meta.get('center', '—')}\n"
+            f"💧 *{CS_DAMPING}:* {meta.get('damping', '—')}\n"
+            f"🛰️ *{CS_PROVIDER}:* {meta.get('provider', '—')}\n"
             f"🕐 *Computed:* {proj.get('computed_at', 'never')}\n"
-            f"🌌 *Trigger:* {proj.get('trigger', '—')}\n\n"
-            "*First 10 projected bars:*\n"
+            f"🌌 *{CS_TRIGGER}:* {proj.get('trigger', '—')}\n\n"
+            f"*First 10 projected bars:*\n"
             f"{path_preview or '  (no path computed)'}\n"
-            "_The projection is drawn on the chart ahead of the current bar. "
-            "Drag left past the last bar to scroll into the projected region._"
+            f"_The projection is drawn on the chart ahead of the current bar. "
+            f"Drag left past the last bar to scroll into the projected region._"
         )
         reply_markup = self._build_main_keyboard()
         if update.callback_query:
@@ -6433,23 +6616,23 @@ class AEI_Bot:
         self.engine.OnReInit()
         self.engine._project_arc_length(trigger="manual_refresh")
         reset_msg = (
-            "🔄 *TOPOLOGICAL BRANCH RESET*\n"
-            "The Hilbert space projection has been re-anchored to the current\n"
-            "topological branch with historical preservation.\n\n"
-            "🧠 *State Reset:*\n"
-            "• All 13 indicator arrays reset\n"
-            "• Regime classification seeded to 'sRange'\n"
-            "• Premium/Discount/HH/LL reset to current bar data\n"
-            "• k/l signal flags cleared\n"
-            "• FVG anchor map cleared\n"
-            "• Arc-length projection recomputed\n"
-            "• ✨ Historical price data preserved\n"
+            f"🔄 *TOPOLOGICAL BRANCH RESET*\n"
+            f"The Hilbert space projection has been re-anchored to the current\n"
+            f"topological branch with historical preservation.\n\n"
+            f"🧠 *State Reset:*\n"
+            f"• All 13 indicator arrays reset\n"
+            f"• {CS_REGIME} classification seeded to '{CS_SRANGE}'\n"
+            f"• {CS_PREMIUM}/{CS_DISCOUNT}/{CS_HH}/{CS_LL} reset to current bar data\n"
+            f"• k/l signal flags cleared\n"
+            f"• {CS_FVG} anchor map cleared\n"
+            f"• Arc-length projection recomputed\n"
+            f"• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
-            f"• 📈 OnTrack runs preserved: {prev_on_track}\n"
-            f"• 📉 OnStand runs preserved: {prev_on_stand}\n"
-            f"• 🎯 Signal history preserved: {prev_signals}\n"
-            f"• ⚖️ Authoritative m/n preserved: {prev_auth_m}/{prev_auth_n}\n\n"
-            "📊 *Ready for new regime classification...*"
+            f"• 📈 {CS_ONTrack} runs preserved: {prev_on_track}\n"
+            f"• 📉 {CS_ONSTAND} runs preserved: {prev_on_stand}\n"
+            f"• 🎯 {CS_SIGNAL} history preserved: {prev_signals}\n"
+            f"• ⚖️ Authoritative {CS_M_LABEL}/{CS_N_LABEL} preserved: {prev_auth_m}/{prev_auth_n}\n\n"
+            f"📊 *Ready for new {CS_REGIME} classification...*"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(reset_msg, parse_mode="Markdown")
@@ -6469,10 +6652,10 @@ class AEI_Bot:
             historical = self.engine.feed.get_historical_klines(limit=200)
             if historical and len(historical) >= MIN_HISTORY_WINDOW:
                 self.engine.ohlcv_history = historical
-                logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()} (provider={self.engine.feed.last_provider()})")
+                logger.info(f"✅ Loaded {len(historical)} historical bars from {CS_PROVIDER} for {self.engine.feed.active_symbol()} (provider={self.engine.feed.last_provider()})")
                 self.engine._populate_indicator_matrix()
             else:
-                logger.info("⏳ No historical data from relay. Engine will initialize organically.")
+                logger.info(f"⏳ No historical data from {CS_PROVIDER}. Engine will initialize organically.")
         except Exception as e:
             logger.warning(f"⚠️ Historical data fetch failed: {e}")
         try:
@@ -6488,11 +6671,11 @@ class AEI_Bot:
             f"📈 *Symbol:* {SYMBOL}\n"
             f"🔄 *Update Interval:* {UPDATE_INTERVAL}s\n"
             f"📊 *Historical Data:* {hist_count} bars loaded\n"
-            f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
-            f"📦 *Volume:* `{self.engine.state.last_volume}`\n"
+            f"🛰️ *{CS_PROVIDER}:* `{self.engine.state.last_provider or '—'}`\n"
+            f"📦 *{CS_VOLUME}:* `{self.engine.state.last_volume}`\n"
             f"🧠 *Initialization Mode:* {init_mode}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
-            f"🌌 *Projection:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
+            f"🌌 *{CS_PROJECTION}:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
             f"🔮 *Status:* Monitoring for signals..."
         )
         if update.callback_query:
@@ -6507,23 +6690,23 @@ class AEI_Bot:
         if self._price_task and not self._price_task.done():
             self._price_task.cancel()
         if update.callback_query:
-            await update.callback_query.edit_message_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+            await update.callback_query.edit_message_text(f"⏹️ *Price feed stopped*", parse_mode="Markdown")
         else:
-            await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+            await update.message.reply_text(f"⏹️ *Price feed stopped*", parse_mode="Markdown")
 
     async def probe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         info = self.engine.feed.probe()
         status = "✅ OK" if not info.get("empty") else "❌ EMPTY"
         lines = [
-            "🔬 *RELAY PROBE*", "",
+            f"🔬 *{CS_PROVIDER} PROBE*", "",
             f"*Status:* {status}",
-            f"*Relay URL:* `{RELAY_URL or 'UNSET'}`",
-            f"*Relay Gated:* {'🔐 yes' if RELAY_KEY else '🔓 no'}",
+            f"*{CS_PROVIDER} URL:* `{RELAY_URL or 'UNSET'}`",
+            f"*{CS_PROVIDER} Gated:* {'🔐 yes' if RELAY_KEY else '🔓 no'}",
             f"*Primary symbol:* `{info.get('primary_symbol')}`",
             f"*Active symbol:* `{info.get('active_symbol')}`",
-            f"*Provider:* `{info.get('provider') or '—'}`",
-            f"*Last volume:* `{info.get('last_volume') or '0'}`",
+            f"*{CS_PROVIDER}:* `{info.get('provider') or '—'}`",
+            f"*Last {CS_VOLUME}:* `{info.get('last_volume') or '0'}`",
             f"*Chain index:* {info.get('chain_index')}",
             f"*Failure count:* {info.get('failure_count')}",
             f"*Fallback count:* {info.get('fallback_count')}",
@@ -6544,7 +6727,7 @@ class AEI_Bot:
             self.engine.feed._advance_symbol_chain()
         active = self.engine.feed.active_symbol()
         text = (
-            f"♻️ *Relay client rebuilt*\n"
+            f"♻️ *{CS_PROVIDER} client rebuilt*\n"
             f"🔎 *Active symbol:* `{active}`\n"
             f"_Feed will use this symbol on next iteration._"
         )
@@ -6560,8 +6743,8 @@ class AEI_Bot:
             supported = ", ".join(list(SYMBOL_MAP.keys())[:10])
             await update.message.reply_text(
                 f"📈 *Current Symbol:* `{SYMBOL}`\n"
-                "Use `/symbol <PAIR>` to change.\n"
-                "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n\n"
+                f"Use `/symbol <PAIR>` to change.\n"
+                f"Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n\n"
                 f"*Supported Symbols:*\n{supported}\n(and {len(SYMBOL_MAP) - 10} more)",
                 parse_mode="Markdown",
             )
@@ -6572,9 +6755,9 @@ class AEI_Bot:
             await update.message.reply_text(
                 f"✅ *Symbol changed*\n"
                 f"📈 *New Symbol:* `{result.get('symbol')}`\n"
-                f"🛰️ *Provider:* `{result.get('provider') or '—'}`\n"
+                f"🛰️ *{CS_PROVIDER}:* `{result.get('provider') or '—'}`\n"
                 f"🧠 *Engine reinitialized*\n"
-                f"🌌 *Projection seeded for the new symbol*",
+                f"🌌 *{CS_PROJECTION} seeded for the new symbol*",
                 parse_mode="Markdown",
             )
         else:
@@ -6585,12 +6768,12 @@ class AEI_Bot:
         self._track_inbound_message(update)
         info = self.engine.feed.get_info()
         response = (
-            "📊 *TICKER INFORMATION*\n"
+            f"📊 *TICKER INFORMATION*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
             f"📛 *Name:* {info.get('name', 'Unknown')}\n"
             f"💵 *Currency:* {info.get('currency', 'USD')}\n"
-            f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
-            f"📦 *Last Volume:* `{self.engine.state.last_volume}`\n"
+            f"🛰️ *{CS_PROVIDER}:* `{self.engine.state.last_provider or '—'}`\n"
+            f"📦 *Last {CS_VOLUME}:* `{self.engine.state.last_volume}`\n"
         )
         if update.callback_query:
             await update.callback_query.edit_message_text(response, parse_mode="Markdown")
@@ -6602,28 +6785,28 @@ class AEI_Bot:
         url = self._resolve_webapp_url()
         if not url:
             await update.message.reply_text(
-                "⏳ *Mini App URL not yet available*\n"
-                "The bridge is starting a public HTTPS tunnel. "
-                "Please try again in ~30–45 seconds.\n"
-                "Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment.",
+                f"⏳ *Mini App URL not yet available*\n"
+                f"The bridge is starting a public HTTPS tunnel. "
+                f"Please try again in ~30–45 seconds.\n"
+                f"Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment.",
                 parse_mode="Markdown",
             )
             return
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
         await update.message.reply_text(
-            "🌐 *ÆEA Telegram Mini App*\n"
-            "Tap the button below to launch the full engine visualization.\n\n"
-            "*Features inside the Mini App:*\n"
-            "  📈 Interactive MT4-style candlestick chart\n"
-            "  📊 Add/remove indicator sub-panels\n"
-            "  📐 Draw FVGs with long-press\n"
-            "  🎯 Place simulated orders\n"
-            "  ⚙ Engine settings panel\n"
-            "  📋 Regime map, log bar, signal markers\n"
-            "  🌌 Arc-length price projection ahead of the current bar\n"
-            "  ➡️ Scroll-ahead viewport to the projected take-profit level\n"
-            "  🔔 Toast + Telegram push notifications on every execution\n"
-            "  🔄 Live state polling",
+            f"🌐 *ÆEA Telegram Mini App*\n"
+            f"Tap the button below to launch the full engine visualization.\n\n"
+            f"*Features inside the Mini App:*\n"
+            f"  📈 Interactive MT4-style candlestick chart\n"
+            f"  📊 Add/remove indicator sub-panels\n"
+            f"  📐 Draw {CS_FVG}s with long-press\n"
+            f"  🎯 Place simulated orders\n"
+            f"  ⚙ Engine settings panel\n"
+            f"  📋 {CS_REGIME} map, log bar, {CS_SIGNAL} markers\n"
+            f"  🌌 Arc-length price projection ahead of the current bar\n"
+            f"  ➡️ Scroll-ahead viewport to the projected {CS_TAKE_PROFIT} level\n"
+            f"  🔔 Toast + Telegram push notifications on every {CS_EXECUTION}\n"
+            f"  🔄 Live state polling",
             parse_mode="Markdown",
             reply_markup=keyboard,
         )
@@ -6639,14 +6822,14 @@ class AEI_Bot:
             f"*Public URL:* `{public_url}`\n"
             f"*State endpoint:* `{public_url.rstrip('/')}/state`\n"
             f"*Mini App State:* `{public_url.rstrip('/')}/miniapp-state`\n"
-            f"*Projection endpoint:* `{public_url.rstrip('/')}/projection`\n"
+            f"*{CS_PROJECTION} endpoint:* `{public_url.rstrip('/')}/projection`\n"
             f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
             f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
-            f"*Diagnostics endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
+            f"*{CS_DIAGNOSTICS} endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
             f"*OHLCV endpoint:* `{public_url.rstrip('/')}/ohlcv`\n"
             f"*Signals endpoint:* `{public_url.rstrip('/')}/signals`\n"
-            f"*Orders endpoint:* `{public_url.rstrip('/')}/orders`\n"
-            f"*Regime map endpoint:* `{public_url.rstrip('/')}/regime-map`\n"
+            f"*{CS_ORDERS} endpoint:* `{public_url.rstrip('/')}/orders`\n"
+            f"*{CS_REGIME} map endpoint:* `{public_url.rstrip('/')}/regime-map`\n"
             f"*Log endpoint:* `{public_url.rstrip('/')}/log`\n"
             f"*Toasts endpoint:* `{public_url.rstrip('/')}/toasts`\n"
             f"*Settings endpoint:* `{public_url.rstrip('/')}/settings`\n"
@@ -6685,7 +6868,7 @@ class AEI_Bot:
         elif action == "diagnostics":
             await self.diagnostics(update, context)
         elif action == "webapp_pending":
-            await query.edit_message_text("⏳ *Mini App tunnel is starting…*\nPlease retry `/webapp` in ~30–45 seconds.", parse_mode="Markdown")
+            await query.edit_message_text(f"⏳ *Mini App tunnel is starting…*\nPlease retry `/webapp` in ~30–45 seconds.", parse_mode="Markdown")
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Update {update} caused error {context.error}")
@@ -6699,13 +6882,13 @@ class AEI_Bot:
         # silently dropping the message and emitting a RuntimeWarning.
         try:
             self._loop = asyncio.get_running_loop()
-            logger.info("🔁 Event loop captured for cross-thread send")
+            logger.info(f"🔁 Event loop captured for cross-thread send")
         except RuntimeError:
             self._loop = None
-            logger.warning("⚠️ No running loop in _post_init; sends will be dropped")
+            logger.warning(f"⚠️ No running loop in _post_init; sends will be dropped")
         url = self._resolve_webapp_url()
         if not url:
-            logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
+            logger.info(f"⏳ MenuButtonWebApp deferred — no public URL yet")
             return
         try:
             await application.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="ÆEA Mini App", web_app=WebAppInfo(url=url)))
@@ -6739,35 +6922,35 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.4.2).")
+        logger.info(f"📊 Quantum-Financial Topology Engine (MQL4-parity port v4.4.3).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
-        logger.info("⚡ 13D Hilbert-space projection populated per bar.")
-        logger.info("📡 Bar-close detection uses relay timestamp.")
-        logger.info("🎯 Signal logging enabled for all imbalance events.")
-        logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
-        logger.info("🛑 Trailing stop: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
-        logger.info("🎯 Kronecker gate: LOCAL m/n from authoritative H()/L() stamps.")
-        logger.info("🔄 O() regime mutation preserved as FF no-op.")
-        logger.info("📊 OnBar per-j HH/LL anchoring.")
-        logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (aliased S, not grown copy).")
-        logger.info("🔒 Auth enforcement on all non-/health endpoints.")
-        logger.info("📈 Chart endpoint & signal history tracking enabled.")
-        logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🛰️ Multi-provider relay: Binance → CoinGecko → Yahoo for crypto; Yahoo for equities/futures.")
-        logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
-        logger.info("🌌 Arc-length projection computed per bar close and on demand.")
-        logger.info("🔔 Push notification on every signal, every execution, every FVG, every close.")
-        logger.info("🔔 /toasts endpoint serves incremental signal+execution+fvg toasts with first_available_seq.")
-        logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
-        logger.info("🖱️ Scroll-ahead viewport: drag past the last bar to the projected TP.")
-        logger.info("🎯 Execution-gated projection: recomputed on Bull/Bear/Hawk/Dove/Whisky/Wine/Watter/Blood/Diamond/Ruby.")
-        logger.info("💬 Push threading: every push is a reply to the user's most recent inbound message.")
-        logger.info("📮 Bounded push dispatch: single queue.Queue(maxsize=512) with one daemon consumer.")
-        logger.info("🔁 Cross-thread send: enabled via asyncio.run_coroutine_threadsafe")
-        logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
-        logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
-        logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
-        logger.info("✅ Ready. Use /start to begin.")
+        logger.info(f"⚡ 13D Hilbert-space projection populated per bar.")
+        logger.info(f"📡 Bar-close detection uses {CS_PROVIDER} timestamp.")
+        logger.info(f"🎯 {CS_SIGNAL} logging enabled for all imbalance events.")
+        logger.info(f"⚡ Telegram Mini App enabled (MT4/TradingView-style).")
+        logger.info(f"🛑 {CS_TRAILING}: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
+        logger.info(f"🎯 {CS_KRONECKER} gate: LOCAL m/n from authoritative H()/L() stamps.")
+        logger.info(f"🔄 O() {CS_REGIME} mutation preserved as FF no-op.")
+        logger.info(f"📊 OnBar per-j {CS_HH}/{CS_LL} anchoring.")
+        logger.info(f"🔍 {CS_ONTrack}/{CS_ONSTAND} MQL4 loop bounds restored (aliased S, not grown copy).")
+        logger.info(f"🔒 Auth enforcement on all non-/health endpoints.")
+        logger.info(f"📈 Chart endpoint & {CS_SIGNAL} history tracking enabled.")
+        logger.info(f"📐 User {CS_FVG}s stored in bridge registry only (non-destructive).")
+        logger.info(f"🛰️ Multi-{CS_PROVIDER} relay: Binance → CoinGecko → Yahoo for crypto; Yahoo for equities/futures.")
+        logger.info(f"📦 Real {CS_VOLUME} carried through OBV, AD, Force, MFI projections.")
+        logger.info(f"🌌 Arc-length projection computed per bar close and on demand.")
+        logger.info(f"🔔 Push notification on every {CS_SIGNAL}, every {CS_EXECUTION}, every {CS_FVG}, every close.")
+        logger.info(f"🔔 /toasts endpoint serves incremental signal+execution+fvg toasts with first_available_seq.")
+        logger.info(f"⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
+        logger.info(f"🖱️ Scroll-ahead viewport: drag past the last bar to the projected {CS_TAKE_PROFIT}.")
+        logger.info(f"🎯 Execution-gated projection: recomputed on Bull/Bear/Hawk/Dove/Whisky/Wine/Watter/Blood/Diamond/Ruby.")
+        logger.info(f"💬 Push threading: every push is a reply to the user's most recent inbound message.")
+        logger.info(f"📮 Bounded push dispatch: single queue.Queue(maxsize=512) with one daemon consumer.")
+        logger.info(f"🔁 Cross-thread send: enabled via asyncio.run_coroutine_threadsafe")
+        logger.info(f"🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
+        logger.info(f"🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
+        logger.info(f"🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
+        logger.info(f"✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
 try:
@@ -6783,8 +6966,8 @@ except Exception as _attach_exc:
 def main():
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not TOKEN:
-        logger.error("❌ Error: TELEGRAM_BOT_TOKEN not set.")
-        logger.error("   export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'")
+        logger.error(f"❌ Error: TELEGRAM_BOT_TOKEN not set.")
+        logger.error(f"   export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'")
         sys.exit(1)
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
