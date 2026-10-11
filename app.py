@@ -3,139 +3,69 @@
 """
 ÆEA TELEGRAM BOT — HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
 Faithful Unabridged Port of ÆEA.mq4
-Data Feed: Cloudflare Worker Relay (Yahoo / Binance / CoinGecko upstreams)
+Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.4.2 (Send-Hardened Edition)
+Version: 4.5.0 (Kraken-Primary Edition + Stooq-Primary Edition)
 
-v4.4.2 is a defect-resolution release on top of v4.4.1 (Await-Corrected
-Edition). It does not alter any FF-invariant logic. It resolves the three
-remaining failure modes in the out-of-loop send path that the Heroku log
-(2026-10-09T05:43:44.586431+00:00) exposed as HTTP 400 Bad Request from
-Telegram's sendMessage endpoint:
+v4.5.0 is an additive-only release on top of v4.4.2 (Send-Hardened Edition).
+It does not alter any FF-invariant logic, any state-machine transition, any
+indicator formula, any regime-classification rule, or any execution path.
+The only changes are:
 
-  D-45 (critical, discovered in the 2026-10-09 Heroku log). The push path
-       (_telegram_push, _send_signal_alert, _send_execution_alert) forwarded
-       reply_to_message_id = state.last_inbound_message_id on every send.
-       When that message id is stale — the user's command was deleted, the
-       bot was restarted with a persisted id, or the id belongs to a chat the
-       bot can no longer reply to — Telegram returns HTTP 400 Bad Request
-       with description "message to reply not found" and drops the entire
-       push. Because E-6 threads every push, a single stale id silences the
-       whole notification stream. Resolved by E-11.
+  E-14 (Enhancement). Kraken-primary relay dispatch. The relay's crypto
+       fallback chain is now Kraken → Binance → CoinGecko → Yahoo. Kraken
+       is free, open, no API key, no KYC for public market data, and is
+       not geo-blocked from Cloudflare egress IPs the way Binance is in
+       some regions. Its Ticker and OHLC endpoints have lower latency than
+       Binance's under typical Cloudflare egress. The backend's FeedClient
+       needs no change: it consumes the same shaped JSON regardless of
+       which upstream produced it. The backend's /probe and /health
+       `provider` field will now report "kraken" for crypto by default,
+       falling back to "binance", "coingecko", or "yahoo" in that order.
 
-  D-46 (critical). Every push and alert body interpolates live engine fields
-       — provider, regime, reason, side, trailing_stop_side, tag — into a
-       parse_mode="Markdown" string without escaping. Telegram's legacy
-       Markdown parser treats *, _, `, [, and \ as control characters. A
-       provider string, a reason, or a symbol containing any of those
-       characters causes Telegram to reject the message with HTTP 400
-       "can't parse entities". Resolved by E-12.
+  E-15 (Enhancement). Stooq-primary relay dispatch for equities/futures.
+       The relay's equities/futures chain is now Stooq → Yahoo. Stooq is
+       free, open, no API key, no KYC, and serves CSV quotes with very
+       low latency. It covers US equities, ETFs, a broad set of futures,
+       and several indices. The backend's FeedClient again needs no
+       change.
 
-  D-47 (major). When both retries above fail, the send path had no final
-       fallback, so a single unparseable field permanently silenced the
-       notification until the next state change. Resolved by E-13.
+  E-16 (Enhancement). Expanded symbol universe. SYMBOL_MAP,
+       SYMBOL_FALLBACKS, and SYMBOL_DIGITS now cover the ~90 crypto
+       pairs and ~45 futures/equities/ETFs that the relay v4.5.0
+       exposes. The TWA symbol picker (patched in Segment 3) exposes the
+       same set. Every new symbol gains an explicit digit count so the
+       MQL4 Point-size emulation stays correct for 5-digit and 3-digit
+       pairs.
 
-  E-11 (Enhancement). Reply-target hardening. _send_message_sync now tries
-       the send three times: (1) as threaded reply with parse_mode=Markdown,
-       (2) as standalone message with parse_mode=Markdown and
-       reply_to_message_id=None when the first failure description mentions
-       "reply" or "message to reply not found", (3) as standalone message
-       with parse_mode=None when either prior failure description mentions
-       "parse" or "can't parse entities". If all three fail, the failure is
-       logged with the full Telegram description and returns False. The
-       successful path returns True. No exception escapes.
+  D-53 (minor). The SYMBOL_DIGITS table gains entries for every new
+       symbol. Without this, the point-size fallback (2 digits) would
+       produce wrong SL/TP distances for 5-digit forex-like pairs
+       (XRP-USD, ADA-USD, DOGE-USD, MATIC-USD, XLM-USD, HBAR-USD) and
+       wrong tick sizes for 3-digit pairs (SOL-USD, LTC-USD, ETC-USD,
+       QNT-USD). Resolved.
 
-  E-12 (Enhancement). Markdown escaping. A new module-level helper
-       _md_escape(s) escapes every legacy-Markdown control character in an
-       interpolated string. It is applied at every interpolation site in
-       _format_push_message, _send_signal_alert, and _send_execution_alert.
-       Static template characters (*, _, `) are preserved; only user- and
-       engine-supplied values are escaped. The emojis, bold markers, and
-       code spans that form the message template are unchanged.
+  D-54 (minor). The FeedClient._get() HTTP error branch previously
+       logged the raw relay error body. With the new provider chain the
+       relay may return a 502 whose body includes a concatenated
+       all_providers_failed detail string. The backend now surfaces
+       only the first 200 characters of that detail in the log to avoid
+       ring-buffer bloat, and it includes the active symbol and kind in
+       the log line so the operator can see which provider class failed.
+       Resolved.
 
-  E-13 (Enhancement). Plain-text final fallback. The third attempt in
-       _send_message_sync strips parse_mode entirely, guaranteeing delivery
-       of the raw text even when a value contains an irreducible Markdown
-       character sequence.
-
-v4.4.1 is a defect-resolution release on top of v4.4.0 (Scroll-Ahead Edition).
-It does not alter any FF-invariant logic. It resolves a single blocking defect
-in the out-of-loop send path that v4.4.0 introduced by routing every toast,
-signal alert, and execution alert through a synchronous call site, which in
-python-telegram-bot 21.x is a coroutine and therefore silently dropped:
-
-  D-44 (critical, discovered during v4.4.0 deployment). Every synchronous
-       call to Bot.send_message in python-telegram-bot 21.x constructs a
-       coroutine object and drops it. The callers are:
-         * _telegram_push (running on the daemon push-worker thread)
-         * AEEA_Engine._send_signal_alert (running on the price-feed thread,
-           reached via _signal() ← _on_goe/_on_toe ← _on_tick ← update_price
-           ← update_price_from_feed ← price_feed_loop; the chain below the
-           async task is entirely synchronous)
-         * AEEA_Engine._send_execution_alert (running on the same thread,
-           reached via _emit_execution_toast ← dispatch subblocks)
-       The runtime effect was a RuntimeWarning per event:
-         "coroutine 'ExtBot.send_message' was never awaited"
-       and zero delivered messages. /status and every push notification
-       therefore silently failed. Resolved by E-10.
-
-  E-10 (Enhancement). Cross-thread async send via run_coroutine_threadsafe.
-       The bot captures its running event loop in _post_init (python-
-       telegram-bot invokes _post_init after the loop is live, before
-       run_polling enters the polling loop). A new helper
-       AEI_Bot._send_message_sync schedules Bot.send_message onto that loop
-       with asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=N)
-       and returns a bool. Every out-of-loop call site now routes through
-       this helper. The RuntimeWarning is eliminated, every signal alert
-       delivers, every execution alert delivers, every toast push delivers,
-       and /status responds.
-
-v4.4.0 adds two user-facing capabilities and their supporting fixes on top of
-the v4.3.0 Enhancement Edition, without altering any FF-invariant logic:
-
-  E-4 (Enhancement): Execution-gated arc-length projection.
-       _project_arc_length() is now called exactly when an execution subblock
-       fires — Bull, Bear, Hawk, Dove, Whisky, Wine, Watter, Blood, Diamond,
-       Ruby — plus once on engine init, once on symbol change, and on explicit
-       POST /projection/refresh. It is NOT called on bar close. The projected
-       TP therefore advances only when a directional decision has actually been
-       made by the Kronecker gate. The projection payload carries a `trigger`
-       field ("init" | "execution" | "symbol_change" | "manual_refresh") so the
-       TWA can label the projection's provenance.
-
-  E-5 (Enhancement): Scroll-ahead viewport (frontend-side; the backend only
-       needs to keep the projection path stable between executions, which the
-       execution-gated refresh already provides).
-
-  E-6 (Enhancement): Bot replies on every event.
-       _telegram_push() threads every push as reply_to_message_id to the
-       user's most recent inbound message (state.last_inbound_message_id),
-       updated on every command invocation. Every signal, execution, FVG, and
-       close push therefore appears as a visible bot *reply* in the conversation.
-       In v4.4.2 (E-11), a stale reply id is no longer fatal: the send path
-       retries as a standalone message.
-
-  E-7 (Enhancement): Bounded push dispatch.
-       The per-toast threading.Thread spawn in _emit_toast() is replaced by a
-       single queue.Queue(maxsize=512) consumed by one daemon thread. Under
-       sustained signals the previous code created unbounded threads; the
-       queue bounds memory and thread count to O(1).
-
-  E-8 (Enhancement): FVG merge on the client (frontend-side; the backend
-       already returns stable idx values, so no backend change is required).
-
-  E-9 (Enhancement): Legend stacking (frontend-side; no backend change).
-
-v4.4.2+ (CS Translation Layer). All user-facing natural-language descriptive
-pros rendered by this file — Telegram message bodies, API payload labels
-consumed by the TWA, and log lines displayed in the client log bar — are
-expressed in the plain-text Maths of the Codex Symbolica (CS) as contrived
-in LOGOS.MD. No variable names, function names, or internal state identifiers
-have been altered. Only the strings that reach the user's eyes are translated.
+All v4.4.2 defect resolutions (D-45, D-46, D-47, D-48) remain in force.
+All v4.4.1, v4.4.0, v4.3.0, v4.2.0, and v4.1.x defect resolutions and
+enhancements remain in force. The send-path retry chain (E-11), the
+Markdown escaping (E-12), the plain-text fallback (E-13), the CS
+translation layer, the cross-thread async send (E-10), the execution-gated
+projection (E-4), the scroll-ahead viewport (E-5), the threaded bot
+replies (E-6), the bounded push dispatch (E-7), the FVG merge (E-8), and
+the legend stacking (E-9) are all unchanged.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state transition
-is reproduced verbatim from v4.3.0; only the additive sites above are touched.
+is reproduced verbatim from v4.4.2; only the additive sites above are touched.
 """
 import asyncio
 import hashlib
@@ -444,13 +374,74 @@ G_MINUS_GF_F: float = G_THRESHOLD_F64 - GF_TOLERANCE_F64
 # ============================================================================
 # M-1: SYMBOL DIGITS TABLE (Point-Size Emulation)
 # ============================================================================
+# v4.5.0 (D-53 / E-16): every symbol in the relay's CRYPTO_MAP and
+# FUTURES_MAP gains an explicit digit count here. The defaults are chosen
+# so that the emulated Point matches the typical tick size of the
+# underlying market:
+#   2 digits  — BTC-USD, ETH-USD, and the large-cap crypto majors whose
+#               tick size is $0.01
+#   3 digits  — SOL-USD, LTC-USD, ETC-USD, QNT-USD and the mid-cap crypto
+#               whose typical tick is $0.001
+#   4 digits  — LINK-USD, DOT-USD, AVAX-USD, UNI-USD, ATOM-USD, NEAR-USD,
+#               FIL-USD, ICP-USD and the mid-cap crypto whose typical
+#               tick is $0.0001
+#   5 digits  — XRP-USD, ADA-USD, DOGE-USD, MATIC-USD, XLM-USD, HBAR-USD
+#               and the low-priced crypto whose typical tick is $0.00001
+#   2 digits  — GC=F, CL=F, NG=F, ZS=F, ZM=F, ZW=F, KE=F and the futures
+#               whose quote unit is a whole cent
+#   3 digits  — SI=F, NG=F, ZB=F and the futures whose quote unit is a
+#               tenth of a cent
+#   4 digits  — ZN=F and the futures whose quote unit is a hundredth of
+#               a cent
+# The full table is assembled from _DEFAULT_SYMBOL_DIGITS below.
+# ============================================================================
 _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
-    "BTC-USD": 2, "ETH-USD": 2, "XRP-USD": 5, "ADA-USD": 5, "SOL-USD": 3,
-    "DOGE-USD": 5, "LTC-USD": 3, "LINK-USD": 4, "DOT-USD": 4, "AVAX-USD": 4,
-    "MATIC-USD": 5, "UNI-USD": 4, "ATOM-USD": 4, "NEAR-USD": 4, "FIL-USD": 4,
-    "ETC-USD": 3, "ICP-USD": 4, "XLM-USD": 5, "HBAR-USD": 5, "QNT-USD": 3,
-    "GC=F": 2, "SI=F": 3, "CL=F": 2, "NG=F": 3, "ZB=F": 3, "ZN=F": 4,
-    "ZS=F": 2, "ZM=F": 2, "ZW=F": 2, "KE=F": 2,
+    # --- crypto majors (2 digits) ---
+    "BTC-USD": 2, "ETH-USD": 2,
+    # --- crypto mid-caps (3 digits) ---
+    "SOL-USD": 3, "LTC-USD": 3, "ETC-USD": 3, "QNT-USD": 3,
+    "AAVE-USD": 3, "MKR-USD": 3, "YFI-USD": 3,
+    # --- crypto mid-caps (4 digits) ---
+    "LINK-USD": 4, "DOT-USD": 4, "AVAX-USD": 4, "UNI-USD": 4,
+    "ATOM-USD": 4, "NEAR-USD": 4, "FIL-USD": 4, "ICP-USD": 4,
+    "ARB-USD": 4, "OP-USD": 4, "SUI-USD": 4, "APT-USD": 4,
+    "INJ-USD": 4, "TIA-USD": 4, "SEI-USD": 4, "RNDR-USD": 4,
+    "FET-USD": 4, "GRT-USD": 4, "IMX-USD": 4, "LDO-USD": 4,
+    "CRV-USD": 4, "SNX-USD": 4, "COMP-USD": 4, "SUSHI-USD": 4,
+    "BAL-USD": 4, "KNC-USD": 4, "ZRX-USD": 4, "BAT-USD": 4,
+    "ENJ-USD": 4, "MANA-USD": 4, "SAND-USD": 4, "AXS-USD": 4,
+    "GALA-USD": 4, "CHZ-USD": 4, "APE-USD": 4, "GMT-USD": 4,
+    "LRC-USD": 4, "STORJ-USD": 4, "ANKR-USD": 4, "CVC-USD": 4,
+    "OMG-USD": 4, "REN-USD": 4, "ZIL-USD": 4, "KSM-USD": 4,
+    "GLMR-USD": 4, "MOVR-USD": 4, "ASTR-USD": 4, "CFX-USD": 4,
+    "MASK-USD": 4, "DYDX-USD": 4, "GMX-USD": 4, "RPL-USD": 4,
+    "BLUR-USD": 4, "ENS-USD": 4, "LQTY-USD": 4, "PENDLE-USD": 4,
+    "MAGIC-USD": 4, "HIGH-USD": 4, "ID-USD": 4, "ARKM-USD": 4,
+    "WLD-USD": 4, "EDU-USD": 4, "HOOK-USD": 4, "JTO-USD": 4,
+    "BOME-USD": 4, "ETHFI-USD": 4, "ENA-USD": 4, "W-USD": 4,
+    "OMNI-USD": 4, "REZ-USD": 4, "ZK-USD": 4, "STRK-USD": 4,
+    "DYM-USD": 4, "ALT-USD": 4, "MANTA-USD": 4, "PIXEL-USD": 4,
+    "PORTAL-USD": 4, "AEVO-USD": 4,
+    # --- crypto low-priced (5 digits) ---
+    "XRP-USD": 5, "ADA-USD": 5, "DOGE-USD": 5, "MATIC-USD": 5,
+    "XLM-USD": 5, "HBAR-USD": 5,
+    # --- crypto meme (6 digits) ---
+    "PEPE-USD": 6, "SHIB-USD": 6, "WIF-USD": 6, "BONK-USD": 6,
+    "JUP-USD": 5, "PYTH-USD": 5,
+    # --- futures (2 digits) ---
+    "GC=F": 2, "CL=F": 2, "ZS=F": 2, "ZM=F": 2, "ZW=F": 2, "KE=F": 2,
+    "HG=F": 2, "PL=F": 2, "PA=F": 2, "RB=F": 2, "HO=F": 2, "CC=F": 2,
+    "KC=F": 2, "SB=F": 2, "CT=F": 2, "LH=F": 2, "LE=F": 2, "GF=F": 2,
+    "ZO=F": 2, "ZR=F": 2, "ZL=F": 2, "ES=F": 2, "NQ=F": 2, "YM=F": 2,
+    "RTY=F": 2,
+    # --- futures (3 digits) ---
+    "SI=F": 3, "NG=F": 3, "ZB=F": 3,
+    # --- futures (4 digits) ---
+    "ZN=F": 4,
+    # --- equities / ETFs (2 digits) ---
+    "AAPL": 2, "MSFT": 2, "GOOGL": 2, "AMZN": 2, "TSLA": 2, "NVDA": 2,
+    "META": 2, "SPY": 2, "QQQ": 2, "DIA": 2, "IWM": 2, "GLD": 2,
+    "SLV": 2, "USO": 2, "UNG": 2,
 }
 
 def _load_symbol_digits() -> Dict[str, int]:
@@ -504,7 +495,52 @@ SYMBOL: str = os.getenv("SYMBOL", "BTC-USD").strip() or "BTC-USD"
 INTERVAL: str = "1m"
 UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
 
+# ============================================================================
+# SYMBOL MAP — v4.5.0 EXPANDED UNIVERSE
+# ============================================================================
+# SYMBOL_MAP maps the user's input form to the canonical relay symbol. The
+# relay v4.5.0 exposes ~90 crypto pairs (Kraken-primary) and ~45
+# futures/equities/ETFs (Stooq-primary, Yahoo-fallback). SYMBOL_MAP covers
+# all of them, plus the legacy Binance pair-name aliases (BTCUSDT →
+# BTC-USD) so a user who types the exchange-native form still resolves.
+# ============================================================================
 SYMBOL_MAP = {
+    # --- crypto (canonical) ---
+    "BTC-USD": "BTC-USD", "ETH-USD": "ETH-USD", "XRP-USD": "XRP-USD",
+    "ADA-USD": "ADA-USD", "SOL-USD": "SOL-USD", "DOGE-USD": "DOGE-USD",
+    "LTC-USD": "LTC-USD", "LINK-USD": "LINK-USD", "DOT-USD": "DOT-USD",
+    "AVAX-USD": "AVAX-USD", "MATIC-USD": "MATIC-USD", "UNI-USD": "UNI-USD",
+    "ATOM-USD": "ATOM-USD", "NEAR-USD": "NEAR-USD", "FIL-USD": "FIL-USD",
+    "ETC-USD": "ETC-USD", "ICP-USD": "ICP-USD", "XLM-USD": "XLM-USD",
+    "HBAR-USD": "HBAR-USD", "QNT-USD": "QNT-USD",
+    "ARB-USD": "ARB-USD", "OP-USD": "OP-USD", "SUI-USD": "SUI-USD",
+    "APT-USD": "APT-USD", "INJ-USD": "INJ-USD", "TIA-USD": "TIA-USD",
+    "SEI-USD": "SEI-USD", "PEPE-USD": "PEPE-USD", "SHIB-USD": "SHIB-USD",
+    "WIF-USD": "WIF-USD", "BONK-USD": "BONK-USD", "JUP-USD": "JUP-USD",
+    "PYTH-USD": "PYTH-USD", "RNDR-USD": "RNDR-USD", "FET-USD": "FET-USD",
+    "GRT-USD": "GRT-USD", "IMX-USD": "IMX-USD", "LDO-USD": "LDO-USD",
+    "CRV-USD": "CRV-USD", "SNX-USD": "SNX-USD", "COMP-USD": "COMP-USD",
+    "MKR-USD": "MKR-USD", "AAVE-USD": "AAVE-USD", "SUSHI-USD": "SUSHI-USD",
+    "YFI-USD": "YFI-USD", "BAL-USD": "BAL-USD", "KNC-USD": "KNC-USD",
+    "ZRX-USD": "ZRX-USD", "BAT-USD": "BAT-USD", "ENJ-USD": "ENJ-USD",
+    "MANA-USD": "MANA-USD", "SAND-USD": "SAND-USD", "AXS-USD": "AXS-USD",
+    "GALA-USD": "GALA-USD", "CHZ-USD": "CHZ-USD", "APE-USD": "APE-USD",
+    "GMT-USD": "GMT-USD", "LRC-USD": "LRC-USD", "STORJ-USD": "STORJ-USD",
+    "ANKR-USD": "ANKR-USD", "CVC-USD": "CVC-USD", "OMG-USD": "OMG-USD",
+    "REN-USD": "REN-USD", "ZIL-USD": "ZIL-USD", "KSM-USD": "KSM-USD",
+    "GLMR-USD": "GLMR-USD", "MOVR-USD": "MOVR-USD", "ASTR-USD": "ASTR-USD",
+    "CFX-USD": "CFX-USD", "MASK-USD": "MASK-USD", "DYDX-USD": "DYDX-USD",
+    "GMX-USD": "GMX-USD", "RPL-USD": "RPL-USD", "BLUR-USD": "BLUR-USD",
+    "ENS-USD": "ENS-USD", "LQTY-USD": "LQTY-USD", "PENDLE-USD": "PENDLE-USD",
+    "MAGIC-USD": "MAGIC-USD", "HIGH-USD": "HIGH-USD", "ID-USD": "ID-USD",
+    "ARKM-USD": "ARKM-USD", "WLD-USD": "WLD-USD", "EDU-USD": "EDU-USD",
+    "HOOK-USD": "HOOK-USD", "JTO-USD": "JTO-USD", "BOME-USD": "BOME-USD",
+    "ETHFI-USD": "ETHFI-USD", "ENA-USD": "ENA-USD", "W-USD": "W-USD",
+    "OMNI-USD": "OMNI-USD", "REZ-USD": "REZ-USD", "ZK-USD": "ZK-USD",
+    "STRK-USD": "STRK-USD", "DYM-USD": "DYM-USD", "ALT-USD": "ALT-USD",
+    "MANTA-USD": "MANTA-USD", "PIXEL-USD": "PIXEL-USD", "PORTAL-USD": "PORTAL-USD",
+    "AEVO-USD": "AEVO-USD",
+    # --- Binance-native aliases ---
     "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
     "ADAUSDT": "ADA-USD", "SOLUSDT": "SOL-USD", "DOGEUSDT": "DOGE-USD",
     "LTCUSDT": "LTC-USD", "LINKUSDT": "LINK-USD", "DOTUSDT": "DOT-USD",
@@ -512,12 +548,64 @@ SYMBOL_MAP = {
     "ATOMUSDT": "ATOM-USD", "NEARUSDT": "NEAR-USD", "FILUSDT": "FIL-USD",
     "ETCUSDT": "ETC-USD", "ICPUSDT": "ICP-USD", "XLMUSDT": "XLM-USD",
     "HBARUSDT": "HBAR-USD", "QNTUSDT": "QNT-USD",
+    "ARBUSDT": "ARB-USD", "OPUSDT": "OP-USD", "SUIUSDT": "SUI-USD",
+    "APTUSDT": "APT-USD", "INJUSDT": "INJ-USD", "TIAUSDT": "TIA-USD",
+    "SEIUSDT": "SEI-USD", "PEPEUSDT": "PEPE-USD", "SHIBUSDT": "SHIB-USD",
+    "WIFUSDT": "WIF-USD", "BONKUSDT": "BONK-USD", "JUPUSDT": "JUP-USD",
+    "PYTHUSDT": "PYTH-USD", "RNDRUSDT": "RNDR-USD", "FETUSDT": "FET-USD",
+    "GRTUSDT": "GRT-USD", "IMXUSDT": "IMX-USD", "LDOUSDT": "LDO-USD",
+    "CRVUSDT": "CRV-USD", "SNXUSDT": "SNX-USD", "COMPUSDT": "COMP-USD",
+    "MKRUSDT": "MKR-USD", "AAVEUSDT": "AAVE-USD", "SUSHIUSDT": "SUSHI-USD",
+    "YFIUSDT": "YFI-USD", "BALUSDT": "BAL-USD", "KNCUSDT": "KNC-USD",
+    "ZRXUSDT": "ZRX-USD", "BATUSDT": "BAT-USD", "ENJUSDT": "ENJ-USD",
+    "MANAUSDT": "MANA-USD", "SANDUSDT": "SAND-USD", "AXSUSDT": "AXS-USD",
+    "GALAUSDT": "GALA-USD", "CHZUSDT": "CHZ-USD", "APEUSDT": "APE-USD",
+    "GMTUSDT": "GMT-USD", "LRCUSDT": "LRC-USD", "STORJUSDT": "STORJ-USD",
+    "ANKRUSDT": "ANKR-USD", "CVCUSDT": "CVC-USD", "OMGUSDT": "OMG-USD",
+    "RENUSDT": "REN-USD", "ZILUSDT": "ZIL-USD", "KSMUSDT": "KSM-USD",
+    "GLMRUSDT": "GLMR-USD", "MOVRUSDT": "MOVR-USD", "ASTRUSDT": "ASTR-USD",
+    "CFXUSDT": "CFX-USD", "MASKUSDT": "MASK-USD", "DYDXUSDT": "DYDX-USD",
+    "GMXUSDT": "GMX-USD", "RPLUSDT": "RPL-USD", "BLURUSDT": "BLUR-USD",
+    "ENSUSDT": "ENS-USD", "LQTYUSDT": "LQTY-USD", "PENDLEUSDT": "PENDLE-USD",
+    "MAGICUSDT": "MAGIC-USD", "HIGHUSDT": "HIGH-USD", "IDUSDT": "ID-USD",
+    "ARKMUSDT": "ARKM-USD", "WLDUSDT": "WLD-USD", "EDUUSDT": "EDU-USD",
+    "HOOKUSDT": "HOOK-USD", "JTOUSDT": "JTO-USD", "BOMEUSDT": "BOME-USD",
+    "ETHFIUSDT": "ETHFI-USD", "ENAUSDT": "ENA-USD", "WUSDT": "W-USD",
+    "OMNIUSDT": "OMNI-USD", "REZUSDT": "REZ-USD", "ZKUSDT": "ZK-USD",
+    "STRKUSDT": "STRK-USD", "DYMUSDT": "DYM-USD", "ALTUSDT": "ALT-USD",
+    "MANTAUSDT": "MANTA-USD", "PIXELUSDT": "PIXEL-USD", "PORTALUSDT": "PORTAL-USD",
+    "AEVOUSDT": "AEVO-USD",
+    # --- futures ---
     "GC=F": "GC=F", "SI=F": "SI=F", "CL=F": "CL=F", "NG=F": "NG=F",
     "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZS=F": "ZS=F", "ZM=F": "ZM=F",
-    "ZW=F": "ZW=F", "KE=F": "KE=F"
+    "ZW=F": "ZW=F", "KE=F": "KE=F", "HG=F": "HG=F", "PL=F": "PL=F",
+    "PA=F": "PA=F", "RB=F": "RB=F", "HO=F": "HO=F", "CC=F": "CC=F",
+    "KC=F": "KC=F", "SB=F": "SB=F", "CT=F": "CT=F", "LH=F": "LH=F",
+    "LE=F": "LE=F", "GF=F": "GF=F", "ZO=F": "ZO=F", "ZR=F": "ZR=F",
+    "ZL=F": "ZL=F", "ES=F": "ES=F", "NQ=F": "NQ=F", "YM=F": "YM=F",
+    "RTY=F": "RTY=F",
+    # --- equities / ETFs ---
+    "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "AMZN": "AMZN",
+    "TSLA": "TSLA", "NVDA": "NVDA", "META": "META", "SPY": "SPY",
+    "QQQ": "QQQ", "DIA": "DIA", "IWM": "IWM", "GLD": "GLD",
+    "SLV": "SLV", "USO": "USO", "UNG": "UNG",
 }
 
+# ============================================================================
+# SYMBOL FALLBACKS — v4.5.0 EXPANDED
+# ============================================================================
+# The relay v4.5.0 dispatches crypto through Kraken → Binance → CoinGecko →
+# Yahoo, and equities/futures through Stooq → Yahoo. The backend's
+# SYMBOL_FALLBACKS chain is a *secondary* rotation that the FeedClient
+# applies when the relay itself reports all_providers_failed for a given
+# symbol. It maps a canonical symbol to the next-best symbol form that the
+# relay might still resolve (e.g. BTC-USD → BTCUSD=X for Yahoo's crypto
+# ticker). With Kraken primary, the chain rarely advances; the entries
+# remain as a belt-and-suspenders fallback for the rare case where the
+# relay's provider chain is exhausted.
+# ============================================================================
 SYMBOL_FALLBACKS: Dict[str, List[str]] = {
+    # --- crypto ---
     "BTC-USD":  ["BTC-USD", "BTCUSD=X"], "ETH-USD":  ["ETH-USD", "ETHUSD=X"],
     "XRP-USD":  ["XRP-USD", "XRPUSD=X"], "ADA-USD":  ["ADA-USD", "ADAUSD=X"],
     "SOL-USD":  ["SOL-USD", "SOLUSD=X"], "DOGE-USD": ["DOGE-USD", "DOGEUSD=X"],
@@ -528,9 +616,60 @@ SYMBOL_FALLBACKS: Dict[str, List[str]] = {
     "FIL-USD":  ["FIL-USD", "FILUSD=X"], "ETC-USD":  ["ETC-USD", "ETCUSD=X"],
     "ICP-USD":  ["ICP-USD", "ICPUSD=X"], "XLM-USD":  ["XLM-USD", "XLMUSD=X"],
     "HBAR-USD": ["HBAR-USD", "HBARUSD=X"], "QNT-USD":  ["QNT-USD", "QNTUSD=X"],
+    "ARB-USD":  ["ARB-USD", "ARBUSD=X"], "OP-USD":   ["OP-USD", "OPUSD=X"],
+    "SUI-USD":  ["SUI-USD", "SUIUSD=X"], "APT-USD":  ["APT-USD", "APTUSD=X"],
+    "INJ-USD":  ["INJ-USD", "INJUSD=X"], "TIA-USD":  ["TIA-USD", "TIAUSD=X"],
+    "SEI-USD":  ["SEI-USD", "SEIUSD=X"], "PEPE-USD": ["PEPE-USD", "PEPEUSD=X"],
+    "SHIB-USD": ["SHIB-USD", "SHIBUSD=X"], "WIF-USD":  ["WIF-USD", "WIFUSD=X"],
+    "BONK-USD": ["BONK-USD", "BONKUSD=X"], "JUP-USD":  ["JUP-USD", "JUPUSD=X"],
+    "PYTH-USD": ["PYTH-USD", "PYTHUSD=X"], "RNDR-USD": ["RNDR-USD", "RNDRUSD=X"],
+    "FET-USD":  ["FET-USD", "FETUSD=X"], "GRT-USD":  ["GRT-USD", "GRTUSD=X"],
+    "IMX-USD":  ["IMX-USD", "IMXUSD=X"], "LDO-USD":  ["LDO-USD", "LDOUSD=X"],
+    "CRV-USD":  ["CRV-USD", "CRVUSD=X"], "SNX-USD":  ["SNX-USD", "SNXUSD=X"],
+    "COMP-USD": ["COMP-USD", "COMPUSD=X"], "MKR-USD":  ["MKR-USD", "MKRUSD=X"],
+    "AAVE-USD": ["AAVE-USD", "AAVEUSD=X"], "SUSHI-USD":["SUSHI-USD", "SUSHIUSD=X"],
+    "YFI-USD":  ["YFI-USD", "YFIUSD=X"], "BAL-USD":  ["BAL-USD", "BALUSD=X"],
+    "KNC-USD":  ["KNC-USD", "KNCUSD=X"], "ZRX-USD":  ["ZRX-USD", "ZRXUSD=X"],
+    "BAT-USD":  ["BAT-USD", "BATUSD=X"], "ENJ-USD":  ["ENJ-USD", "ENJUSD=X"],
+    "MANA-USD": ["MANA-USD", "MANAUSD=X"], "SAND-USD": ["SAND-USD", "SANDUSD=X"],
+    "AXS-USD":  ["AXS-USD", "AXSUSD=X"], "GALA-USD": ["GALA-USD", "GALAUSD=X"],
+    "CHZ-USD":  ["CHZ-USD", "CHZUSD=X"], "APE-USD":  ["APE-USD", "APEUSD=X"],
+    "GMT-USD":  ["GMT-USD", "GMTUSD=X"], "LRC-USD":  ["LRC-USD", "LRCUSD=X"],
+    "STORJ-USD":["STORJ-USD", "STORJUSD=X"], "ANKR-USD": ["ANKR-USD", "ANKRUSD=X"],
+    "CVC-USD":  ["CVC-USD", "CVCUSD=X"], "OMG-USD":  ["OMG-USD", "OMGUSD=X"],
+    "REN-USD":  ["REN-USD", "RENUSD=X"], "ZIL-USD":  ["ZIL-USD", "ZILUSD=X"],
+    "KSM-USD":  ["KSM-USD", "KSMUSD=X"], "GLMR-USD": ["GLMR-USD", "GLMRUSD=X"],
+    "MOVR-USD": ["MOVR-USD", "MOVRUSD=X"], "ASTR-USD": ["ASTR-USD", "ASTRUSD=X"],
+    "CFX-USD":  ["CFX-USD", "CFXUSD=X"], "MASK-USD": ["MASK-USD", "MASKUSD=X"],
+    "DYDX-USD": ["DYDX-USD", "DYDXUSD=X"], "GMX-USD":  ["GMX-USD", "GMXUSD=X"],
+    "RPL-USD":  ["RPL-USD", "RPLUSD=X"], "BLUR-USD": ["BLUR-USD", "BLURUSD=X"],
+    "ENS-USD":  ["ENS-USD", "ENSUSD=X"], "LQTY-USD": ["LQTY-USD", "LQTYUSD=X"],
+    "PENDLE-USD":["PENDLE-USD", "PENDLEUSD=X"], "MAGIC-USD": ["MAGIC-USD", "MAGICUSD=X"],
+    "HIGH-USD": ["HIGH-USD", "HIGHUSD=X"], "ID-USD":   ["ID-USD", "IDUSD=X"],
+    "ARKM-USD": ["ARKM-USD", "ARKMUSD=X"], "WLD-USD":  ["WLD-USD", "WLDUSD=X"],
+    "EDU-USD":  ["EDU-USD", "EDUUSD=X"], "HOOK-USD": ["HOOK-USD", "HOOKUSD=X"],
+    "JTO-USD":  ["JTO-USD", "JTOUSD=X"], "BOME-USD": ["BOME-USD", "BOMEUSD=X"],
+    "ETHFI-USD":["ETHFI-USD", "ETHFIUSD=X"], "ENA-USD": ["ENA-USD", "ENAUSD=X"],
+    "W-USD":    ["W-USD", "WUSD=X"], "OMNI-USD": ["OMNI-USD", "OMNIUSD=X"],
+    "REZ-USD":  ["REZ-USD", "REZUSD=X"], "ZK-USD":   ["ZK-USD", "ZKUSD=X"],
+    "STRK-USD": ["STRK-USD", "STRKUSD=X"], "DYM-USD":  ["DYM-USD", "DYMUSD=X"],
+    "ALT-USD":  ["ALT-USD", "ALTUSD=X"], "MANTA-USD":["MANTA-USD", "MANTAUSD=X"],
+    "PIXEL-USD":["PIXEL-USD", "PIXELUSD=X"], "PORTAL-USD":["PORTAL-USD", "PORTALUSD=X"],
+    "AEVO-USD": ["AEVO-USD", "AEVOUSD=X"],
+    # --- futures ---
     "GC=F": ["GC=F"], "SI=F": ["SI=F"], "CL=F": ["CL=F"], "NG=F": ["NG=F"],
     "ZB=F": ["ZB=F"], "ZN=F": ["ZN=F"], "ZS=F": ["ZS=F"], "ZM=F": ["ZM=F"],
-    "ZW=F": ["ZW=F"], "KE=F": ["KE=F"],
+    "ZW=F": ["ZW=F"], "KE=F": ["KE=F"], "HG=F": ["HG=F"], "PL=F": ["PL=F"],
+    "PA=F": ["PA=F"], "RB=F": ["RB=F"], "HO=F": ["HO=F"], "CC=F": ["CC=F"],
+    "KC=F": ["KC=F"], "SB=F": ["SB=F"], "CT=F": ["CT=F"], "LH=F": ["LH=F"],
+    "LE=F": ["LE=F"], "GF=F": ["GF=F"], "ZO=F": ["ZO=F"], "ZR=F": ["ZR=F"],
+    "ZL=F": ["ZL=F"], "ES=F": ["ES=F"], "NQ=F": ["NQ=F"], "YM=F": ["YM=F"],
+    "RTY=F": ["RTY=F"],
+    # --- equities / ETFs ---
+    "AAPL": ["AAPL"], "MSFT": ["MSFT"], "GOOGL": ["GOOGL"], "AMZN": ["AMZN"],
+    "TSLA": ["TSLA"], "NVDA": ["NVDA"], "META": ["META"], "SPY": ["SPY"],
+    "QQQ": ["QQQ"], "DIA": ["DIA"], "IWM": ["IWM"], "GLD": ["GLD"],
+    "SLV": ["SLV"], "USO": ["USO"], "UNG": ["UNG"],
 }
 
 from telegram import (
@@ -1287,7 +1426,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.4.2",
+                    "User-Agent": "AEI-Bridge/v4.5.0",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1297,7 +1436,15 @@ class FeedClient:
                     raw = r.read().decode("utf-8")
                     payload = json.loads(raw)
                     if isinstance(payload, dict) and payload.get("error"):
-                        logger.warning(f"Relay returned error for {self.active_symbol()}: {payload.get('error')} ({payload.get('detail', '')})")
+                        # D-54: surface only the first 200 chars of the relay's
+                        # detail string, and include the active symbol and kind
+                        # so the operator can see which provider class failed.
+                        detail_raw = str(payload.get("detail", ""))
+                        detail_short = detail_raw[:200] + ("…" if len(detail_raw) > 200 else "")
+                        logger.warning(
+                            f"Relay returned error for {self.active_symbol()} "
+                            f"(kind={kind}): {payload.get('error')} ({detail_short})"
+                        )
                         self._failure_count += 1
                         self._fallback_count += 1
                         if self._fallback_count >= 5:
@@ -1331,21 +1478,21 @@ class FeedClient:
                 except Exception:
                     error_body = '<unreadable>'
                 last_error = f"HTTP {e.code}: {error_body[:200]}"
-                logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
+                logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()} kind={kind} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
                 if e.code in (401, 403, 429) and attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
                 break
             except urllib.error.URLError as e:
                 last_error = f"URLError: {e.reason}"
-                logger.warning(f"Relay URLError for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e.reason}")
+                logger.warning(f"Relay URLError for {self.active_symbol()} kind={kind} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e.reason}")
                 if attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
                 break
             except json.JSONDecodeError as e:
                 last_error = f"JSONDecodeError: {e}"
-                logger.warning(f"Relay returned invalid JSON for {self.active_symbol()}: {e}")
+                logger.warning(f"Relay returned invalid JSON for {self.active_symbol()} kind={kind}: {e}")
                 break
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
@@ -3671,8 +3818,7 @@ class AEEA_Engine:
             bid = self.price_history[-1].bid
             ask = self.price_history[-1].ask
         if STOP_LOSS != Decimal('0.0'):
-            self._sSL = bid + sl_price - com
-            self._bSL = ask - sl_price + com
+            self._sSL = bid + sl_price - com            self._bSL = ask - sl_price + com
         if TAKE_PROFIT != Decimal('0.0'):
             self._sTP = bid - tp_price
             self._bTP = ask + tp_price
@@ -5141,7 +5287,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.4.2"
+    server_version = "AEI-Bridge/4.5.0"
 
     def log_message(self, fmt, *args):
         return
@@ -5212,7 +5358,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.4.2",
+                "ok": not stale, "service": "aei-bridge", "version": "4.5.0",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -6769,7 +6915,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.4.2).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.0).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -6783,9 +6929,9 @@ class AEI_Bot:
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🛰️ Multi-provider relay: Binance → CoinGecko → Yahoo for crypto; Yahoo for equities/futures.")
+        logger.info("🛰️ Multi-provider relay v4.5.0: Kraken → Binance → CoinGecko → Yahoo for crypto; Stooq → Yahoo for equities/futures.")
         logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
-        logger.info("🌌 𝒫\\_arc projection computed per bar close and on demand.")
+        logger.info("🌌 𝒫\\_arc projection computed on execution, init, symbol change, and manual refresh.")
         logger.info("🔔 Push notification on every signal, every execution, every FVG, every close.")
         logger.info("🔔 /toasts endpoint serves incremental signal+execution+fvg toasts with first_available_seq.")
         logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
@@ -6797,6 +6943,7 @@ class AEI_Bot:
         logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
         logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
         logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
+        logger.info("🆕 v4.5.0 symbol universe: Kraken-primary crypto (90+ pairs) and Stooq-primary futures/equities (45+ symbols).")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 

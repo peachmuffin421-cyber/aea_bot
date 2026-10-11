@@ -1,6 +1,6 @@
 # ============================================================================
 # ÆEA TELEGRAM BOT — PYTHON DEPENDENCIES
-# Version: 4.4.0 (Scroll-Ahead Edition)
+# Version: 4.5.0 (Kraken-Primary + Stooq-Primary Edition) — CS-Translated UI
 # Platform: Heroku / Termux / any POSIX-compatible Python 3.10+ environment
 # Author: Natalia Tanyatia
 # ============================================================================
@@ -55,6 +55,11 @@ httpx>=0.27,<0.28
 # FeedClient uses stdlib `urllib.request`. No pip package required for the
 # Cloudflare Worker Relay integration.
 #
+# v4.5.0: the relay dispatches crypto through Kraken → Binance → CoinGecko
+# → Yahoo, and equities/futures through Stooq → Yahoo. All five upstreams
+# are consumed through the relay's shaped JSON. No client-side change was
+# required for the new provider order.
+#
 # Direct-upstream fallback (NOT required for the Worker deployment):
 #
 # yfinance>=0.2.40
@@ -81,6 +86,20 @@ httpx>=0.27,<0.28
 # thread spawn (E-7). No additional package needed.
 
 # ----------------------------------------------------------------------------
+# CROSS-THREAD ASYNC SEND
+# ----------------------------------------------------------------------------
+# Python's stdlib `asyncio` module provides `run_coroutine_threadsafe`, the
+# helper that v4.4.1 (E-10) uses to schedule Bot.send_message onto the bot's
+# running event loop from a synchronous caller. No additional package needed.
+
+# ----------------------------------------------------------------------------
+# MARKDOWN ESCAPING
+# ----------------------------------------------------------------------------
+# v4.4.2 (E-12) introduces `_md_escape(s)`, a pure-Python helper that
+# escapes legacy-Markdown control characters in an interpolated value.
+# It uses only the built-in `str` methods. No additional package needed.
+
+# ----------------------------------------------------------------------------
 # RUNTIME COMPATIBILITY
 # ----------------------------------------------------------------------------
 # Minimum: Python 3.10
@@ -92,5 +111,5 @@ httpx>=0.27,<0.28
 # in the state machine, in accordance with the Arc-Length Axiom (s = r).
 # The arc-length projection's cosine is evaluated via a Decimal Taylor
 # series, and the half-period is kept as a Fraction until the cosine call,
-# preserving the same exact-arithmetic discipline (v4.4.0, D-33).
+# preserving the same exact-arithmetic discipline (D-33).
 # ============================================================================

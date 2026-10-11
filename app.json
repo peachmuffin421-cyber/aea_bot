@@ -1,6 +1,6 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Scroll-Ahead v4.4.0: execution-gated arc-length projection, scroll-ahead viewport to the projected TP, bot replies threaded to the user's last command, bounded push dispatch, FVG merge, legend stacking; carries forward v4.3.0 Enhancement: Telegram push on every signal/execution/FVG/close, multi-provider relay with real Binance/CoinGecko volume, arc-length future price projection; semantics-restored v4.2.0 baseline preserved: FF-exact M()/N() 5-case chain, Wilder ADX, MQL4 iRVI, default-AC window, full-history OBV/AD, 5-line Ichimoku range, point-size table, exact-fraction BB family, toast eviction detection, settings validation max >= min + 2, global Memory persistence)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Kraken-Primary + Stooq-Primary v4.5.0 + CS-Translated UI: Kraken is the primary crypto provider, Stooq is the primary equities/futures provider, ~90 crypto pairs and ~45 futures/equities/ETFs, six new defect resolutions D-49 through D-54; carries forward v4.4.2 Send-Hardened reply-target hardening + Markdown escaping + plain-text final fallback, v4.4.1 Await-Corrected async send, v4.4.0 Scroll-Ahead execution-gated projection + scroll-ahead viewport to the projected TP + bot replies threaded to the user's last command + bounded push dispatch + FVG merge + legend stacking, v4.3.0 Enhancement Telegram push on every signal/execution/FVG/close + arc-length future price projection, and the v4.2.0 semantics-restored baseline)",
   "repository": "https://github.com/yourusername/aea-bot",
   "keywords": [
     "trading",
@@ -13,15 +13,25 @@
     "bollinger",
     "notifications",
     "push",
+    "kraken",
+    "stooq",
     "binance",
     "coingecko",
+    "yahoo",
     "volume",
     "projection",
     "arc-length",
     "exact-arithmetic",
     "scroll-ahead",
     "execution-gated",
-    "reply-threaded"
+    "reply-threaded",
+    "await-corrected",
+    "send-hardened",
+    "markdown-escape",
+    "codex-symbolica",
+    "cs-translated",
+    "kraken-primary",
+    "stooq-primary"
   ],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
@@ -73,7 +83,7 @@
       "required": false
     },
     "SYMBOL_DIGITS": {
-      "description": "JSON map of symbol → digits for Point-size emulation. Defaults to a 30-symbol table.",
+      "description": "JSON map of symbol → digits for Point-size emulation. Defaults to the built-in v4.5.0 table covering all ~90 crypto pairs and ~45 futures/equities/ETFs.",
       "required": false
     },
     "SYMBOL_DIGITS_DEFAULT": {
