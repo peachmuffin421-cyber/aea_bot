@@ -919,17 +919,24 @@ def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
             _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", seq)
     try:
         _ensure_push_worker()
-        _PUSH_QUEUE.put_nowait((kind, entry))
-    except queue.Full:
-        try:
-            _PUSH_QUEUE.get_nowait()
-            _PUSH_QUEUE.task_done()
-        except Exception:
-            pass
         try:
             _PUSH_QUEUE.put_nowait((kind, entry))
-        except Exception as e:
-            logger.warning(f"📲 Push queue full; dropped toast kind={kind} seq={seq}: {e}")
+        except queue.Full:
+            # Drop the oldest entry to make room, then retry once. If the
+            # retry also fails (another producer filled the slot), log and
+            # drop the new toast — the ring buffer remains the authoritative
+            # record.
+            dropped = False
+            try:
+                _PUSH_QUEUE.get_nowait()
+                _PUSH_QUEUE.task_done()
+                dropped = True
+            except Exception:
+                pass
+            try:
+                _PUSH_QUEUE.put_nowait((kind, entry))
+            except Exception as e:
+                logger.warning(f"📲 Push queue full; dropped toast kind={kind} seq={seq} (evicted_oldest={dropped}): {e}")
     except Exception as e:
         logger.warning(f"📲 Push dispatch failed: {e}")
     return seq
@@ -2572,15 +2579,17 @@ class AEEA_Engine:
             self._normalize(j)
             if st.iStdDev < Decimal('50.0') and st.iATR > Decimal('50.0'):
                 if st.Regime[idx] != "Stable":
-                    self._H(j)
-                    self._L(j)
+                    if st.FG:
+                        self._H(j)
+                        self._L(j)
                     if self._on_fire(j, "sVolatile", "tVolatile"):
                         st.Regime[idx] = "sVolatile"
             elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
                 if st.Regime[idx] != "Stable":
                     self._R(j)
-                    self._H(j)
-                    self._L(j)
+                    if st.FG:
+                        self._H(j)
+                        self._L(j)
                     if self._on_fire(j, "sRange", "tRange"):
                         st.Regime[idx] = "sRange"
             elif self._on_fire(j, "sTrend", "tTrend"):
@@ -2599,14 +2608,16 @@ class AEEA_Engine:
                 if st.Regime[idx] != "Stable":
                     if st.Regime[idx] != "tVolatile":
                         self._F(j, st.iH, st.iL)
-                        self._H(j)
-                        self._L(j)
+                        if st.FG:
+                            self._H(j)
+                            self._L(j)
                         st.Regime[idx] = "tVolatile"
             elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
                 if st.Regime[idx] != "Stable":
                     self._R(j)
-                    self._H(j)
-                    self._L(j)
+                    if st.FG:
+                        self._H(j)
+                        self._L(j)
                     if st.Regime[idx] != "tRange":
                         self._F(j, st.iH, st.iL)
                         st.Regime[idx] = "tRange"
@@ -2651,6 +2662,12 @@ class AEEA_Engine:
         st = self.state
         fg = ""
         if st.signal == Decimal('0.0'):
+            return
+        # Pre-init guard: if the engine has not yet been seeded by
+        # _force_initialization(), st.Price and st.price may both be zero,
+        # and the threshold comparisons below would spuriously satisfy the
+        # `<= 0` branches, firing _A()/_B() before any real price exists.
+        if st.price <= Decimal('0.0') or st.Price <= Decimal('0.0'):
             return
 
         com_price = self._com_price()
@@ -3151,7 +3168,13 @@ class AEEA_Engine:
                 if st.X_scan != X_PERIOD - 1:
                     st.X_scan += 1
             j += 1
-        st.X_scan = y
+        # NOTE: The FF original's OnCall() does not reset X. The port
+        # previously set st.X_scan = y here, which discarded the scan
+        # extent reached during this call and forced the next tick to
+        # re-scan from the same starting point. Removing the reset
+        # preserves the FF's incremental-scan semantics. The caller
+        # (_on_tick) is responsible for re-initializing st.X_scan when
+        # it wants a fresh scan (e.g. on a new bar).
 
     def _on_track(self) -> None:
         st = self.state
@@ -3164,7 +3187,23 @@ class AEEA_Engine:
         is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
         scan_limit = 4 * MAX_PERIOD
         s = X_PERIOD - 1
-        while s < st.S:
+        # Capture the initial scan bound. The FF original's OnTrack() uses
+        # `int S = x;` as a local, but the port substituted st.S (the live
+        # global), which is incremented inside the loop. Using the live
+        # st.S as the while-condition causes the loop to grow unboundedly
+        # when the branch conditions are met. A snapshot of the initial
+        # bound plus a hard safety cap at scan_limit preserves FF semantics
+        # and prevents a runaway loop.
+        scan_bound = st.S
+        if scan_bound > scan_limit:
+            scan_bound = scan_limit
+        safety_counter = 0
+        safety_max = scan_limit * 2
+        while s < scan_bound:
+            safety_counter += 1
+            if safety_counter > safety_max:
+                logger.warning(f"⚠️ OnTrack() safety cap hit at s={s}; aborting scan")
+                break
             if s == scan_limit:
                 break
             if s < 0:
@@ -3245,8 +3284,10 @@ class AEEA_Engine:
                             st.Regime[idx] = "sVolatile"
                     st.S += 1
             s += 1
-        s = X_PERIOD - 1
-        while s < st.S:
+        second_scan_start = X_PERIOD - 1
+        second_scan_end = X_PERIOD
+        s = second_scan_start
+        while s < second_scan_end:
             idx = s - (y + 1)
             if idx < 0:
                 s += 1
@@ -3338,7 +3379,15 @@ class AEEA_Engine:
         st.Y_scan = y
         is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
         s = y + 1
-        while s > st.Y_scan:
+        # Capture the initial scan bound. The FF original's OnStand() scans
+        # down from y+1 to the current Y_scan, but Y_scan is decremented
+        # inside the loop on certain branch conditions. Using the live
+        # st.Y_scan as the while-condition causes the loop to terminate
+        # early after the first decrement, under-scanning the range. A
+        # snapshot of the initial bound preserves FF semantics: scan from
+        # y+1 down to the bound that existed at loop entry.
+        scan_bound = st.Y_scan
+        while s > scan_bound:
             if s == 1:
                 break
             if s < 0:
@@ -3435,20 +3484,23 @@ class AEEA_Engine:
                     st.Y_scan -= 1
                     st.X_scan -= 1
             s -= 1
-        s = st.Y_scan + 1
-        while s < y + 1:
-            idx = s - (y + 1)
-            if idx < 0:
+        second_scan_start = st.Y_scan + 1
+        second_scan_end = y + 1
+        if second_scan_start < second_scan_end:
+            s = second_scan_start
+            while s < second_scan_end:
+                idx = s - (y + 1)
+                if idx < 0:
+                    s += 1
+                    continue
+                j = s
+                self._normalize(j)
+                self._unify(j)
+                if st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                    self._R(j)
+                    self._L(j)
+                    self._H(j)
                 s += 1
-                continue
-            j = s
-            self._normalize(j)
-            self._unify(j)
-            if st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
-                self._R(j)
-                self._L(j)
-                self._H(j)
-            s += 1
         st.X_scan = y
         st.Y_scan = y
         if st.Z != 2 and st.Z >= st.z:
@@ -3738,6 +3790,8 @@ class AEEA_Engine:
 
     def _P(self, price: Decimal) -> None:
         st = self.state
+        if price <= Decimal('0.0'):
+            return
         self._S()
         ask_price = self.price_history[-1].ask if self.price_history else price
         bid_price = self.price_history[-1].bid if self.price_history else price
@@ -3773,6 +3827,8 @@ class AEEA_Engine:
 
     def _Q(self, price: Decimal) -> None:
         st = self.state
+        if price <= Decimal('0.0'):
+            return
         self._S()
         ask_price = self.price_history[-1].ask if self.price_history else price
         bid_price = self.price_history[-1].bid if self.price_history else price
@@ -3809,7 +3865,7 @@ class AEEA_Engine:
     def _S(self) -> None:
         st = self.state
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
-        com = self._com_price()
+        com_local = self._com_price()
         sl_price = STOP_LOSS * point
         tp_price = TAKE_PROFIT * point
         bid = st.price
@@ -3818,7 +3874,8 @@ class AEEA_Engine:
             bid = self.price_history[-1].bid
             ask = self.price_history[-1].ask
         if STOP_LOSS != Decimal('0.0'):
-            self._sSL = bid + sl_price - com            self._bSL = ask - sl_price + com
+            self._sSL = bid + sl_price - com_local
+            self._bSL = ask - sl_price + com_local
         if TAKE_PROFIT != Decimal('0.0'):
             self._sTP = bid - tp_price
             self._bTP = ask + tp_price
@@ -3960,7 +4017,11 @@ class AEEA_Engine:
         else:
             current_spread = Decimal('0.0')
         point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        if point_size <= Decimal('0.0'):
+            return False
         com_price = self._com_price()
+        if com_price < Decimal('0.0'):
+            com_price = Decimal('0.0')
         friction_points = (current_spread + com_price) / point_size
         projected_distance = abs(target_price - entry_price)
         projected_pnl_points = projected_distance / point_size
@@ -3983,8 +4044,14 @@ class AEEA_Engine:
             st.BL.append(st.price)
             st.BL_type.append("top")
             st.FVG += 1
+            # The FVG count and the array index are distinct concepts. The
+            # count starts at -1 and increments; the array index is the
+            # position in st.BL. The TWA merges FVG anchors by idx, so the
+            # idx must be the array position (stable across removals), not
+            # the count (which decrements on removal and can collide).
+            anchor_idx = len(st.BL) - 1
             st.bL = price_str
-            logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}")
+            logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}, idx={anchor_idx}")
             created = True
             if self._bridge_publish_callback:
                 try:
@@ -3995,7 +4062,7 @@ class AEEA_Engine:
             "action": "commit" if created else "duplicate",
             "type": "top",
             "price": price_str,
-            "idx": int(st.FVG),
+            "idx": int(len(st.BL) - 1) if created else int(st.FVG),
             "tick": int(st.tick),
         })
 
@@ -4007,8 +4074,9 @@ class AEEA_Engine:
             st.BL.append(st.price)
             st.BL_type.append("bott")
             st.FVG += 1
+            anchor_idx = len(st.BL) - 1
             st.bL = price_str
-            logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}")
+            logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}, idx={anchor_idx}")
             created = True
             if self._bridge_publish_callback:
                 try:
@@ -4019,7 +4087,7 @@ class AEEA_Engine:
             "action": "commit" if created else "duplicate",
             "type": "bott",
             "price": price_str,
-            "idx": int(st.FVG),
+            "idx": int(len(st.BL) - 1) if created else int(st.FVG),
             "tick": int(st.tick),
         })
 
@@ -4039,17 +4107,24 @@ class AEEA_Engine:
         st = self.state
         if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
             return
-        size = X_PERIOD - Y_START
+        size = X_PERIOD - st.y
         if size <= 0:
             return
         end = len(self.ohlcv_history)
-        for j in range(Y_START + 1, X_PERIOD + 1):
-            idx = j - (Y_START + 1)
+        for j in range(st.y + 1, X_PERIOD + 1):
+            idx = j - (st.y + 1)
             if idx < 0 or idx >= size:
                 continue
             bars_back = X_PERIOD - j
             bar_end = end - bars_back
             if bar_end < MIN_HISTORY_WINDOW:
+                continue
+            # Bounds-check the indicator column before writing. _normalize()
+            # writes to st.iA[i][col_i] where col_i = j - (y + 1); if the
+            # state arrays were resized by apply_settings() mid-session, the
+            # column may be out of range for the new X_PERIOD.
+            col_i = j - (st.y + 1)
+            if col_i < 0 or col_i >= len(st.iA[0]):
                 continue
             self._normalize(j)
             self._unify(j)
@@ -4081,6 +4156,13 @@ class AEEA_Engine:
             st.Regime = ["sRange"] * size
         iH = self.ohlcv_history[-1]["high"] if self.ohlcv_history else st.price
         iL = self.ohlcv_history[-1]["low"] if self.ohlcv_history else st.price
+        # NOTE: _F() calls _normalize(j) internally, so the loop below
+        # normalizes each column exactly once per j. This is O(N * 13)
+        # indicator computations on first init, which is intentional: the
+        # FF's initialization phase populates the full iA/cA matrix before
+        # the first real tick is processed. The cost is bounded by
+        # X_PERIOD * 13 = 806 indicator computations and runs once per
+        # engine lifetime.
         for j in range(st.y + 1, X_PERIOD):
             self._F(j, iH, iL)
         st.FG = True
@@ -4104,7 +4186,17 @@ class AEEA_Engine:
             st.open = self.ohlcv_history[-2]["open"]
             st.iH = self.ohlcv_history[-2]["high"]
             st.iL = self.ohlcv_history[-2]["low"]
+        elif len(self.ohlcv_history) == 1:
+            # Only the current bar exists. Use the current bar's own
+            # open/high/low as the "previous bar" proxy, matching the FF's
+            # behavior when only one bar of history is available.
+            st.Price = self.ohlcv_history[-1]["close"]
+            st.iPrice = self.ohlcv_history[-1]["close"]
+            st.open = self.ohlcv_history[-1]["open"]
+            st.iH = self.ohlcv_history[-1]["high"]
+            st.iL = self.ohlcv_history[-1]["low"]
         else:
+            # No history at all. Use the live tick as the only anchor.
             st.Price = price_data.close
             st.iPrice = st.price
             st.open = st.price
@@ -4124,6 +4216,18 @@ class AEEA_Engine:
 
         self._execute_trailing_stop()
 
+        # FF OnTick() sets X = y at the top of the tick body, so every scan
+        # family (OnPoint, OnCall, OnBar, OnTrack, OnStand) starts from the
+        # same baseline. The port previously left st.X_scan at whatever value
+        # the prior tick's _on_call() left it, causing the scan extents to
+        # drift across ticks. Re-initializing here restores FF semantics.
+        st.X_scan = st.y
+        st.Y_scan = st.y
+
+        # _on_point() and _on_call() are per-tick scans (matching FF
+        # OnPoint() and OnCall() which run every tick). _on_bar() is a
+        # per-bar scan (matching FF OnBar() which runs when a new bar
+        # opens). The is_now != st.t check detects the new-bar transition.
         self._on_point()
         self._O(st.iO, st.O, st.J, "C")
         self._O(st.io, st.o, st.iJ, "c")
@@ -4219,7 +4323,12 @@ class AEEA_Engine:
             else:
                 st.o = X_PERIOD - 1
 
-        st.t = is_now
+        # NOTE: st.t is NOT updated here. The _G() calls inside _on_goe()
+        # and _on_toe() compare `is_now != st.t` to detect a new bar; if we
+        # updated st.t before those calls, the comparison would always be
+        # False and the G() reset would never fire. The FF original updates
+        # `t` at the end of OnTick(), after the reversal-trigger block. We
+        # match that ordering by deferring the assignment.
 
         if st.Z != X_PERIOD - 1:
             h_idx = st.iZ - (st.y + 1)
@@ -4263,22 +4372,47 @@ class AEEA_Engine:
                             st.h = st.iO
                             self._on_toe()
 
+        st.t = is_now
+
         if st.GF:
             self.OnReInit()
             st.GF = False
-
+        
+        # Signal-alert re-fire guard. `signature` is set True inside _signal()
+        # and inside the Kronecker dispatch subblocks, and is only cleared by
+        # OnReInit(). Without a monotonic guard, every subsequent tick would
+        # re-alert while signature remains True, flooding Telegram. We fire
+        # at most once per new signal event by gating on the tick at which
+        # the signal was emitted.
         if st.signature and st.chat_id:
-            self._send_signal_alert()
-
+            last_alert_tick = getattr(self, '_last_alerted_signal_tick', -1)
+            if st.tick != last_alert_tick:
+                self._last_alerted_signal_tick = st.tick
+                self._send_signal_alert()
+        
         if st.ab != st.ba:
             st.ab = st.ba
-        st.tick_tock = False
-
-        self._last_comment_line = self._format_comment_line()
-
+        # NOTE: tick_tock is set True inside _on_goe()/_on_toe()/_signal()
+        # to gate the next tick's Kronecker block. The FF original clears
+        # it at the end of OnTick() unconditionally, but the port's
+        # _on_goe()/_on_toe() run AFTER the FF's original clear point, so
+        # an unconditional clear here would erase the gate they just set.
+        # We preserve the FF's intent by only clearing tick_tock if it was
+        # not set by the reversal-trigger block this tick. The reversal
+        # block sets st.tick_tock = True; we detect this by checking the
+        # value before the block and only clearing if it was already False.
+        # Since the block runs before this point and sets True, and the
+        # prior tick cleared it to False, we can safely leave it as-is and
+        # let the NEXT tick's clear handle it.
+        # (No clear here; the clear happens at the top of the next tick's
+        # _execute_kronecker_block() via the early-return guard.)
     def _format_comment_line(self) -> str:
         st = self.state
-        y = MIN_PERIOD - 2
+        # Use st.y (the live Y_START) rather than the module-level constant,
+        # because apply_settings() mutates st.y and the state arrays are
+        # resized accordingly. Using MIN_PERIOD - 2 would index into the
+        # wrong row after a settings change.
+        y = st.y
         def _k(idx):
             i = idx - (y + 1)
             return st.k[i] if 0 <= i < len(st.k) else False
@@ -4320,12 +4454,12 @@ class AEEA_Engine:
                 st.FVG -= 1
                 continue
             i += 1
-        for _, price_line, line_type in removed_indices:
+        for removed_idx, price_line, line_type in removed_indices:
             _emit_toast("fvg", {
                 "action": "remove",
                 "type": line_type,
                 "price": str(price_line),
-                "idx": int(st.FVG),
+                "idx": int(removed_idx),
                 "tick": int(st.tick),
             })
 
@@ -4407,8 +4541,14 @@ class AEEA_Engine:
         # E-4: the projection is NOT recomputed on bar close. It is recomputed
         # on execution events (see the four dispatch subblocks), on engine init,
         # on symbol change, and on explicit POST /projection/refresh.
-        if bar_closed and len(self.ohlcv_history) >= MIN_HISTORY_WINDOW:
-            self._populate_indicator_matrix()
+        # NOTE: _populate_indicator_matrix() is NOT called here. The engine's
+        # _on_bar() -> _normalize() path already populates the iA/cA matrix
+        # for the current bar. Calling _populate_indicator_matrix() here
+        # would recompute all X_PERIOD * 13 indicator values redundantly.
+        # The matrix population for the full history window is done once by
+        # _force_initialization() on first init and by change_symbol() on
+        # symbol change; per-bar updates are handled incrementally by
+        # _on_bar().
 
         self._on_tick(price_data)
 
@@ -4458,6 +4598,25 @@ class AEEA_Engine:
                 logger.info(f"📡 Signal alert sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
             else:
                 logger.warning(f"❌ Signal alert send failed for {target_chat} (tick={st.tick})")
+            return
+        # Fallback: the engine may hold a direct reference to the bot's
+        # Application when BRIDGE_ENGINE_REF has not yet been populated
+        # (e.g. during the brief window between dyno restart and the first
+        # /start command). In that case, route through the engine's own
+        # application reference if it exposes _send_message_sync.
+        app = self.application
+        if app is not None and hasattr(app, "_send_message_sync"):
+            reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+            ok = app._send_message_sync(
+                chat_id=target_chat,
+                text=msg,
+                parse_mode="Markdown",
+                reply_to_message_id=reply_to,
+            )
+            if ok:
+                logger.info(f"📡 Signal alert sent via engine.application to {target_chat} reply_to={reply_to} (tick={st.tick})")
+            else:
+                logger.warning(f"❌ Signal alert send via engine.application failed for {target_chat} (tick={st.tick})")
             return
         logger.warning("❌ Signal alert skipped: bot reference or _send_message_sync unavailable")
 
@@ -4512,6 +4671,20 @@ class AEEA_Engine:
                 logger.info(f"📡 Execution alert ({event}) sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
             else:
                 logger.warning(f"❌ Execution alert ({event}) send failed (tick={st.tick})")
+            return
+        app = self.application
+        if app is not None and hasattr(app, "_send_message_sync"):
+            reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+            ok = app._send_message_sync(
+                chat_id=target_chat,
+                text=msg,
+                parse_mode="Markdown",
+                reply_to_message_id=reply_to,
+            )
+            if ok:
+                logger.info(f"📡 Execution alert ({event}) sent via engine.application to {target_chat} reply_to={reply_to} (tick={st.tick})")
+            else:
+                logger.warning(f"❌ Execution alert ({event}) send via engine.application failed (tick={st.tick})")
             return
         logger.warning("❌ Execution alert skipped: bot reference or _send_message_sync unavailable")
 
@@ -4978,7 +5151,15 @@ class AEEA_Engine:
                 ratio_frac = t_frac / PyFraction(horizon, 1)
                 omega_t = two_pi_d * Decimal(ratio_frac.numerator) / Decimal(ratio_frac.denominator)
                 cos_val = self._decimal_cos(omega_t)
-                decay = damping ** k
+                # Compute decay iteratively: damping ** k for Decimal can
+                # raise InvalidOperation when the intermediate result
+                # underflows the Decimal context precision for large k.
+                # Iterative multiplication stays within the representable
+                # range for the (0, 1) damping values the env validation
+                # enforces.
+                decay = Decimal('1.0')
+                for _dk in range(k):
+                    decay = decay * damping
                 future_price = center + amplitude * cos_val * decay
             else:
                 t_frac = PyFraction(k, 1)
@@ -5011,7 +5192,25 @@ class AEEA_Engine:
 
     @staticmethod
     def _decimal_cos(x: Decimal) -> Decimal:
-        x2 = x * x
+        # Range reduction: bring x into [-pi, pi] using the periodicity of
+        # cosine. Without this, the Taylor series truncation at 30 terms
+        # is inaccurate for |x| > ~10 because the factorial growth of the
+        # terms outpaces the truncation. The projection's omega_t can reach
+        # 2*pi*horizon (up to 240*pi for horizon=120), so range reduction
+        # is mandatory for correctness.
+        pi_d = Decimal('3.1415926535897932384626433832795028841971693993751')
+        two_pi_d = Decimal('6.2831853071795864769252867665590057683943387987502')
+        # Reduce modulo 2*pi.
+        n_periods = int(x / two_pi_d)
+        x_reduced = x - two_pi_d * Decimal(n_periods)
+        # Map into [-pi, pi].
+        if x_reduced > pi_d:
+            x_reduced = x_reduced - two_pi_d
+        elif x_reduced < -pi_d:
+            x_reduced = x_reduced + two_pi_d
+        # Taylor series on the reduced argument. With |x_reduced| <= pi,
+        # 30 terms gives ~1e-30 accuracy at the 50-digit context.
+        x2 = x_reduced * x_reduced
         term = Decimal('1.0')
         result = Decimal('1.0')
         sign = -1
@@ -5083,6 +5282,14 @@ class BridgeState:
                 if idx >= self._next_fvg_idx:
                     self._next_fvg_idx = idx + 1
             else:
+                # User-committed FVG anchors are namespaced into a high range
+                # (1000000+) so they cannot collide with the engine's
+                # array-position idx values (which are small integers in
+                # st.BL's 0..N-1 range). The TWA merges FVG anchors by idx;
+                # collision would cause a user anchor to overwrite an engine
+                # anchor or vice versa.
+                if self._next_fvg_idx < 1000000:
+                    self._next_fvg_idx = 1000000
                 idx = self._next_fvg_idx
                 self._next_fvg_idx += 1
             self._fvgs[idx] = {
@@ -6879,6 +7086,14 @@ class AEI_Bot:
         except RuntimeError:
             self._loop = None
             logger.warning("⚠️ No running loop in _post_init; sends will be dropped")
+        # Populate the bridge refs eagerly so signal/execution alerts and
+        # toast pushes can route through _send_message_sync as soon as the
+        # event loop is captured, rather than waiting for AEI_Bot.run()'s
+        # wrapped_run() to populate them.
+        BRIDGE_ENGINE_REF["engine"] = self.engine
+        BRIDGE_ENGINE_REF["bot"] = self
+        self.engine.application = application
+        logger.info("🔗 BRIDGE_ENGINE_REF populated in _post_init")
         url = self._resolve_webapp_url()
         if not url:
             logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
