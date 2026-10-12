@@ -7068,8 +7068,7 @@ class AEI_Bot:
             f"🔎 *Active symbol:* `{active}`\n"
             f"_Feed will use this symbol on next iteration._"
         )
-        else:
-            await update.message.reply_text(text, parse_mode="Markdown")        await _handler_send(update, text, parse_mode="Markdown")
+        await _handler_send(update, text, parse_mode="Markdown")
 
     async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
