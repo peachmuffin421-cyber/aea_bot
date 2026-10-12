@@ -265,11 +265,12 @@ class Fraction:
 def _md_escape(value) -> str:
     """Escape every legacy-Markdown control character in an interpolated value.
 
-    Telegram's legacy Markdown parser treats *, _, `, [, ], and \\ as control
-    characters. Any of those appearing inside a value that is interpolated
-    into a parse_mode="Markdown" string causes the whole message to be
-    rejected with HTTP 400 "can't parse entities". This helper escapes them
-    so only the static template characters remain meaningful to the parser.
+    Telegram's legacy Markdown parser treats *, _, `, [, ], \\, and < as
+    control characters or tag openers. Any of those appearing inside a value
+    that is interpolated into a parse_mode="Markdown" string can cause the
+    whole message to be rejected with HTTP 400 "can't parse entities" or
+    "unsupported start tag". This helper escapes them so only the static
+    template characters remain meaningful to the parser.
 
     The function is idempotent for values that contain no control characters,
     and preserves the visible content of any value that does. It never
@@ -292,6 +293,10 @@ def _md_escape(value) -> str:
             out_chars.append('\\[')
         elif ch == ']':
             out_chars.append('\\]')
+        elif ch == '<':
+            out_chars.append('&lt;')
+        elif ch == '>':
+            out_chars.append('&gt;')
         else:
             out_chars.append(ch)
     return ''.join(out_chars)
@@ -300,13 +305,43 @@ def _looks_like_reply_error(desc: str) -> bool:
     if not desc:
         return False
     d = desc.lower()
-    return ('reply' in d) or ('message to reply' in d) or ('replied message' in d)
+    if 'reply' in d:
+        return True
+    if 'replied' in d:
+        return True
+    if 'message to be replied' in d:
+        return True
+    if 'reply_to_message_id' in d:
+        return True
+    if 'reply message not found' in d:
+        return True
+    if 'message_id_invalid' in d:
+        return True
+    return False
 
 def _looks_like_parse_error(desc: str) -> bool:
     if not desc:
         return False
     d = desc.lower()
-    return ('parse' in d) or ("can't parse" in d) or ('entities' in d) or ('entity' in d)
+    if 'parse' in d:
+        return True
+    if 'entities' in d:
+        return True
+    if 'entity' in d:
+        return True
+    if 'unsupported start tag' in d:
+        return True
+    if 'unsupported end tag' in d:
+        return True
+    if 'unexpected end of' in d:
+        return True
+    if 'can\'t find end' in d:
+        return True
+    if 'can\'t parse' in d:
+        return True
+    if 'markdown' in d:
+        return True
+    return False
 
 # ============================================================================
 # CONSTANTS & CONFIGURATION — MQL4 PARITY
@@ -6300,41 +6335,24 @@ class AEI_Bot:
         return TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
 
     def _track_inbound_message(self, update: Update) -> None:
-        # E-6: record the message_id of the user's most recent inbound message
-        # so the next Telegram push can be threaded as a reply to it.
         try:
             msg = update.effective_message
+            chat = update.effective_chat
+            chat_id = None
+            if chat is not None and getattr(chat, "id", None) is not None:
+                chat_id = int(chat.id)
+            if chat_id is not None:
+                if self.engine.state.chat_id != chat_id:
+                    self.engine.state.last_inbound_message_id = None
+                self.engine.state.chat_id = chat_id
             if msg is not None and getattr(msg, "message_id", None) is not None:
                 self.engine.state.last_inbound_message_id = int(msg.message_id)
-            chat = update.effective_chat
-            if chat is not None and getattr(chat, "id", None) is not None:
-                self.engine.state.chat_id = int(chat.id)
         except Exception as e:
             logger.debug(f"_track_inbound_message failed: {e}")
 
     def _send_message_sync(self, chat_id: int, text: str, parse_mode: str = "Markdown",
                            reply_to_message_id: Optional[int] = None,
                            timeout: float = 10.0) -> bool:
-        # E-10: schedule an async Bot.send_message onto the bot's event loop
-        # from a synchronous context. Returns True on success, False otherwise.
-        # Never raises. This is the single point through which every
-        # out-of-loop send (signal alert, execution alert, toast push) flows.
-        #
-        # E-11: three attempts, in this order:
-        #   (1) threaded reply with parse_mode=Markdown
-        #   (2) standalone message with parse_mode=Markdown (only if the first
-        #       failure description mentions "reply" or "message to reply")
-        #   (3) standalone message with parse_mode=None (only if either prior
-        #       failure description mentions "parse" or "can't parse entities")
-        #
-        # E-13: the third attempt is the plain-text final fallback. It strips
-        # parse_mode entirely, guaranteeing delivery of the raw text even when
-        # a value contains an irreducible Markdown character sequence.
-        #
-        # Every attempt never raises; the method returns True if any attempt
-        # succeeds and False if all three fail. Each failure logs the full
-        # Telegram error description so the operator can see which branch the
-        # failure landed in.
         if self.application is None:
             logger.warning("📡 send_message skipped: application is None")
             return False
@@ -6360,21 +6378,27 @@ class AEI_Bot:
             except Exception as e:
                 return (False, str(e))
 
-        # Attempt 1: threaded reply with Markdown
-        ok, err1 = _attempt(parse_mode, reply_to_message_id)
-        if ok:
+        ok1, err1 = _attempt(parse_mode, reply_to_message_id)
+        if ok1:
             return True
         logger.info(f"📡 send_message attempt 1 failed (reply+Markdown): {err1}")
 
-        # Attempt 2: standalone message with Markdown, only when the first
-        # failure was a reply-target problem. This is the E-11 fix for D-45.
-        if _looks_like_reply_error(err1):
+        reply_class = _looks_like_reply_error(err1)
+        parse_class = _looks_like_parse_error(err1)
+
+        if reply_class and not parse_class:
             ok2, err2 = _attempt(parse_mode, None)
             if ok2:
                 logger.info("📡 send_message attempt 2 succeeded (standalone Markdown)")
                 return True
             logger.info(f"📡 send_message attempt 2 failed (standalone Markdown): {err2}")
-            # Attempt 3: plain-text fallback (E-13)
+            if _looks_like_parse_error(err2):
+                ok3, err3 = _attempt(None, None)
+                if ok3:
+                    logger.info("📡 send_message attempt 3 succeeded (plain text)")
+                    return True
+                logger.warning(f"📡 send_message attempt 3 failed (plain text): {err3}")
+                return False
             ok3, err3 = _attempt(None, None)
             if ok3:
                 logger.info("📡 send_message attempt 3 succeeded (plain text)")
@@ -6382,22 +6406,33 @@ class AEI_Bot:
             logger.warning(f"📡 send_message attempt 3 failed (plain text): {err3}")
             return False
 
-        # If the first failure was a Markdown parse problem, go straight to the
-        # plain-text fallback (E-13). Do not retry the threaded reply.
-        if _looks_like_parse_error(err1):
+        if parse_class and not reply_class:
             ok3, err3 = _attempt(None, reply_to_message_id)
             if ok3:
                 logger.info("📡 send_message attempt 3 succeeded (plain text, threaded)")
                 return True
-            # Last resort: plain text, no reply threading
+            if _looks_like_reply_error(err3):
+                ok3b, err3b = _attempt(None, None)
+                if ok3b:
+                    logger.info("📡 send_message attempt 3b succeeded (plain text, standalone)")
+                    return True
+                logger.warning(f"📡 send_message attempt 3b failed (plain text): {err3b}")
+                return False
             ok3b, err3b = _attempt(None, None)
             if ok3b:
                 logger.info("📡 send_message attempt 3b succeeded (plain text, standalone)")
                 return True
-            logger.warning(f"📡 send_message attempt 3/3b failed (plain text): {err3b}")
+            logger.warning(f"📡 send_message attempt 3b failed (plain text): {err3b}")
             return False
 
-        # Unknown failure class. Try standalone Markdown, then plain text.
+        if reply_class and parse_class:
+            ok2, err2 = _attempt(None, None)
+            if ok2:
+                logger.info("📡 send_message attempt 2 succeeded (plain text, standalone)")
+                return True
+            logger.warning(f"📡 send_message attempt 2 failed (plain text, standalone): {err2}")
+            return False
+
         ok2, err2 = _attempt(parse_mode, None)
         if ok2:
             logger.info("📡 send_message attempt 2 succeeded (standalone Markdown, unknown class)")
