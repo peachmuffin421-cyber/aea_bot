@@ -343,107 +343,6 @@ def _looks_like_parse_error(desc: str) -> bool:
         return True
     return False
 
-async def _handler_send(update: "Update", text: str, parse_mode: str = "Markdown",
-                        reply_markup=None) -> bool:
-    """Route a handler reply through the hardened send path.
-
-    Command handlers previously called ``update.message.reply_text(...)`` or
-    ``update.callback_query.edit_message_text(...)`` directly, bypassing the
-    E-11 / E-12 / E-13 retry ladder.  A single unescaped Markdown control
-    character in an interpolated value (a ``_`` in a variable name, a ``<``
-    in a comparison, a ``*`` in a user-supplied symbol) therefore produced
-    an HTTP 400 "can't parse entities" that the ladder never saw, and the
-    bot went silent.
-
-    This helper is the single funnel: it tries ``edit_message_text`` for
-    callback queries and ``send_message`` for plain messages, and on failure
-    falls through to the bot's ``_send_message_sync`` ladder, which retries
-    without the reply target and without ``parse_mode``.
-    """
-    bot = BRIDGE_ENGINE_REF.get("bot")
-    if bot is None or not hasattr(bot, "_send_message_sync"):
-        # Fallback: direct PTB call.  This path is only reached before
-        # ``_post_init`` has populated BRIDGE_ENGINE_REF, which in practice
-        # never happens for an inbound command (the bot must already be
-        # polling to have received it).
-        try:
-            if update.callback_query is not None:
-                await update.callback_query.edit_message_text(
-                    text, parse_mode=parse_mode, reply_markup=reply_markup,
-                )
-            else:
-                await update.message.reply_text(
-                    text, parse_mode=parse_mode, reply_markup=reply_markup,
-                )
-            return True
-        except Exception as e:
-            logger.warning(f"📡 handler_send fallback failed: {e}")
-            return False
-    chat_id = None
-    reply_to = None
-    is_edit = False
-    if update.callback_query is not None:
-        chat_id = update.callback_query.message.chat_id if update.callback_query.message else None
-        reply_to = update.callback_query.message.message_id if update.callback_query.message else None
-        is_edit = True
-    elif update.effective_chat is not None:
-        chat_id = update.effective_chat.id
-    if chat_id is None:
-        return False
-    if is_edit:
-        # Try the edit first; if it 400s on parse, fall through to send.
-        try:
-            await update.callback_query.edit_message_text(
-                text, parse_mode=parse_mode, reply_markup=reply_markup,
-            )
-            return True
-        except Exception as e:
-            desc = getattr(e, "message", None) or str(e)
-            logger.info(f"📡 edit_message_text failed ({desc}); falling through to send")
-    ok = bot._send_message_sync(
-        chat_id=chat_id,
-        text=text,
-        parse_mode=parse_mode,
-        reply_to_message_id=reply_to if not is_edit else None,
-    )
-    if ok and reply_markup is not None:
-        # The hardened send path does not carry reply_markup.  Re-issue the
-        # keyboard as a follow-up only when the caller actually needed one,
-        # and only when the first send succeeded (so we do not stack two
-        # failures).  The keyboard is a separate message because PTB's
-        # _send_message_sync signature is chat_id/text/parse_mode/reply_to.
-        try:
-            await update.effective_chat.send_message(
-                "\u200b",  # zero-width space; invisible separator
-                reply_markup=reply_markup,
-            )
-        except Exception as e:
-            logger.debug(f"follow-up keyboard send failed: {e}")
-    return ok
-def _looks_like_parse_error(desc: str) -> bool:
-    if not desc:
-        return False
-    d = desc.lower()
-    if 'parse' in d:
-        return True
-    if 'entities' in d:
-        return True
-    if 'entity' in d:
-        return True
-    if 'unsupported start tag' in d:
-        return True
-    if 'unsupported end tag' in d:
-        return True
-    if 'unexpected end of' in d:
-        return True
-    if 'can\'t find end' in d:
-        return True
-    if 'can\'t parse' in d:
-        return True
-    if 'markdown' in d:
-        return True
-    return False
-
 # ============================================================================
 # CONSTANTS & CONFIGURATION — MQL4 PARITY
 # ============================================================================
@@ -6504,15 +6403,7 @@ class AEI_Bot:
             except asyncio.TimeoutError:
                 return (False, "timeout")
             except Exception as e:
-                desc = ""
-                for attr in ("message", "description"):
-                    v = getattr(e, attr, None)
-                    if v:
-                        desc = str(v)
-                        break
-                if not desc:
-                    desc = str(e)
-                return (False, desc)
+                return (False, str(e))
 
         ok1, err1 = _attempt(parse_mode, reply_to_message_id)
         if ok1:
@@ -6636,7 +6527,7 @@ class AEI_Bot:
             "`/reset` - Reset topological branch\n"
             "`/start_feed` - Start price feed\n"
             "`/stop_feed` - Stop price feed\n"
-            "`/symbol &lt;PAIR&gt;` - Change trading symbol\n"
+            "`/symbol <PAIR>` - Change trading symbol\n"
             "`/info` - Ticker information\n"
             "`/probe` - Relay diagnostics\n"
             "`/rebuild_yf` - Force relay reset\n"
@@ -6650,7 +6541,7 @@ class AEI_Bot:
             f"📡 *Provider:* `{self.engine.state.last_provider or '—'}`  |  *Volume:* `{self.engine.state.last_volume}`\n"
             "💎 Natalia Tanyatia"
         )
-        await _handler_send(update, welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
+        await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.start(update, context)
@@ -6684,37 +6575,40 @@ class AEI_Bot:
         order_str = ", ".join(order_presence) if order_presence else "none"
         response = (
             "🔷 *ÆEA Status*\n"
-            f"📈 *Symbol:* {_md_escape(SYMBOL)}\n"
-            f"💰 *Price:* {_md_escape(price_display)}\n"
-            f"📊 *ℛ\\_regime:* {_md_escape(regime)}\n"
-            f"🎯 *Signal Level:* {_md_escape(f'{state.signal:.5f}')}\n"
-            f"📋 *𝒮:* {_md_escape('Active' if state.signature else 'Idle')}\n"
-            f"🔄 *Tick:* {_md_escape(state.tick)}\n"
-            f"🧠 *Engine State:* {_md_escape(init_mark)}\n"
-            f"⚖️ *Imbalance @ h={_md_escape(state.h)}:* m={_md_escape(m_at_h)}, n={_md_escape(n_at_h)}\n"
-            f"⚖️ *Local m/n:* {_md_escape(m_local)}/{_md_escape(n_local)}\n"
-            f"📈 *Indicator Passes:* {_md_escape(self.engine._indicator_populate_count)}\n"
-            f"📡 *Signal Fires:* {_md_escape(self.engine._imbalance_fire_count)}\n"
-            f"📊 *Bar Closes:* {_md_escape(state.bar_close_count)}\n"
-            f"📈 *OHLCV Bars:* {_md_escape(len(self.engine.ohlcv_history))}\n"
-            f"🎯 *Signal History:* {_md_escape(len(state.signal_history))}\n"
-            f"📡 *Feed Active:* {_md_escape(feed_mark)}\n"
-            f"🛰️ *Provider:* `{_md_escape(state.last_provider or '—')}`  |  *Volume:* `{_md_escape(state.last_volume)}`\n"
-            f"🔀 *𝒦:* {_md_escape(state.KC)}  |  *π:* {_md_escape(state.prime)}  |  *δ\\_dime:* {_md_escape(state.dime)}\n"
-            f"🔀 *𝒦\\_invert:* {_md_escape(state.invert)}  |  *μ:* {_md_escape(state.mem)}  |  *τ:* {_md_escape(state.tag)}\n"
-            f"🔀 *𝒜:* {_md_escape(state.A)}  |  *ℬ:* {_md_escape(state.B)}  |  *𝒞:* {_md_escape(state.C)}  |  *𝒸:* {_md_escape(state.c)}\n"
-            f"🔀 *𝒯\\_tick_tock:* {_md_escape(state.tick_tock)}  |  *𝒮\\_safety:* {_md_escape(state.safety)}\n"
-            f"📊 *𝒪:* {_md_escape(order_str)}\n"
-            f"🛑 *𝒯\\_trail:* {_md_escape(trail_status)} ({_md_escape(f'{state.trailing_stop_price:.5f}')} / {_md_escape(f'{state.trailing_take_profit:.5f}')})\n"
-            f"🎯 *Trailing Side:* {_md_escape(state.trailing_stop_side or '—')}  |  *Entry:* {_md_escape(f'{state.trailing_stop_entry:.5f}')}\n"
-            f"🔍 *𝒯\\_track Runs:* {_md_escape(state.on_track_runs)}  |  *𝒯\\_stand Runs:* {_md_escape(state.on_stand_runs)}\n"
-            f"🎯 *Last δ\\_bar:* {_md_escape(self.engine._last_kronecker_bar)}\n"
-            f"🔢 *X\\_scan:* {_md_escape(state.X_scan)}  |  *Y\\_scan:* {_md_escape(state.Y_scan)}  |  *X\\_PERIOD:* {_md_escape(X_PERIOD)}\n"
-            f"🌌 *𝒫\\_arc:* {_md_escape(state.projection_meta.get('kind', '—') if state.projection_meta else '—')} @ {_md_escape(state.projection_compulated_at or 'never')} (𝒫\\_trigger={_md_escape(state.projection_trigger or '—')})\n"
-            f"💬 *Last Inbound Msg Id:* {_md_escape(state.last_inbound_message_id)}"
+            f"📈 *Symbol:* {SYMBOL}\n"
+            f"💰 *Price:* {price_display}\n"
+            f"📊 *ℛ\\_regime:* {regime}\n"
+            f"🎯 *Signal Level:* {state.signal:.5f}\n"
+            f"📋 *𝒮:* {'Active' if state.signature else 'Idle'}\n"
+            f"🔄 *Tick:* {state.tick}\n"
+            f"🧠 *Engine State:* {init_mark}\n"
+            f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
+            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
+            f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
+            f"📡 *Signal Fires:* {self.engine._imbalance_fire_count}\n"
+            f"📊 *Bar Closes:* {state.bar_close_count}\n"
+            f"📈 *OHLCV Bars:* {len(self.engine.ohlcv_history)}\n"
+            f"🎯 *Signal History:* {len(state.signal_history)}\n"
+            f"📡 *Feed Active:* {feed_mark}\n"
+            f"🛰️ *Provider:* `{state.last_provider or '—'}`  |  *Volume:* `{state.last_volume}`\n"
+            f"🔀 *𝒦:* {state.KC}  |  *π:* {state.prime}  |  *δ\\_dime:* {state.dime}\n"
+            f"🔀 *𝒦\\_invert:* {state.invert}  |  *μ:* {state.mem}  |  *τ:* {state.tag}\n"
+            f"🔀 *𝒜:* {state.A}  |  *ℬ:* {state.B}  |  *𝒞:* {state.C}  |  *𝒸:* {state.c}\n"
+            f"🔀 *𝒯\\_tick_tock:* {state.tick_tock}  |  *𝒮\\_safety:* {state.safety}\n"
+            f"📊 *𝒪:* {order_str}\n"
+            f"🛑 *𝒯\\_trail:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
+            f"🎯 *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
+            f"🔍 *𝒯\\_track Runs:* {state.on_track_runs}  |  *𝒯\\_stand Runs:* {state.on_stand_runs}\n"
+            f"🎯 *Last δ\\_bar:* {self.engine._last_kronecker_bar}\n"
+            f"🔢 *X\\_scan:* {state.X_scan}  |  *Y\\_scan:* {state.Y_scan}  |  *X\\_PERIOD:* {X_PERIOD}\n"
+            f"🌌 *𝒫\\_arc:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (𝒫\\_trigger={state.projection_trigger or '—'})\n"
+            f"💬 *Last Inbound Msg Id:* {state.last_inbound_message_id}"
         )
         reply_markup = self._build_main_keyboard()
-        await _handler_send(update, response, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def diagnostics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6758,7 +6652,11 @@ class AEI_Bot:
             f"🌌 *𝒫\\_trigger:* {status.get('projection_trigger')}\n"
             f"💬 *Last Inbound Msg Id:* {status.get('last_inbound_message_id')}"
         )
-        await _handler_send(update, response, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown")
+
     async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         if not self.engine.state.FG:
@@ -6789,7 +6687,10 @@ class AEI_Bot:
             f"⚖️ *Imbalance Condition:* {imbalance_status}"
         )
         reply_markup = self._build_main_keyboard()
-        await _handler_send(update, response, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6832,7 +6733,10 @@ class AEI_Bot:
             f"🎯 *Last δ\\_bar:* {self.engine._last_kronecker_bar}"
         )
         reply_markup = self._build_main_keyboard()
-        await _handler_send(update, response, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6859,7 +6763,10 @@ class AEI_Bot:
         indicator_str += f"  Π^{{>θ}}: f+gf ≈ {F_PLUS_GF_D:.1f}\n"
         indicator_str += f"  Π^{{<θ}}: g-gf ≈ {G_MINUS_GF_D:.1f}"
         reply_markup = self._build_main_keyboard()
-        await _handler_send(update, indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6892,7 +6799,7 @@ class AEI_Bot:
             f"  📉 *LL:* {ll_val:.5f}"
             f"{bridge_str}"
         )
-        await _handler_send(update, response, parse_mode="Markdown")
+        await update.message.reply_text(response, parse_mode="Markdown")
 
     async def chart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6918,7 +6825,10 @@ class AEI_Bot:
             "with ℱ\\_VG drawings, signal overlays, and the 𝒫\\_arc projection."
         )
         reply_markup = self._build_main_keyboard()
-        await _handler_send(update, response, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def projection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6953,7 +6863,10 @@ class AEI_Bot:
             "Drag left past the last bar to scroll into the projected region._"
         )
         reply_markup = self._build_main_keyboard()
-        await _handler_send(update, response, parse_mode="Markdown", reply_markup=reply_markup)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6983,7 +6896,10 @@ class AEI_Bot:
             f"• ⚖️ Authoritative m/n preserved: {prev_auth_m}/{prev_auth_n}\n\n"
             "📊 *Ready for new ℛ\\_regime classification...*"
         )
-        await _handler_send(update, reset_msg, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(reset_msg, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(reset_msg, parse_mode="Markdown")
 
     async def start_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -7024,7 +6940,10 @@ class AEI_Bot:
             f"🌌 *𝒫\\_arc:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
             f"🔮 *Status:* Monitoring for signals..."
         )
-        await _handler_send(update, reply_text, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(reply_text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(reply_text, parse_mode="Markdown")
 
     async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -7032,7 +6951,10 @@ class AEI_Bot:
         self.engine._running = False
         if self._price_task and not self._price_task.done():
             self._price_task.cancel()
-        await _handler_send(update, "⏹️ *Price feed stopped*", parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
 
     async def probe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -7053,7 +6975,10 @@ class AEI_Bot:
             f"*Last update:* {info.get('last_update') or 'never'}",
         ]
         text = "\n".join(lines)
-        await _handler_send(update, text, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown")
 
     async def rebuild_yf(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -7068,36 +6993,38 @@ class AEI_Bot:
             f"🔎 *Active symbol:* `{active}`\n"
             f"_Feed will use this symbol on next iteration._"
         )
-        await _handler_send(update, text, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown")
 
     async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         args = context.args
         if not args:
             supported = ", ".join(list(SYMBOL_MAP.keys())[:10])
-            await _handler_send(update,
-                f"📈 *Current Symbol:* `{_md_escape(SYMBOL)}`\n"
-                "Use `/symbol &lt;PAIR&gt;` to change.\n"
+            await update.message.reply_text(
+                f"📈 *Current Symbol:* `{SYMBOL}`\n"
+                "Use `/symbol <PAIR>` to change.\n"
                 "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n\n"
-                f"*Supported Symbols:*\n{_md_escape(supported)}\n(and {len(SYMBOL_MAP) - 10} more)",
+                f"*Supported Symbols:*\n{supported}\n(and {len(SYMBOL_MAP) - 10} more)",
                 parse_mode="Markdown",
             )
             return
-
         new_symbol = args[0].upper()
         result = self.engine.change_symbol(new_symbol)
         if result.get("ok"):
-            await _handler_send(update,
+            await update.message.reply_text(
                 f"✅ *Symbol changed*\n"
-                f"📈 *New Symbol:* `{_md_escape(result.get('symbol'))}`\n"
-                f"🛰️ *Provider:* `{_md_escape(result.get('provider') or '—')}`\n"
+                f"📈 *New Symbol:* `{result.get('symbol')}`\n"
+                f"🛰️ *Provider:* `{result.get('provider') or '—'}`\n"
                 f"🧠 *Engine reinitialized*\n"
                 f"🌌 *𝒫\\_arc seeded for the new symbol*",
                 parse_mode="Markdown",
             )
         else:
             detail = result.get("detail") or result.get("error") or "unknown"
-            await _handler_send(update, f"❌ Error: {_md_escape(detail)}")
+            await update.message.reply_text(f"❌ Error: {detail}")
 
     async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -7110,13 +7037,16 @@ class AEI_Bot:
             f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
             f"📦 *Last 𝒱:* `{self.engine.state.last_volume}`\n"
         )
-        await _handler_send(update, response, parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(response, parse_mode="Markdown")
 
     async def webapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         url = self._resolve_webapp_url()
         if not url:
-            await _handler_send(update,
+            await update.message.reply_text(
                 "⏳ *Mini App URL not yet available*\n"
                 "The bridge is starting a public HTTPS tunnel. "
                 "Please try again in ~30–45 seconds.\n"
@@ -7125,7 +7055,7 @@ class AEI_Bot:
             )
             return
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
-        await _handler_send(update,
+        await update.message.reply_text(
             "🌐 *ÆEA Telegram Mini App*\n"
             "Tap the button below to launch the full engine visualization.\n\n"
             "*Features inside the Mini App:*\n"
@@ -7148,24 +7078,24 @@ class AEI_Bot:
         scheme = "https" if BRIDGE_USE_TLS else "http"
         local_url = f"{scheme}://{BRIDGE_HOST}:{BRIDGE_PORT}/"
         public_url = self._resolve_webapp_url() or "⏳ (tunnel pending)"
-        await _handler_send(update,
+        await update.message.reply_text(
             f"🌐 *ÆEA Bridge Endpoints*\n"
-            f"*Local URL:* `{_md_escape(local_url)}`\n"
-            f"*Public URL:* `{_md_escape(public_url)}`\n"
-            f"*State endpoint:* `{_md_escape(public_url.rstrip('/'))}/state`\n"
-            f"*Mini App State:* `{_md_escape(public_url.rstrip('/'))}/miniapp-state`\n"
-            f"*Projection endpoint:* `{_md_escape(public_url.rstrip('/'))}/projection`\n"
-            f"*Health endpoint:* `{_md_escape(public_url.rstrip('/'))}/health`\n"
-            f"*Probe endpoint:* `{_md_escape(public_url.rstrip('/'))}/probe`\n"
-            f"*Diagnostics endpoint:* `{_md_escape(public_url.rstrip('/'))}/diagnostics`\n"
-            f"*OHLCV endpoint:* `{_md_escape(public_url.rstrip('/'))}/ohlcv`\n"
-            f"*Signals endpoint:* `{_md_escape(public_url.rstrip('/'))}/signals`\n"
-            f"*Orders endpoint:* `{_md_escape(public_url.rstrip('/'))}/orders`\n"
-            f"*Regime map endpoint:* `{_md_escape(public_url.rstrip('/'))}/regime-map`\n"
-            f"*Log endpoint:* `{_md_escape(public_url.rstrip('/'))}/log`\n"
-            f"*Toasts endpoint:* `{_md_escape(public_url.rstrip('/'))}/toasts`\n"
-            f"*Settings endpoint:* `{_md_escape(public_url.rstrip('/'))}/settings`\n"
-            f"*Handshake endpoint:* `POST {_md_escape(public_url.rstrip('/'))}/handshake`",
+            f"*Local URL:* `{local_url}`\n"
+            f"*Public URL:* `{public_url}`\n"
+            f"*State endpoint:* `{public_url.rstrip('/')}/state`\n"
+            f"*Mini App State:* `{public_url.rstrip('/')}/miniapp-state`\n"
+            f"*Projection endpoint:* `{public_url.rstrip('/')}/projection`\n"
+            f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
+            f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
+            f"*Diagnostics endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
+            f"*OHLCV endpoint:* `{public_url.rstrip('/')}/ohlcv`\n"
+            f"*Signals endpoint:* `{public_url.rstrip('/')}/signals`\n"
+            f"*Orders endpoint:* `{public_url.rstrip('/')}/orders`\n"
+            f"*Regime map endpoint:* `{public_url.rstrip('/')}/regime-map`\n"
+            f"*Log endpoint:* `{public_url.rstrip('/')}/log`\n"
+            f"*Toasts endpoint:* `{public_url.rstrip('/')}/toasts`\n"
+            f"*Settings endpoint:* `{public_url.rstrip('/')}/settings`\n"
+            f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`",
             parse_mode="Markdown",
         )
 
@@ -7200,7 +7130,7 @@ class AEI_Bot:
         elif action == "diagnostics":
             await self.diagnostics(update, context)
         elif action == "webapp_pending":
-            await _handler_send(update, "⏳ *Mini App tunnel is starting…*\nPlease retry `/webapp` in ~30–45 seconds.", parse_mode="Markdown")
+            await query.edit_message_text("⏳ *Mini App tunnel is starting…*\nPlease retry `/webapp` in ~30–45 seconds.", parse_mode="Markdown")
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Update {update} caused error {context.error}")
