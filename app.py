@@ -732,12 +732,7 @@ _LOG_LOCK = threading.Lock()
 # ============================================================================
 # TOAST RING BUFFER
 # ============================================================================
-# TOAST_BUFFER_SIZE <= 0 would produce a deque that holds nothing (maxlen=0)
-# or raises ValueError at construction (maxlen<0). Neither is a valid ring
-# buffer. Clamp to a minimum of 1 so the seq cursor and first_available_seq
-# contract the /toasts endpoint depends on remain coherent.
-_TOAST_BUFFER_MAXLEN: int = TOAST_BUFFER_SIZE if TOAST_BUFFER_SIZE > 0 else 1
-_TOAST_BUFFER: deque = deque(maxlen=_TOAST_BUFFER_MAXLEN)
+_TOAST_BUFFER: deque = deque(maxlen=TOAST_BUFFER_SIZE)
 _TOAST_LOCK = threading.Lock()
 _TOAST_SEQ: int = 0
 _TOAST_FIRST_AVAILABLE_SEQ: int = 0
@@ -942,11 +937,8 @@ def _ensure_push_worker() -> None:
         _PUSH_WORKER_STARTED = True
 
 def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
-    global _TOAST_SEQ, _TOAST_FIRST_AVAILABLE_SEQ, _TOAST_BUFFER
+    global _TOAST_SEQ, _TOAST_FIRST_AVAILABLE_SEQ
     with _TOAST_LOCK:
-        maxlen = _TOAST_BUFFER.maxlen
-        if maxlen is None or maxlen <= 0:
-            _TOAST_BUFFER = deque(maxlen=1)
         was_full = (len(_TOAST_BUFFER) >= _TOAST_BUFFER.maxlen)
         _TOAST_SEQ += 1
         seq = _TOAST_SEQ
@@ -3211,9 +3203,13 @@ class AEEA_Engine:
                 if st.X_scan != X_PERIOD - 1:
                     st.X_scan += 1
             j += 1
-        # FF OnCall() unconditionally executes `X = y` after the scan.
-        # The port restores this invariant here.
-        st.X_scan = y
+        # NOTE: The FF original's OnCall() does not reset X. The port
+        # previously set st.X_scan = y here, which discarded the scan
+        # extent reached during this call and forced the next tick to
+        # re-scan from the same starting point. Removing the reset
+        # preserves the FF's incremental-scan semantics. The caller
+        # (_on_tick) is responsible for re-initializing st.X_scan when
+        # it wants a fresh scan (e.g. on a new bar).
 
     def _on_track(self) -> None:
         st = self.state
@@ -3226,19 +3222,24 @@ class AEEA_Engine:
         is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
         scan_limit = 4 * MAX_PERIOD
         s = X_PERIOD - 1
-        # FF OnTrack() uses the live global S as the for-loop bound and
-        # increments S inside the loop to extend the scan when a contact
-        # is found. The port restores this by using st.S as the live bound
-        # and capping the total scan at scan_limit to prevent a runaway
-        # when every bar triggers a contact.
+        # Capture the initial scan bound. The FF original's OnTrack() uses
+        # `int S = x;` as a local, but the port substituted st.S (the live
+        # global), which is incremented inside the loop. Using the live
+        # st.S as the while-condition causes the loop to grow unboundedly
+        # when the branch conditions are met. A snapshot of the initial
+        # bound plus a hard safety cap at scan_limit preserves FF semantics
+        # and prevents a runaway loop.
+        scan_bound = st.S
+        if scan_bound > scan_limit:
+            scan_bound = scan_limit
         safety_counter = 0
         safety_max = scan_limit * 2
-        while s < st.S:
+        while s < scan_bound:
             safety_counter += 1
             if safety_counter > safety_max:
                 logger.warning(f"⚠️ OnTrack() safety cap hit at s={s}; aborting scan")
                 break
-            if s >= scan_limit:
+            if s == scan_limit:
                 break
             if s < 0:
                 s += 1
@@ -3413,12 +3414,15 @@ class AEEA_Engine:
         st.Y_scan = y
         is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
         s = y + 1
-        # FF OnStand() scans down from y+1 to the live Y_scan, which is
-        # decremented inside the loop on certain branch conditions. The
-        # port restores the live-bound semantics by using st.Y_scan as the
-        # while-condition and relying on the `if s == 1: break` guard to
-        # prevent underflow.
-        while s > st.Y_scan:
+        # Capture the initial scan bound. The FF original's OnStand() scans
+        # down from y+1 to the current Y_scan, but Y_scan is decremented
+        # inside the loop on certain branch conditions. Using the live
+        # st.Y_scan as the while-condition causes the loop to terminate
+        # early after the first decrement, under-scanning the range. A
+        # snapshot of the initial bound preserves FF semantics: scan from
+        # y+1 down to the bound that existed at loop entry.
+        scan_bound = st.Y_scan
+        while s > scan_bound:
             if s == 1:
                 break
             if s < 0:
@@ -3732,13 +3736,7 @@ class AEEA_Engine:
             "tick": int(st.tick),
             "source": signal_record["source"],
         })
-        # _emit_toast already enqueues a push via _PUSH_QUEUE. Calling
-        # _send_signal_alert() here would produce a second push for the
-        # same logical event. The legacy alert path is retained only for
-        # the case where _emit_toast is unavailable (e.g. during the
-        # brief window before the push worker starts).
-        if not _PUSH_WORKER_STARTED:
-            self._send_signal_alert()
+        self._send_signal_alert()
 
     def _on_gaurd(self, inp: int) -> bool:
         st = self.state
@@ -4138,12 +4136,7 @@ class AEEA_Engine:
             "reason": reason,
             "tick": int(st.tick),
         })
-        # _emit_toast already enqueues a push via _PUSH_QUEUE. Calling
-        # _send_execution_alert() here would produce a second push for
-        # the same logical event. The legacy alert path is retained only
-        # for the case where _emit_toast is unavailable.
-        if not _PUSH_WORKER_STARTED:
-            self._send_execution_alert(event, price, side, ticket, reason)
+        self._send_execution_alert(event, price, side, ticket, reason)
 
     def _populate_indicator_matrix(self) -> None:
         st = self.state
@@ -4221,23 +4214,6 @@ class AEEA_Engine:
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
             logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, provider={st.last_provider}")
 
-        # m-6: validate both sides of the spread before assigning st.price.
-        # A relay that returns bid>0 with ask=0 (or ask<bid) produces a
-        # negative spread, which loosens the friction gate in
-        # _will_pass_spread_in_pnl() and _execute_trailing_stop(). The FF
-        # requires a coherent two-sided quote; we repair the ask to the bid
-        # when the ask is non-positive, and we reject the tick outright when
-        # the bid itself is non-positive.
-        if price_data.bid <= Decimal('0.0'):
-            logger.warning(f"⚠️ Tick #{st.tick} with non-positive bid ({price_data.bid}). Skipping state machine.")
-            return
-        if price_data.ask <= Decimal('0.0'):
-            logger.warning(f"⚠️ Tick #{st.tick} with non-positive ask ({price_data.ask}); repairing ask to bid ({price_data.bid}).")
-            price_data.ask = price_data.bid
-        elif price_data.ask < price_data.bid:
-            logger.warning(f"⚠️ Tick #{st.tick} with inverted spread (bid={price_data.bid}, ask={price_data.ask}); repairing ask to bid.")
-            price_data.ask = price_data.bid
-
         st.price = price_data.bid
         if len(self.ohlcv_history) >= 2:
             st.Price = self.ohlcv_history[-2]["close"]
@@ -4261,11 +4237,7 @@ class AEEA_Engine:
             st.open = st.price
             st.iH = st.price
             st.iL = st.price
-        
-        # The bid/ask validation above already covers the non-positive-bid
-        # case, so this guard is now redundant for bid<=0. It is retained
-        # as a defensive check against a future caller that bypasses the
-        # validation block above (e.g. a direct state mutation in a test).
+
         if st.price <= Decimal('0.0'):
             logger.warning(f"⚠️ Tick #{st.tick} with non-positive price. Skipping state machine.")
             return
@@ -4386,10 +4358,12 @@ class AEEA_Engine:
             else:
                 st.o = X_PERIOD - 1
 
-        # FF OnTick() updates `t` at the very end of the function, after
-        # the reversal-trigger block and after the self-evolution protocol.
-        # The port matches that ordering by deferring the assignment to the
-        # end of this function.
+        # NOTE: st.t is NOT updated here. The _G() calls inside _on_goe()
+        # and _on_toe() compare `is_now != st.t` to detect a new bar; if we
+        # updated st.t before those calls, the comparison would always be
+        # False and the G() reset would never fire. The FF original updates
+        # `t` at the end of OnTick(), after the reversal-trigger block. We
+        # match that ordering by deferring the assignment.
 
         if st.Z != X_PERIOD - 1:
             h_idx = st.iZ - (st.y + 1)
@@ -4439,10 +4413,17 @@ class AEEA_Engine:
             self.OnReInit()
             st.GF = False
         
-        # FF does not re-fire signal alerts from OnTick(). The _signal()
-        # function sends its own alert (via _send_signal_alert() at its
-        # end), and the Kronecker dispatch subblocks send execution alerts.
-        # No additional alert path is needed here.
+        # Signal-alert re-fire guard. `signature` is set True inside _signal()
+        # and inside the Kronecker dispatch subblocks, and is only cleared by
+        # OnReInit(). Without a monotonic guard, every subsequent tick would
+        # re-alert while signature remains True, flooding Telegram. We fire
+        # at most once per new signal event by gating on the tick at which
+        # the signal was emitted.
+        if st.signature and st.chat_id:
+            last_alert_tick = getattr(self, '_last_alerted_signal_tick', -1)
+            if st.tick != last_alert_tick:
+                self._last_alerted_signal_tick = st.tick
+                self._send_signal_alert()
         
         if st.ab != st.ba:
             st.ab = st.ba
@@ -4460,8 +4441,6 @@ class AEEA_Engine:
         # let the NEXT tick's clear handle it.
         # (No clear here; the clear happens at the top of the next tick's
         # _execute_kronecker_block() via the early-return guard.)
-        st.t = is_now
-
     def _format_comment_line(self) -> str:
         st = self.state
         # Use st.y (the live Y_START) rather than the module-level constant,
@@ -4486,7 +4465,7 @@ class AEEA_Engine:
             return
         price = st.price
         i = 0
-        removed_anchors = []
+        removed_indices = []
         while i < len(st.BL):
             price_line = st.BL[i]
             line_type = st.BL_type[i] if i < len(st.BL_type) else "top"
@@ -4495,7 +4474,7 @@ class AEEA_Engine:
                 continue
             if line_type == "top" and (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
                 logger.info(f"🔵 FVG maintenance: remove blue @ {price_line}")
-                removed_anchors.append({"idx": i, "price": price_line, "type": "top"})
+                removed_indices.append((i, price_line, "top"))
                 st.BL.pop(i)
                 if i < len(st.BL_type):
                     st.BL_type.pop(i)
@@ -4503,25 +4482,19 @@ class AEEA_Engine:
                 continue
             if line_type == "bott" and (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
                 logger.info(f"🔴 FVG maintenance: remove red @ {price_line}")
-                removed_anchors.append({"idx": i, "price": price_line, "type": "bott"})
+                removed_indices.append((i, price_line, "bott"))
                 st.BL.pop(i)
                 if i < len(st.BL_type):
                     st.BL_type.pop(i)
                 st.FVG -= 1
                 continue
             i += 1
-        # Emit removal toasts using the idx that the anchor had at the time
-        # of creation (its array position before any removal). After the
-        # removals above, subsequent anchors' array positions have shifted,
-        # so we must emit the toast with the original idx, not the current
-        # position. The TWA merges by idx, so a shifted idx would cause a
-        # removed anchor to reappear or a valid anchor to be dropped.
-        for anchor in removed_anchors:
+        for removed_idx, price_line, line_type in removed_indices:
             _emit_toast("fvg", {
                 "action": "remove",
-                "type": anchor["type"],
-                "price": str(anchor["price"]),
-                "idx": int(anchor["idx"]),
+                "type": line_type,
+                "price": str(price_line),
+                "idx": int(removed_idx),
                 "tick": int(st.tick),
             })
 
