@@ -49,6 +49,45 @@ The v4.5.1 corrections are:
        obtain fast %K, then applies the d_period SMA. The call site in
        _normalize() computes jSO = round(j * 3/5) and passes it. Resolved.
 
+  D-MAJ-6 (major, audit-patched). The /indicators Telegram command built its
+       body with literal square brackets around the bar visual:
+       f"`{name:8}` {val:6.1f} [{bar}]\n". Telegram's legacy Markdown parser
+       treats [ and ] as link delimiters; an unbalanced pair without a
+       trailing (url) is rejected with HTTP 400 "can't parse entities". The
+       production log aeea-logs-1791834732387.txt shows three consecutive 400
+       Bad Requests on the /status and /indicators callback-query responses.
+       The template now uses parentheses: f"`{name:8}` {val:6.1f} ({bar})\n".
+       Resolved.
+
+  D-MAJ-7 (major, audit-patched). The _RingHandler instance was attached only
+       to the __main__ logger. The telegram.ext logger had no ring-buffer
+       handler, so any telegram.error.BadRequest raised inside a handler and
+       caught by Application's error handler was written to stderr but never
+       reached the /log endpoint or the TWA log bar. The handler is now
+       attached to both the __main__ logger and the telegram.ext logger, and
+       the error_handler method pushes the error into the ring buffer
+       explicitly. Resolved.
+
+  D-MAJ-8 (major, audit-patched). The status(), regime(), signal(),
+       indicators(), fvg(), chart(), projection(), reset(), diagnostics(),
+       symbol(), info(), probe(), rebuild_yf(), start_feed(), stop_feed(),
+       webapp(), and webgui() handlers called update.message.reply_text(...)
+       or update.callback_query.edit_message_text(...) directly with
+       parse_mode="Markdown". A single unparseable value would raise
+       telegram.error.BadRequest, propagate out of the handler, and be
+       swallowed by the Application error handler. Every such call site is
+       now routed through a new _safe_reply() / _safe_edit() helper that
+       first attempts the Markdown send, then falls back to plain text on a
+       parse-class failure, then falls back to a truncated plain-text send on
+       a length failure. No call site is left unguarded. Resolved.
+
+  D-MIN-9 (minor, audit-patched). The indicators() command's bar variable
+       is now passed through _md_escape() before interpolation, as a
+       defensive measure. The bar is composed of U+2588 (█) and U+2591 (░),
+       neither of which is a Markdown control character, so the call is a
+       no-op on the current alphabet. It future-proofs the template if the
+       bar alphabet is ever extended. Resolved.
+
 All v4.5.0 defect resolutions (D-49 through D-54) and enhancements (E-14,
 E-15, E-16) remain in force. All v4.4.2 defect resolutions (D-45, D-46,
 D-47, D-48) remain in force. All v4.4.1, v4.4.0, v4.3.0, v4.2.0, and
@@ -60,7 +99,7 @@ threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG merge
 (E-8), and the legend stacking (E-9) are all unchanged.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state transition
-is reproduced verbatim from v4.5.0 except at the four patched sites above.
+is reproduced verbatim from v4.5.0 except at the nine patched sites above.
 """
 import asyncio
 import hashlib
@@ -335,6 +374,20 @@ def _looks_like_parse_error(desc: str) -> bool:
     if 'can\'t parse' in d:
         return True
     if 'markdown' in d:
+        return True
+    return False
+
+def _looks_like_length_error(desc: str) -> bool:
+    if not desc:
+        return False
+    d = desc.lower()
+    if 'too long' in d:
+        return True
+    if 'message is too long' in d:
+        return True
+    if 'text is too long' in d:
+        return True
+    if '4096' in d:
         return True
     return False
 
@@ -792,8 +845,21 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-logger.addHandler(_RingHandler())
+_ring_handler = _RingHandler()
+logger.addHandler(_ring_handler)
 logger.propagate = False
+
+# ============================================================================
+# D-MAJ-7: attach the ring handler to the telegram.ext logger so handler
+# exceptions caught by Application's error handler reach the /log endpoint
+# and the TWA log bar. Previously only the __main__ logger had the ring
+# handler, so a telegram.error.BadRequest raised inside a command handler
+# was written to stderr but never surfaced to the client.
+# ============================================================================
+_telegram_ext_logger = logging.getLogger("telegram.ext")
+_telegram_ext_logger.addHandler(_ring_handler)
+_telegram_ext_logger.setLevel(logging.INFO)
+_telegram_ext_logger.propagate = False
 
 # ============================================================================
 # E-1 + E-6 + E-12: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
@@ -6455,6 +6521,7 @@ class AEI_Bot:
 
         reply_class = _looks_like_reply_error(err1)
         parse_class = _looks_like_parse_error(err1)
+        length_class = _looks_like_length_error(err1)
 
         if reply_class and not parse_class:
             ok2, err2 = _attempt(parse_mode, None)
@@ -6547,6 +6614,67 @@ class AEI_Bot:
             rows.append([InlineKeyboardButton("⏳ Mini App (tunnel pending…)", callback_data="webapp_pending")])
         return InlineKeyboardMarkup(rows)
 
+    async def _safe_reply(self, update: Update, text: str, reply_markup=None) -> bool:
+        """
+        D-MAJ-8: attempt the Markdown send, then fall back to plain text,
+        then fall back to a truncated plain-text send. This prevents an
+        unparseable value or an over-length message from raising
+        telegram.error.BadRequest out of the handler (where it would be
+        swallowed by Application's error handler and never reach the user).
+
+        The order of attempts is:
+          1. Markdown + reply_markup
+          2. Plain text + reply_markup
+          3. Truncated plain text (3900 chars) + reply_markup
+
+        Returns True if any attempt succeeded, False otherwise. The failure
+        is logged through the __main__ logger, which the _RingHandler
+        instance is attached to, so it reaches /log and the TWA log bar.
+        """
+        msg = update.effective_message
+        query = update.callback_query
+        target = query if query is not None else msg
+        if target is None:
+            logger.warning("_safe_reply: no target message or callback_query")
+            return False
+
+        # Attempt 1: Markdown + reply_markup
+        try:
+            if query is not None:
+                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+            else:
+                await msg.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+            return True
+        except Exception as e1:
+            err1 = str(e1)
+            logger.info(f"_safe_reply attempt 1 failed (Markdown): {err1}")
+
+        # Attempt 2: plain text + reply_markup
+        try:
+            if query is not None:
+                await query.edit_message_text(text, parse_mode=None, reply_markup=reply_markup)
+            else:
+                await msg.reply_text(text, parse_mode=None, reply_markup=reply_markup)
+            logger.info("_safe_reply attempt 2 succeeded (plain text)")
+            return True
+        except Exception as e2:
+            err2 = str(e2)
+            logger.info(f"_safe_reply attempt 2 failed (plain text): {err2}")
+
+        # Attempt 3: truncated plain text + reply_markup
+        try:
+            truncated = text[:3900] if len(text) > 3900 else text
+            if query is not None:
+                await query.edit_message_text(truncated, parse_mode=None, reply_markup=reply_markup)
+            else:
+                await msg.reply_text(truncated, parse_mode=None, reply_markup=reply_markup)
+            logger.info("_safe_reply attempt 3 succeeded (truncated plain text)")
+            return True
+        except Exception as e3:
+            err3 = str(e3)
+            logger.error(f"_safe_reply attempt 3 failed (truncated plain text): {err3}")
+            return False
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         chat_id = update.effective_chat.id
@@ -6584,7 +6712,7 @@ class AEI_Bot:
             f"📡 *Provider:* `{self.engine.state.last_provider or '—'}`  |  *Volume:* `{self.engine.state.last_volume}`\n"
             "💎 Natalia Tanyatia"
         )
-        await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=self._build_main_keyboard())
+        await self._safe_reply(update, welcome, reply_markup=self._build_main_keyboard())
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.start(update, context)
@@ -6595,7 +6723,8 @@ class AEI_Bot:
             logger.info("⚠️ Engine not initialized, attempting to force...")
             self.engine._force_initialization()
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nThe engine will initialize on the first price tick after starting the feed.\nPlease use `/start_feed` to start the price feed.\nIf the feed is already running, try `/reset` to reinitialize.", parse_mode="Markdown")
+            await self._safe_reply(update,
+                "⏳ *Engine not initialized*\nThe engine will initialize on the first price tick after starting the feed.\nPlease use `/start_feed` to start the price feed.\nIf the feed is already running, try `/reset` to reinitialize.")
             return
         state = self.engine.state
         idx = state.Z - (state.y + 1)
@@ -6648,10 +6777,7 @@ class AEI_Bot:
             f"💬 *Last Inbound Msg Id:* {state.last_inbound_message_id}"
         )
         reply_markup = self._build_main_keyboard()
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        await self._safe_reply(update, response, reply_markup=reply_markup)
 
     async def diagnostics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6695,17 +6821,14 @@ class AEI_Bot:
             f"🌌 *𝒫\\_trigger:* {status.get('projection_trigger')}\n"
             f"💬 *Last Inbound Msg Id:* {status.get('last_inbound_message_id')}"
         )
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown")
+        await self._safe_reply(update, response)
 
     async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         if not self.engine.state.FG:
             self.engine._force_initialization()
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await self._safe_reply(update, "⏳ *Engine not initialized*\nPlease use `/start_feed`.")
             return
         state = self.engine.state
         y = state.y
@@ -6730,17 +6853,14 @@ class AEI_Bot:
             f"⚖️ *Imbalance Condition:* {imbalance_status}"
         )
         reply_markup = self._build_main_keyboard()
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        await self._safe_reply(update, response, reply_markup=reply_markup)
 
     async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         if not self.engine.state.FG:
             self.engine._force_initialization()
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await self._safe_reply(update, "⏳ *Engine not initialized*\nPlease use `/start_feed`.")
             return
         state = self.engine.state
         if state.signal == Decimal('0.0'):
@@ -6776,23 +6896,20 @@ class AEI_Bot:
             f"🎯 *Last δ\\_bar:* {self.engine._last_kronecker_bar}"
         )
         reply_markup = self._build_main_keyboard()
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        await self._safe_reply(update, response, reply_markup=reply_markup)
 
     async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         if not self.engine.state.FG:
             self.engine._force_initialization()
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await self._safe_reply(update, "⏳ *Engine not initialized*\nPlease use `/start_feed`.")
             return
         state = self.engine.state
         y = state.y
         idx = state.Z - y - 1
         if idx < 0 or idx >= len(state.iA[0]):
-            await update.message.reply_text("❌ Insufficient data for indicator projection.")
+            await self._safe_reply(update, "❌ Insufficient data for indicator projection.")
             return
         names = INDICATOR_NAMES_CS
         indicator_str = "📊 *13D Hilbert Space Projection*\n\n"
@@ -6801,20 +6918,27 @@ class AEI_Bot:
             val_int = int(float(val))
             bar_len = min(max(val_int // 10, 0), 10)
             bar = "█" * bar_len + "░" * (10 - bar_len)
-            indicator_str += f"`{name:8}` {val:6.1f} [{bar}]\n"
+            # D-MAJ-6: the template uses parentheses, not square brackets.
+            # Telegram's legacy Markdown parser treats [ and ] as link
+            # delimiters; an unbalanced pair without a trailing (url) is
+            # rejected with HTTP 400 "can't parse entities". The production
+            # log aeea-logs-1791834732387.txt shows three consecutive 400
+            # Bad Requests on this command's callback-query responses.
+            # D-MIN-9: the bar variable is passed through _md_escape() as a
+            # defensive measure. The bar is composed of U+2588 (█) and
+            # U+2591 (░), neither of which is a Markdown control character,
+            # so the call is a no-op on the current alphabet.
+            indicator_str += f"`{name:8}` {val:6.1f} ({_md_escape(bar)})\n"
         indicator_str += "\n*Thresholds:*\n"
         indicator_str += f"  Π^{{>θ}}: f+gf ≈ {F_PLUS_GF_D:.1f}\n"
         indicator_str += f"  Π^{{<θ}}: g-gf ≈ {G_MINUS_GF_D:.1f}"
         reply_markup = self._build_main_keyboard()
-        if update.callback_query:
-            await update.callback_query.edit_message_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(indicator_str, parse_mode="Markdown", reply_markup=reply_markup)
+        await self._safe_reply(update, indicator_str, reply_markup=reply_markup)
 
     async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         if not self.engine.state.FG:
-            await update.message.reply_text("⏳ *Engine not initialized*\nPlease use `/start_feed`.", parse_mode="Markdown")
+            await self._safe_reply(update, "⏳ *Engine not initialized*\nPlease use `/start_feed`.")
             return
         state = self.engine.state
         idx = state.Z - state.y - 1
@@ -6842,7 +6966,7 @@ class AEI_Bot:
             f"  📉 *LL:* {ll_val:.5f}"
             f"{bridge_str}"
         )
-        await update.message.reply_text(response, parse_mode="Markdown")
+        await self._safe_reply(update, response)
 
     async def chart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6868,10 +6992,7 @@ class AEI_Bot:
             "with ℱ\\_VG drawings, signal overlays, and the 𝒫\\_arc projection."
         )
         reply_markup = self._build_main_keyboard()
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        await self._safe_reply(update, response, reply_markup=reply_markup)
 
     async def projection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6906,10 +7027,7 @@ class AEI_Bot:
             "Drag left past the last bar to scroll into the projected region._"
         )
         reply_markup = self._build_main_keyboard()
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown", reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)
+        await self._safe_reply(update, response, reply_markup=reply_markup)
 
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6939,15 +7057,12 @@ class AEI_Bot:
             f"• ⚖️ Authoritative m/n preserved: {prev_auth_m}/{prev_auth_n}\n\n"
             "📊 *Ready for new ℛ\\_regime classification...*"
         )
-        if update.callback_query:
-            await update.callback_query.edit_message_text(reset_msg, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(reset_msg, parse_mode="Markdown")
+        await self._safe_reply(update, reset_msg)
 
     async def start_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         if self._running:
-            await update.message.reply_text("⚠️ Price feed is already running.")
+            await self._safe_reply(update, "⚠️ Price feed is already running.")
             return
         self._running = True
         self.engine._running = True
@@ -6983,10 +7098,7 @@ class AEI_Bot:
             f"🌌 *𝒫\\_arc:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
             f"🔮 *Status:* Monitoring for signals..."
         )
-        if update.callback_query:
-            await update.callback_query.edit_message_text(reply_text, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(reply_text, parse_mode="Markdown")
+        await self._safe_reply(update, reply_text)
 
     async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -6994,10 +7106,7 @@ class AEI_Bot:
         self.engine._running = False
         if self._price_task and not self._price_task.done():
             self._price_task.cancel()
-        if update.callback_query:
-            await update.callback_query.edit_message_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
-        else:
-            await update.message.reply_text("⏹️ *Price feed stopped*", parse_mode="Markdown")
+        await self._safe_reply(update, "⏹️ *Price feed stopped*")
 
     async def probe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -7018,10 +7127,7 @@ class AEI_Bot:
             f"*Last update:* {info.get('last_update') or 'never'}",
         ]
         text = "\n".join(lines)
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(text, parse_mode="Markdown")
+        await self._safe_reply(update, text)
 
     async def rebuild_yf(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -7036,38 +7142,31 @@ class AEI_Bot:
             f"🔎 *Active symbol:* `{active}`\n"
             f"_Feed will use this symbol on next iteration._"
         )
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(text, parse_mode="Markdown")
+        await self._safe_reply(update, text)
 
     async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         args = context.args
         if not args:
             supported = ", ".join(list(SYMBOL_MAP.keys())[:10])
-            await update.message.reply_text(
+            await self._safe_reply(update,
                 f"📈 *Current Symbol:* `{SYMBOL}`\n"
                 "Use `/symbol <PAIR>` to change.\n"
                 "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n\n"
-                f"*Supported Symbols:*\n{supported}\n(and {len(SYMBOL_MAP) - 10} more)",
-                parse_mode="Markdown",
-            )
+                f"*Supported Symbols:*\n{supported}\n(and {len(SYMBOL_MAP) - 10} more)")
             return
         new_symbol = args[0].upper()
         result = self.engine.change_symbol(new_symbol)
         if result.get("ok"):
-            await update.message.reply_text(
+            await self._safe_reply(update,
                 f"✅ *Symbol changed*\n"
                 f"📈 *New Symbol:* `{result.get('symbol')}`\n"
                 f"🛰️ *Provider:* `{result.get('provider') or '—'}`\n"
                 f"🧠 *Engine reinitialized*\n"
-                f"🌌 *𝒫\\_arc seeded for the new symbol*",
-                parse_mode="Markdown",
-            )
+                f"🌌 *𝒫\\_arc seeded for the new symbol*")
         else:
             detail = result.get("detail") or result.get("error") or "unknown"
-            await update.message.reply_text(f"❌ Error: {detail}")
+            await self._safe_reply(update, f"❌ Error: {detail}")
 
     async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
@@ -7080,25 +7179,20 @@ class AEI_Bot:
             f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
             f"📦 *Last 𝒱:* `{self.engine.state.last_volume}`\n"
         )
-        if update.callback_query:
-            await update.callback_query.edit_message_text(response, parse_mode="Markdown")
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown")
+        await self._safe_reply(update, response)
 
     async def webapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         url = self._resolve_webapp_url()
         if not url:
-            await update.message.reply_text(
+            await self._safe_reply(update,
                 "⏳ *Mini App URL not yet available*\n"
                 "The bridge is starting a public HTTPS tunnel. "
                 "Please try again in ~30–45 seconds.\n"
-                "Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment.",
-                parse_mode="Markdown",
-            )
+                "Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment.")
             return
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
-        await update.message.reply_text(
+        await self._safe_reply(update,
             "🌐 *ÆEA Telegram Mini App*\n"
             "Tap the button below to launch the full engine visualization.\n\n"
             "*Features inside the Mini App:*\n"
@@ -7112,16 +7206,14 @@ class AEI_Bot:
             "  ➡️ Scroll-ahead viewport to the projected take-profit level\n"
             "  🔔 Toast + Telegram push notifications on every execution\n"
             "  🔄 Live state polling",
-            parse_mode="Markdown",
-            reply_markup=keyboard,
-        )
+            reply_markup=keyboard)
 
     async def webgui(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         scheme = "https" if BRIDGE_USE_TLS else "http"
         local_url = f"{scheme}://{BRIDGE_HOST}:{BRIDGE_PORT}/"
         public_url = self._resolve_webapp_url() or "⏳ (tunnel pending)"
-        await update.message.reply_text(
+        await self._safe_reply(update,
             f"🌐 *ÆEA Bridge Endpoints*\n"
             f"*Local URL:* `{local_url}`\n"
             f"*Public URL:* `{public_url}`\n"
@@ -7138,9 +7230,7 @@ class AEI_Bot:
             f"*Log endpoint:* `{public_url.rstrip('/')}/log`\n"
             f"*Toasts endpoint:* `{public_url.rstrip('/')}/toasts`\n"
             f"*Settings endpoint:* `{public_url.rstrip('/')}/settings`\n"
-            f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`",
-            parse_mode="Markdown",
-        )
+            f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`")
 
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -7173,10 +7263,32 @@ class AEI_Bot:
         elif action == "diagnostics":
             await self.diagnostics(update, context)
         elif action == "webapp_pending":
-            await query.edit_message_text("⏳ *Mini App tunnel is starting…*\nPlease retry `/webapp` in ~30–45 seconds.", parse_mode="Markdown")
+            try:
+                await query.edit_message_text("⏳ *Mini App tunnel is starting…*\nPlease retry `/webapp` in ~30–45 seconds.", parse_mode="Markdown")
+            except Exception:
+                try:
+                    await query.edit_message_text("Mini App tunnel is starting. Please retry /webapp in ~30-45 seconds.", parse_mode=None)
+                except Exception as e:
+                    logger.warning(f"webapp_pending edit failed: {e}")
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        logger.error(f"Update {update} caused error {context.error}")
+        # D-MAJ-7: surface the error explicitly into the ring buffer so it
+        # reaches /log and the TWA log bar. The telegram.ext logger is also
+        # attached to _RingHandler (see the module-level setup), but the
+        # explicit push here guarantees the error is visible even if the
+        # exception is raised outside the telegram.ext logger's propagation.
+        err = context.error
+        err_str = f"{type(err).__name__}: {err}" if err is not None else "unknown error"
+        try:
+            with _LOG_LOCK:
+                _LOG_BUFFER.append({
+                    "ts": datetime.now().isoformat(),
+                    "level": "error",
+                    "msg": f"⚠️ handler error: {err_str}",
+                })
+        except Exception:
+            pass
+        logger.error(f"Update {update} caused error {err}")
 
     async def _post_init(self, application) -> None:
         # E-10: capture the running event loop so synchronous callers (the
@@ -7264,7 +7376,7 @@ class AEI_Bot:
         logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
         logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
         logger.info("🆕 v4.5.0 symbol universe: Kraken-primary crypto (90+ pairs) and Stooq-primary futures/equities (45+ symbols).")
-        logger.info("🩹 v4.5.1 audit patches: D-CRIT-1 init anchor, D-MAJ-3 tick_tock clear, D-MAJ-4 iC toggle, D-MIN-5 stochastic slowing.")
+        logger.info("🩹 v4.5.1 audit patches: D-CRIT-1 init anchor, D-MAJ-3 tick_tock clear, D-MAJ-4 iC toggle, D-MIN-5 stochastic slowing, D-MAJ-6 indicators brackets, D-MAJ-7 telegram.ext ring handler, D-MAJ-8 _safe_reply/_safe_edit fallback, D-MIN-9 indicators _md_escape on bar.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
