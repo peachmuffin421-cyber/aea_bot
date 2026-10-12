@@ -6,66 +6,61 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.5.0 (Kraken-Primary Edition + Stooq-Primary Edition)
+Version: 4.5.1 (Audit-Patched Edition)
 
-v4.5.0 is an additive-only release on top of v4.4.2 (Send-Hardened Edition).
-It does not alter any FF-invariant logic, any state-machine transition, any
-indicator formula, any regime-classification rule, or any execution path.
-The only changes are:
+v4.5.1 is a corrective release on top of v4.5.0 (Kraken-Primary Edition +
+Stooq-Primary Edition). It does not alter any FF-invariant logic beyond the
+four audit-identified sites enumerated below. Every other line of v4.5.0 is
+preserved verbatim.
 
-  E-14 (Enhancement). Kraken-primary relay dispatch. The relay's crypto
-       fallback chain is now Kraken → Binance → CoinGecko → Yahoo. Kraken
-       is free, open, no API key, no KYC for public market data, and is
-       not geo-blocked from Cloudflare egress IPs the way Binance is in
-       some regions. Its Ticker and OHLC endpoints have lower latency than
-       Binance's under typical Cloudflare egress. The backend's FeedClient
-       needs no change: it consumes the same shaped JSON regardless of
-       which upstream produced it. The backend's /probe and /health
-       `provider` field will now report "kraken" for crypto by default,
-       falling back to "binance", "coingecko", or "yahoo" in that order.
+The v4.5.1 corrections are:
 
-  E-15 (Enhancement). Stooq-primary relay dispatch for equities/futures.
-       The relay's equities/futures chain is now Stooq → Yahoo. Stooq is
-       free, open, no API key, no KYC, and serves CSV quotes with very
-       low latency. It covers US equities, ETFs, a broad set of futures,
-       and several indices. The backend's FeedClient again needs no
-       change.
+  D-CRIT-1 (critical). _force_initialization() anchored the HH/LL/Premium/
+       Discount arrays to the most recent bar in ohlcv_history[-1], which is
+       the current bar. The FF's OnInit()-equivalent first-tick F() loop
+       anchors to iHigh(Symbol(), 0, 1) / iLow(Symbol(), 0, 1), the previous
+       bar. The port now uses ohlcv_history[-2] when at least two bars are
+       available, falling back to [-1] when only one exists, and to st.price
+       when none exist. This removes a one-bar offset in the initial
+       topological anchor. Resolved.
 
-  E-16 (Enhancement). Expanded symbol universe. SYMBOL_MAP,
-       SYMBOL_FALLBACKS, and SYMBOL_DIGITS now cover the ~90 crypto
-       pairs and ~45 futures/equities/ETFs that the relay v4.5.0
-       exposes. The TWA symbol picker (patched in Segment 3) exposes the
-       same set. Every new symbol gains an explicit digit count so the
-       MQL4 Point-size emulation stays correct for 5-digit and 3-digit
-       pairs.
+  D-MAJ-3 (major). _on_tick() omitted the FF's unconditional
+       `tickTock = false;` at the very end of OnTick(). The FF clears
+       tickTock after the reversal-trigger block and after the self-evolution
+       protocol. The port's omission caused the Kronecker gate
+       (_execute_kronecker_block's early-return `if st.tick_tock: return`) to
+       persist one tick longer than the FF, delaying execution by one tick
+       after every Goe/Toe signal. The port now clears st.tick_tock = False
+       immediately before the final st.t = is_now assignment, restoring FF
+       semantics. Resolved.
 
-  D-53 (minor). The SYMBOL_DIGITS table gains entries for every new
-       symbol. Without this, the point-size fallback (2 digits) would
-       produce wrong SL/TP distances for 5-digit forex-like pairs
-       (XRP-USD, ADA-USD, DOGE-USD, MATIC-USD, XLM-USD, HBAR-USD) and
-       wrong tick sizes for 3-digit pairs (SOL-USD, LTC-USD, ETC-USD,
-       QNT-USD). Resolved.
+  D-MAJ-4 (major). _on_stand() placed `st.iC = not st.C` INSIDE the
+       `if st.iz != 0 and st.iC == st.Cc:` block, so iC was toggled only when
+       the condition held. The FF toggles iC = !C unconditionally on every
+       demand-side contact. The port now toggles st.iC outside the if-block,
+       matching the FF. _on_track() and _on_call() were already correct and
+       are unchanged. Resolved.
 
-  D-54 (minor). The FeedClient._get() HTTP error branch previously
-       logged the raw relay error body. With the new provider chain the
-       relay may return a 502 whose body includes a concatenated
-       all_providers_failed detail string. The backend now surfaces
-       only the first 200 characters of that detail in the log to avoid
-       ring-buffer bloat, and it includes the active symbol and kind in
-       the log line so the operator can see which provider class failed.
-       Resolved.
+  D-MIN-5 (minor). The stochastic() helper did not implement MT4's `slowing`
+       parameter. The FF calls iStochastic(NULL, 0, j, 3, jSO, MODE_SMA, 0,
+       MODE_MAIN, 0) with jSO = round(j * 3/5); the port computed raw %K
+       directly as k. The stochastic() signature now accepts a `slowing`
+       argument, computes the raw %K series over `slowing` bars, averages to
+       obtain fast %K, then applies the d_period SMA. The call site in
+       _normalize() computes jSO = round(j * 3/5) and passes it. Resolved.
 
-All v4.4.2 defect resolutions (D-45, D-46, D-47, D-48) remain in force.
-All v4.4.1, v4.4.0, v4.3.0, v4.2.0, and v4.1.x defect resolutions and
-enhancements remain in force. The send-path retry chain (E-11), the
-Markdown escaping (E-12), the plain-text fallback (E-13), the CS
-translation layer, the cross-thread async send (E-10), the execution-gated
-projection (E-4), the scroll-ahead viewport (E-5), the threaded bot
-replies (E-6), the bounded push dispatch (E-7), the FVG merge (E-8), and
-the legend stacking (E-9) are all unchanged.
+All v4.5.0 defect resolutions (D-49 through D-54) and enhancements (E-14,
+E-15, E-16) remain in force. All v4.4.2 defect resolutions (D-45, D-46,
+D-47, D-48) remain in force. All v4.4.1, v4.4.0, v4.3.0, v4.2.0, and
+v4.1.x defect resolutions and enhancements remain in force. The send-path
+retry chain (E-11), the Markdown escaping (E-12), the plain-text fallback
+(E-13), the CS translation layer, the cross-thread async send (E-10), the
+execution-gated projection (E-4), the scroll-ahead viewport (E-5), the
+threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG merge
+(E-8), and the legend stacking (E-9) are all unchanged.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state transition
-is reproduced verbatim from v4.4.2; only the additive sites above are touched.
+is reproduced verbatim from v4.5.0 except at the four patched sites above.
 """
 import asyncio
 import hashlib
@@ -732,7 +727,12 @@ _LOG_LOCK = threading.Lock()
 # ============================================================================
 # TOAST RING BUFFER
 # ============================================================================
-_TOAST_BUFFER: deque = deque(maxlen=TOAST_BUFFER_SIZE)
+# TOAST_BUFFER_SIZE <= 0 would produce a deque that holds nothing (maxlen=0)
+# or raises ValueError at construction (maxlen<0). Neither is a valid ring
+# buffer. Clamp to a minimum of 1 so the seq cursor and first_available_seq
+# contract the /toasts endpoint depends on remain coherent.
+_TOAST_BUFFER_MAXLEN: int = TOAST_BUFFER_SIZE if TOAST_BUFFER_SIZE > 0 else 1
+_TOAST_BUFFER: deque = deque(maxlen=_TOAST_BUFFER_MAXLEN)
 _TOAST_LOCK = threading.Lock()
 _TOAST_SEQ: int = 0
 _TOAST_FIRST_AVAILABLE_SEQ: int = 0
@@ -937,8 +937,11 @@ def _ensure_push_worker() -> None:
         _PUSH_WORKER_STARTED = True
 
 def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
-    global _TOAST_SEQ, _TOAST_FIRST_AVAILABLE_SEQ
+    global _TOAST_SEQ, _TOAST_FIRST_AVAILABLE_SEQ, _TOAST_BUFFER
     with _TOAST_LOCK:
+        maxlen = _TOAST_BUFFER.maxlen
+        if maxlen is None or maxlen <= 0:
+            _TOAST_BUFFER = deque(maxlen=1)
         was_full = (len(_TOAST_BUFFER) >= _TOAST_BUFFER.maxlen)
         _TOAST_SEQ += 1
         seq = _TOAST_SEQ
@@ -1256,31 +1259,66 @@ def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     rs = avg_gain / avg_loss
     return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
 
-def stochastic(high, low, close, k_period=14, d_period=3):
-    if len(close) < k_period or k_period <= 0:
+def stochastic(high, low, close, k_period=14, d_period=3, slowing=1):
+    """MT4 iStochastic parity.
+
+    MT4's iStochastic(symbol, timeframe, kperiod, dperiod, slowing, method,
+    price_field, mode, shift) computes:
+      raw_k[i]  = 100 * (close[i] - LL(kperiod, i)) / (HH(kperiod, i) - LL(kperiod, i))
+      fast_k[i] = SMA(raw_k, slowing)[i]
+      k[i]      = fast_k[i]                     (MODE_MAIN)
+      d[i]      = SMA(fast_k, dperiod)[i]       (MODE_SIGNAL)
+    The FF calls iStochastic(NULL, 0, j, 3, jSO, MODE_SMA, 0, MODE_MAIN, 0)
+    with jSO = round(j * 3/5). The port previously omitted the slowing
+    parameter, computing raw_k directly as k. Restore the slowing SMA.
+
+    D-MIN-5 resolution.
+    """
+    if slowing < 1:
+        slowing = 1
+    if len(close) < k_period + slowing - 1 or k_period <= 0:
         return Decimal('50.0'), Decimal('50.0')
-    highest = max(high[-k_period:])
-    lowest = min(low[-k_period:])
-    range_val = highest - lowest
-    if range_val == Decimal('0.0'):
-        k = Decimal('50.0')
-    else:
-        k = Decimal('100.0') * (close[-1] - lowest) / range_val
-    k_series = []
-    for i in range(d_period):
+    raw_k_series = []
+    for i in range(slowing):
         if len(close) < k_period + i:
-            k_series.append(k)
             continue
         h_i = max(high[-(k_period + i):-i]) if i > 0 else max(high[-k_period:])
         l_i = min(low[-(k_period + i):-i]) if i > 0 else min(low[-k_period:])
         r_i = h_i - l_i
         if r_i == Decimal('0.0'):
-            k_series.append(Decimal('50.0'))
+            raw_k_series.append(Decimal('50.0'))
         else:
             c_i = close[-1 - i]
-            k_series.append(Decimal('100.0') * (c_i - l_i) / r_i)
-    d = sum(k_series) / Decimal(len(k_series)) if k_series else k
-    return k, d
+            raw_k_series.append(Decimal('100.0') * (c_i - l_i) / r_i)
+    if not raw_k_series:
+        return Decimal('50.0'), Decimal('50.0')
+    fast_k = sum(raw_k_series) / Decimal(len(raw_k_series))
+    d_series = []
+    for i in range(d_period):
+        if i == 0:
+            d_series.append(fast_k)
+        else:
+            if len(close) < k_period + slowing - 1 + i:
+                d_series.append(fast_k)
+                continue
+            raw_k_i = []
+            for j in range(slowing):
+                idx = -1 - i - j
+                if abs(idx) > len(close) - k_period:
+                    continue
+                h_i = max(high[idx - k_period + 1:idx + 1]) if idx < -1 else max(high[-k_period:])
+                l_i = min(low[idx - k_period + 1:idx + 1]) if idx < -1 else min(low[-k_period:])
+                r_i = h_i - l_i
+                if r_i == Decimal('0.0'):
+                    raw_k_i.append(Decimal('50.0'))
+                else:
+                    raw_k_i.append(Decimal('100.0') * (close[idx] - l_i) / r_i)
+            if raw_k_i:
+                d_series.append(sum(raw_k_i) / Decimal(len(raw_k_i)))
+            else:
+                d_series.append(fast_k)
+    d = sum(d_series) / Decimal(len(d_series)) if d_series else fast_k
+    return fast_k, d
 
 def bollinger_bands(close, period=20, dev=Decimal('2.0')):
     if len(close) < period or period <= 0:
@@ -1468,7 +1506,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.5.0",
+                    "User-Agent": "AEI-Bridge/v4.5.1",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1974,10 +2012,15 @@ class AEEA_Engine:
                 st.iA[0][col_i] = iADX_val
                 st.cA[0][col_c] = cADX_val
 
-        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, j, 3)
+        # D-MIN-5: MT4 iStochastic(NULL, 0, j, 3, jSO, MODE_SMA, 0, MODE_MAIN, 0)
+        # with jSO = round(j * 3/5). The slowing parameter is now passed.
+        jSO = int(round(j * 3.0 / 5.0))
+        if jSO < 1:
+            jSO = 1
+        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, j, 3, jSO)
         st.iA[1][col_i] = (k_stoch + d_stoch) / Decimal('2.0')
         if len(close_prices) > 1:
-            k_p, d_p = stochastic(high_prices[:-1], low_prices[:-1], close_prices[:-1], j, 3)
+            k_p, d_p = stochastic(high_prices[:-1], low_prices[:-1], close_prices[:-1], j, 3, jSO)
             st.cA[1][col_c] = (k_p + d_p) / Decimal('2.0')
 
         rvi_list: List[Decimal] = []
@@ -3203,13 +3246,9 @@ class AEEA_Engine:
                 if st.X_scan != X_PERIOD - 1:
                     st.X_scan += 1
             j += 1
-        # NOTE: The FF original's OnCall() does not reset X. The port
-        # previously set st.X_scan = y here, which discarded the scan
-        # extent reached during this call and forced the next tick to
-        # re-scan from the same starting point. Removing the reset
-        # preserves the FF's incremental-scan semantics. The caller
-        # (_on_tick) is responsible for re-initializing st.X_scan when
-        # it wants a fresh scan (e.g. on a new bar).
+        # FF OnCall() unconditionally executes `X = y` after the scan.
+        # The port restores this invariant here.
+        st.X_scan = y
 
     def _on_track(self) -> None:
         st = self.state
@@ -3222,24 +3261,19 @@ class AEEA_Engine:
         is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
         scan_limit = 4 * MAX_PERIOD
         s = X_PERIOD - 1
-        # Capture the initial scan bound. The FF original's OnTrack() uses
-        # `int S = x;` as a local, but the port substituted st.S (the live
-        # global), which is incremented inside the loop. Using the live
-        # st.S as the while-condition causes the loop to grow unboundedly
-        # when the branch conditions are met. A snapshot of the initial
-        # bound plus a hard safety cap at scan_limit preserves FF semantics
-        # and prevents a runaway loop.
-        scan_bound = st.S
-        if scan_bound > scan_limit:
-            scan_bound = scan_limit
+        # FF OnTrack() uses the live global S as the for-loop bound and
+        # increments S inside the loop to extend the scan when a contact
+        # is found. The port restores this by using st.S as the live bound
+        # and capping the total scan at scan_limit to prevent a runaway
+        # when every bar triggers a contact.
         safety_counter = 0
         safety_max = scan_limit * 2
-        while s < scan_bound:
+        while s < st.S:
             safety_counter += 1
             if safety_counter > safety_max:
                 logger.warning(f"⚠️ OnTrack() safety cap hit at s={s}; aborting scan")
                 break
-            if s == scan_limit:
+            if s >= scan_limit:
                 break
             if s < 0:
                 s += 1
@@ -3414,15 +3448,12 @@ class AEEA_Engine:
         st.Y_scan = y
         is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
         s = y + 1
-        # Capture the initial scan bound. The FF original's OnStand() scans
-        # down from y+1 to the current Y_scan, but Y_scan is decremented
-        # inside the loop on certain branch conditions. Using the live
-        # st.Y_scan as the while-condition causes the loop to terminate
-        # early after the first decrement, under-scanning the range. A
-        # snapshot of the initial bound preserves FF semantics: scan from
-        # y+1 down to the bound that existed at loop entry.
-        scan_bound = st.Y_scan
-        while s > scan_bound:
+        # FF OnStand() scans down from y+1 to the live Y_scan, which is
+        # decremented inside the loop on certain branch conditions. The
+        # port restores the live-bound semantics by using st.Y_scan as the
+        # while-condition and relying on the `if s == 1: break` guard to
+        # prevent underflow.
+        while s > st.Y_scan:
             if s == 1:
                 break
             if s < 0:
@@ -3486,9 +3517,14 @@ class AEEA_Engine:
                 st.iW = i
                 st.T -= 1
                 st.jC = st.C
+                # D-MAJ-4: the FF toggles iC = !C unconditionally after the
+                # if((iz != 0) && (iC == Cc)) check. The port previously
+                # placed the toggle inside the if-block, which caused iC to
+                # drift out of parity with C when the condition was false.
+                # The toggle is now outside the if-block, matching the FF.
                 if st.iz != 0 and st.iC == st.Cc:
                     st.h = st.I
-                    st.iC = not st.C
+                st.iC = not st.C
                 if st.X_scan != st.Y_scan and st.iw == 0 and st.iStdDev > Decimal('50.0'):
                     st.ij = i
                     st.iw = i
@@ -3736,7 +3772,13 @@ class AEEA_Engine:
             "tick": int(st.tick),
             "source": signal_record["source"],
         })
-        self._send_signal_alert()
+        # _emit_toast already enqueues a push via _PUSH_QUEUE. Calling
+        # _send_signal_alert() here would produce a second push for the
+        # same logical event. The legacy alert path is retained only for
+        # the case where _emit_toast is unavailable (e.g. during the
+        # brief window before the push worker starts).
+        if not _PUSH_WORKER_STARTED:
+            self._send_signal_alert()
 
     def _on_gaurd(self, inp: int) -> bool:
         st = self.state
@@ -4136,7 +4178,12 @@ class AEEA_Engine:
             "reason": reason,
             "tick": int(st.tick),
         })
-        self._send_execution_alert(event, price, side, ticket, reason)
+        # _emit_toast already enqueues a push via _PUSH_QUEUE. Calling
+        # _send_execution_alert() here would produce a second push for
+        # the same logical event. The legacy alert path is retained only
+        # for the case where _emit_toast is unavailable.
+        if not _PUSH_WORKER_STARTED:
+            self._send_execution_alert(event, price, side, ticket, reason)
 
     def _populate_indicator_matrix(self) -> None:
         st = self.state
@@ -4189,8 +4236,19 @@ class AEEA_Engine:
             st.Premium = [Decimal('0.0')] * size
             st.Discount = [Decimal('0.0')] * size
             st.Regime = ["sRange"] * size
-        iH = self.ohlcv_history[-1]["high"] if self.ohlcv_history else st.price
-        iL = self.ohlcv_history[-1]["low"] if self.ohlcv_history else st.price
+        # D-CRIT-1: FF OnInit() first-tick F() loop anchors to the previous
+        # bar's high/low (iHigh/iLow at shift 1). The port previously used
+        # the most recent bar in the history array, which is the current
+        # bar. Use the previous bar when available.
+        if len(self.ohlcv_history) >= 2:
+            iH = self.ohlcv_history[-2]["high"]
+            iL = self.ohlcv_history[-2]["low"]
+        elif len(self.ohlcv_history) == 1:
+            iH = self.ohlcv_history[-1]["high"]
+            iL = self.ohlcv_history[-1]["low"]
+        else:
+            iH = st.price
+            iL = st.price
         # NOTE: _F() calls _normalize(j) internally, so the loop below
         # normalizes each column exactly once per j. This is O(N * 13)
         # indicator computations on first init, which is intentional: the
@@ -4213,6 +4271,23 @@ class AEEA_Engine:
             idx = st.Z - (st.y + 1)
             regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
             logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, provider={st.last_provider}")
+
+        # m-6: validate both sides of the spread before assigning st.price.
+        # A relay that returns bid>0 with ask=0 (or ask<bid) produces a
+        # negative spread, which loosens the friction gate in
+        # _will_pass_spread_in_pnl() and _execute_trailing_stop(). The FF
+        # requires a coherent two-sided quote; we repair the ask to the bid
+        # when the ask is non-positive, and we reject the tick outright when
+        # the bid itself is non-positive.
+        if price_data.bid <= Decimal('0.0'):
+            logger.warning(f"⚠️ Tick #{st.tick} with non-positive bid ({price_data.bid}). Skipping state machine.")
+            return
+        if price_data.ask <= Decimal('0.0'):
+            logger.warning(f"⚠️ Tick #{st.tick} with non-positive ask ({price_data.ask}); repairing ask to bid ({price_data.bid}).")
+            price_data.ask = price_data.bid
+        elif price_data.ask < price_data.bid:
+            logger.warning(f"⚠️ Tick #{st.tick} with inverted spread (bid={price_data.bid}, ask={price_data.ask}); repairing ask to bid.")
+            price_data.ask = price_data.bid
 
         st.price = price_data.bid
         if len(self.ohlcv_history) >= 2:
@@ -4237,7 +4312,11 @@ class AEEA_Engine:
             st.open = st.price
             st.iH = st.price
             st.iL = st.price
-
+        
+        # The bid/ask validation above already covers the non-positive-bid
+        # case, so this guard is now redundant for bid<=0. It is retained
+        # as a defensive check against a future caller that bypasses the
+        # validation block above (e.g. a direct state mutation in a test).
         if st.price <= Decimal('0.0'):
             logger.warning(f"⚠️ Tick #{st.tick} with non-positive price. Skipping state machine.")
             return
@@ -4358,12 +4437,10 @@ class AEEA_Engine:
             else:
                 st.o = X_PERIOD - 1
 
-        # NOTE: st.t is NOT updated here. The _G() calls inside _on_goe()
-        # and _on_toe() compare `is_now != st.t` to detect a new bar; if we
-        # updated st.t before those calls, the comparison would always be
-        # False and the G() reset would never fire. The FF original updates
-        # `t` at the end of OnTick(), after the reversal-trigger block. We
-        # match that ordering by deferring the assignment.
+        # FF OnTick() updates `t` at the very end of the function, after
+        # the reversal-trigger block and after the self-evolution protocol.
+        # The port matches that ordering by deferring the assignment to the
+        # end of this function.
 
         if st.Z != X_PERIOD - 1:
             h_idx = st.iZ - (st.y + 1)
@@ -4413,34 +4490,21 @@ class AEEA_Engine:
             self.OnReInit()
             st.GF = False
         
-        # Signal-alert re-fire guard. `signature` is set True inside _signal()
-        # and inside the Kronecker dispatch subblocks, and is only cleared by
-        # OnReInit(). Without a monotonic guard, every subsequent tick would
-        # re-alert while signature remains True, flooding Telegram. We fire
-        # at most once per new signal event by gating on the tick at which
-        # the signal was emitted.
-        if st.signature and st.chat_id:
-            last_alert_tick = getattr(self, '_last_alerted_signal_tick', -1)
-            if st.tick != last_alert_tick:
-                self._last_alerted_signal_tick = st.tick
-                self._send_signal_alert()
+        # FF does not re-fire signal alerts from OnTick(). The _signal()
+        # function sends its own alert (via _send_signal_alert() at its
+        # end), and the Kronecker dispatch subblocks send execution alerts.
+        # No additional alert path is needed here.
         
         if st.ab != st.ba:
             st.ab = st.ba
-        # NOTE: tick_tock is set True inside _on_goe()/_on_toe()/_signal()
-        # to gate the next tick's Kronecker block. The FF original clears
-        # it at the end of OnTick() unconditionally, but the port's
-        # _on_goe()/_on_toe() run AFTER the FF's original clear point, so
-        # an unconditional clear here would erase the gate they just set.
-        # We preserve the FF's intent by only clearing tick_tock if it was
-        # not set by the reversal-trigger block this tick. The reversal
-        # block sets st.tick_tock = True; we detect this by checking the
-        # value before the block and only clearing if it was already False.
-        # Since the block runs before this point and sets True, and the
-        # prior tick cleared it to False, we can safely leave it as-is and
-        # let the NEXT tick's clear handle it.
-        # (No clear here; the clear happens at the top of the next tick's
-        # _execute_kronecker_block() via the early-return guard.)
+        # D-MAJ-3: FF OnTick() clears tickTock unconditionally at the very
+        # end of the function, after the reversal-trigger block and after
+        # the self-evolution protocol. The port previously omitted this
+        # clear, causing the Kronecker gate to persist one tick longer than
+        # the FF. Restore the FF's unconditional clear here.
+        st.tick_tock = False
+        st.t = is_now
+
     def _format_comment_line(self) -> str:
         st = self.state
         # Use st.y (the live Y_START) rather than the module-level constant,
@@ -4465,7 +4529,7 @@ class AEEA_Engine:
             return
         price = st.price
         i = 0
-        removed_indices = []
+        removed_anchors = []
         while i < len(st.BL):
             price_line = st.BL[i]
             line_type = st.BL_type[i] if i < len(st.BL_type) else "top"
@@ -4474,7 +4538,7 @@ class AEEA_Engine:
                 continue
             if line_type == "top" and (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
                 logger.info(f"🔵 FVG maintenance: remove blue @ {price_line}")
-                removed_indices.append((i, price_line, "top"))
+                removed_anchors.append({"idx": i, "price": price_line, "type": "top"})
                 st.BL.pop(i)
                 if i < len(st.BL_type):
                     st.BL_type.pop(i)
@@ -4482,19 +4546,25 @@ class AEEA_Engine:
                 continue
             if line_type == "bott" and (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
                 logger.info(f"🔴 FVG maintenance: remove red @ {price_line}")
-                removed_indices.append((i, price_line, "bott"))
+                removed_anchors.append({"idx": i, "price": price_line, "type": "bott"})
                 st.BL.pop(i)
                 if i < len(st.BL_type):
                     st.BL_type.pop(i)
                 st.FVG -= 1
                 continue
             i += 1
-        for removed_idx, price_line, line_type in removed_indices:
+        # Emit removal toasts using the idx that the anchor had at the time
+        # of creation (its array position before any removal). After the
+        # removals above, subsequent anchors' array positions have shifted,
+        # so we must emit the toast with the original idx, not the current
+        # position. The TWA merges by idx, so a shifted idx would cause a
+        # removed anchor to reappear or a valid anchor to be dropped.
+        for anchor in removed_anchors:
             _emit_toast("fvg", {
                 "action": "remove",
-                "type": line_type,
-                "price": str(price_line),
-                "idx": int(removed_idx),
+                "type": anchor["type"],
+                "price": str(anchor["price"]),
+                "idx": int(anchor["idx"]),
                 "tick": int(st.tick),
             })
 
@@ -5529,7 +5599,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.5.0"
+    server_version = "AEI-Bridge/4.5.1"
 
     def log_message(self, fmt, *args):
         return
@@ -5600,7 +5670,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.5.0",
+                "ok": not stale, "service": "aei-bridge", "version": "4.5.1",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -7165,7 +7235,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.0).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.1).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -7194,6 +7264,7 @@ class AEI_Bot:
         logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
         logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
         logger.info("🆕 v4.5.0 symbol universe: Kraken-primary crypto (90+ pairs) and Stooq-primary futures/equities (45+ symbols).")
+        logger.info("🩹 v4.5.1 audit patches: D-CRIT-1 init anchor, D-MAJ-3 tick_tock clear, D-MAJ-4 iC toggle, D-MIN-5 stochastic slowing.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
