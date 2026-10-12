@@ -6952,8 +6952,7 @@ class AEI_Bot:
             "_The projection is drawn on the chart ahead of the current bar. "
             "Drag left past the last bar to scroll into the projected region._"
         )
-        else:
-            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=reply_markup)        reply_markup = self._build_main_keyboard()
+        reply_markup = self._build_main_keyboard()
         await _handler_send(update, response, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
