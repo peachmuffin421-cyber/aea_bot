@@ -343,7 +343,7 @@ def _looks_like_parse_error(desc: str) -> bool:
         return True
     return False
 
-async def _handler_send(update: Update, text: str, parse_mode: str = "Markdown",
+async def _handler_send(update: "Update", text: str, parse_mode: str = "Markdown",
                         reply_markup=None) -> bool:
     """Route a handler reply through the hardened send path.
 
