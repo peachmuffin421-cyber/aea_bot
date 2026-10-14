@@ -6,109 +6,49 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.5.1 (Audit-Patched Edition)
+Version: 4.5.2 (Audit-Patched Edition)
 
-v4.5.1 is a corrective release on top of v4.5.0 (Kraken-Primary Edition +
-Stooq-Primary Edition). It does not alter any FF-invariant logic beyond the
-audit-identified sites enumerated below. Every other line of v4.5.0 is
-preserved verbatim.
+v4.5.2 is a corrective release on top of v4.5.1 (Audit-Patched Edition).
+It does not alter any FF-invariant logic beyond the audit-identified sites
+enumerated below. Every other line of v4.5.1 is preserved verbatim.
 
-The v4.5.1 corrections are:
+The v4.5.2 corrections are:
 
-  D-CRIT-1 (critical). _force_initialization() anchored the HH/LL/Premium/
-       Discount arrays to the most recent bar in ohlcv_history[-1], which is
-       the current bar. The FF's OnInit()-equivalent first-tick F() loop
-       anchors to iHigh(Symbol(), 0, 1) / iLow(Symbol(), 0, 1), the previous
-       bar. The port now uses ohlcv_history[-2] when at least two bars are
-       available, falling back to [-1] when only one exists, and to st.price
-       when none exist. This removes a one-bar offset in the initial
-       topological anchor. Resolved.
+  D-HARD-1 (hardening). _populate_indicator_matrix() read X_PERIOD and
+       st.y directly inside the loop bound and the column-index
+       computation. apply_settings() (running on the HTTP handler thread)
+       can rebind the module-level X_PERIOD and mutate st.y while
+       _populate_indicator_matrix() is mid-execution on the price-feed
+       thread. The result is a potential IndexError or a silent
+       mis-population of the indicator matrix. MQL4 is single-threaded
+       per chart and has no equivalent hazard, so the port adds a
+       concurrency snapshot at function entry. Resolved.
 
-  D-MAJ-3 (major). _on_tick() omitted the FF's unconditional
-       `tickTock = false;` at the very end of OnTick(). The FF clears
-       tickTock after the reversal-trigger block and after the self-evolution
-       protocol. The port's omission caused the Kronecker gate
-       (_execute_kronecker_block's early-return `if st.tick_tock: return`) to
-       persist one tick longer than the FF, delaying execution by one tick
-       after every Goe/Toe signal. The port now clears st.tick_tock = False
-       immediately before the final st.t = is_now assignment, restoring FF
-       semantics. Resolved.
+  D-CLEAN-1 (cleanup). _on_tick() assigned st.t = is_now twice: once
+       before the self-evolution protocol and once at the very end of
+       the function. The second assignment is the one the FF's OnTrack()
+       / OnStand() bar-change guards depend on. The first is redundant
+       and misleading. The redundant assignment is removed. Resolved.
 
-  D-MAJ-4 (major). _on_stand() placed `st.iC = not st.C` INSIDE the
-       `if st.iz != 0 and st.iC == st.Cc:` block, so iC was toggled only when
-       the condition held. The FF toggles iC = !C unconditionally on every
-       demand-side contact. The port now toggles st.iC outside the if-block,
-       matching the FF. _on_track() and _on_call() were already correct and
-       are unchanged. Resolved.
+All v4.5.1 defect resolutions (D-CRIT-1, D-MAJ-3, D-MAJ-4, D-MIN-5,
+D-MAJ-6, D-MAJ-7, D-MAJ-8, D-MIN-9, D-MIN-10) remain in force. All
+v4.5.0 defect resolutions (D-49 through D-54) and enhancements (E-14,
+E-15, E-16) remain in force. All v4.4.2 defect resolutions (D-45,
+D-46, D-47, D-48) remain in force. All v4.4.1, v4.4.0, v4.3.0, v4.2.0,
+and v4.1.x defect resolutions and enhancements remain in force. The
+send-path retry chain (E-11), the Markdown escaping (E-12), the
+plain-text fallback (E-13), the CS translation layer, the cross-thread
+async send (E-10), the execution-gated projection (E-4), the
+scroll-ahead viewport (E-5), the threaded bot replies (E-6), the
+bounded push dispatch (E-7), the FVG merge (E-8), and the legend
+stacking (E-9) are all unchanged.
 
-  D-MIN-5 (minor). The stochastic() helper did not implement MT4's `slowing`
-       parameter. The FF calls iStochastic(NULL, 0, j, 3, jSO, MODE_SMA, 0,
-       MODE_MAIN, 0) with jSO = round(j * 3/5); the port computed raw %K
-       directly as k. The stochastic() signature now accepts a `slowing`
-       argument, computes the raw %K series over `slowing` bars, averages to
-       obtain fast %K, then applies the d_period SMA. The call site in
-       _normalize() computes jSO = round(j * 3/5) and passes it. Resolved.
-
-  D-MAJ-6 (major, audit-patched). The /indicators Telegram command built its
-       body with literal square brackets around the bar visual:
-       f"`{name:8}` {val:6.1f} [{bar}]\n". Telegram's legacy Markdown parser
-       treats [ and ] as link delimiters; an unbalanced pair without a
-       trailing (url) is rejected with HTTP 400 "can't parse entities". The
-       production log aeea-logs-1791834732387.txt shows three consecutive 400
-       Bad Requests on the /status and /indicators callback-query responses.
-       The template now uses parentheses: f"`{name:8}` {val:6.1f} ({bar})\n".
-       Resolved.
-
-  D-MAJ-7 (major, audit-patched). The _RingHandler instance was attached only
-       to the __main__ logger. The telegram.ext logger had no ring-buffer
-       handler, so any telegram.error.BadRequest raised inside a handler and
-       caught by Application's error handler was written to stderr but never
-       reached the /log endpoint or the TWA log bar. The handler is now
-       attached to both the __main__ logger and the telegram.ext logger, and
-       the error_handler method pushes the error into the ring buffer
-       explicitly. Resolved.
-
-  D-MAJ-8 (major, audit-patched). The status(), regime(), signal(),
-       indicators(), fvg(), chart(), projection(), reset(), diagnostics(),
-       symbol(), info(), probe(), rebuild_yf(), start_feed(), stop_feed(),
-       webapp(), and webgui() handlers called update.message.reply_text(...)
-       or update.callback_query.edit_message_text(...) directly with
-       parse_mode="Markdown". A single unparseable value would raise
-       telegram.error.BadRequest, propagate out of the handler, and be
-       swallowed by the Application error handler. Every such call site is
-       now routed through a new _safe_reply() / _safe_edit() helper that
-       first attempts the Markdown send, then falls back to plain text on a
-       parse-class failure, then falls back to a truncated plain-text send on
-       a length failure. No call site is left unguarded. Resolved.
-
-  D-MIN-9 (minor, audit-patched). The indicators() command's bar variable
-       is now passed through _md_escape() before interpolation, as a
-       defensive measure. The bar is composed of U+2588 (█) and U+2591 (░),
-       neither of which is a Markdown control character, so the call is a
-       no-op on the current alphabet. It future-proofs the template if the
-       bar alphabet is ever extended. Resolved.
-
-  D-MIN-10 (minor, audit-patched). The module docstring declared
-       "Version: 4.5.1" but no module-level __version__ binding existed, so
-       downstream introspection could not read the version without parsing
-       the docstring. A module-level __version__ = "4.5.1" binding is now
-       emitted immediately after the docstring. Resolved.
-
-All v4.5.0 defect resolutions (D-49 through D-54) and enhancements (E-14,
-E-15, E-16) remain in force. All v4.4.2 defect resolutions (D-45, D-46,
-D-47, D-48) remain in force. All v4.4.1, v4.4.0, v4.3.0, v4.2.0, and
-v4.1.x defect resolutions and enhancements remain in force. The send-path
-retry chain (E-11), the Markdown escaping (E-12), the plain-text fallback
-(E-13), the CS translation layer, the cross-thread async send (E-10), the
-execution-gated projection (E-4), the scroll-ahead viewport (E-5), the
-threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG merge
-(E-8), and the legend stacking (E-9) are all unchanged.
-
-Every FF-preserved line, Print() string, Alert() emoji, and state transition
-is reproduced verbatim from v4.5.0 except at the ten patched sites above.
+Every FF-preserved line, Print() string, Alert() emoji, and state
+transition is reproduced verbatim from v4.5.1 except at the two
+patched sites above.
 """
 
-__version__ = "4.5.1"
+__version__ = "4.5.2"
 
 import asyncio
 import hashlib
@@ -1581,7 +1521,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.5.1",
+                    "User-Agent": "AEI-Bridge/v4.5.2",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -4264,23 +4204,25 @@ class AEEA_Engine:
         st = self.state
         if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
             return
-        size = X_PERIOD - st.y
+        # D-HARD-1: Snapshot the live bounds so a concurrent apply_settings()
+        # cannot mutate X_PERIOD or st.y mid-loop. MQL4 is single-threaded
+        # per chart; the port has an HTTP handler thread that can call
+        # apply_settings() while this method runs on the price-feed thread.
+        _X = X_PERIOD
+        _y = st.y
+        size = _X - _y
         if size <= 0:
             return
         end = len(self.ohlcv_history)
-        for j in range(st.y + 1, X_PERIOD + 1):
-            idx = j - (st.y + 1)
+        for j in range(_y + 1, _X + 1):
+            idx = j - (_y + 1)
             if idx < 0 or idx >= size:
                 continue
-            bars_back = X_PERIOD - j
+            bars_back = _X - j
             bar_end = end - bars_back
             if bar_end < MIN_HISTORY_WINDOW:
                 continue
-            # Bounds-check the indicator column before writing. _normalize()
-            # writes to st.iA[i][col_i] where col_i = j - (y + 1); if the
-            # state arrays were resized by apply_settings() mid-session, the
-            # column may be out of range for the new X_PERIOD.
-            col_i = j - (st.y + 1)
+            col_i = j - (_y + 1)
             if col_i < 0 or col_i >= len(st.iA[0]):
                 continue
             self._normalize(j)
@@ -4559,8 +4501,6 @@ class AEEA_Engine:
                             st.h = st.iO
                             self._on_toe()
 
-        st.t = is_now
-
         if st.GF:
             self.OnReInit()
             st.GF = False
@@ -4578,6 +4518,10 @@ class AEEA_Engine:
         # clear, causing the Kronecker gate to persist one tick longer than
         # the FF. Restore the FF's unconditional clear here.
         st.tick_tock = False
+        # D-CLEAN-1: the redundant st.t = is_now assignment that previously
+        # appeared before the self-evolution protocol has been removed. The
+        # single assignment here is the one the FF's OnTrack()/OnStand()
+        # bar-change guards depend on.
         st.t = is_now
 
     def _format_comment_line(self) -> str:
@@ -5674,7 +5618,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.5.1"
+    server_version = "AEI-Bridge/4.5.2"
 
     def log_message(self, fmt, *args):
         return
@@ -5745,7 +5689,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.5.1",
+                "ok": not stale, "service": "aei-bridge", "version": "4.5.2",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -7356,7 +7300,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.1).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.2).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -7386,6 +7330,7 @@ class AEI_Bot:
         logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
         logger.info("🆕 v4.5.0 symbol universe: Kraken-primary crypto (90+ pairs) and Stooq-primary futures/equities (45+ symbols).")
         logger.info("🩹 v4.5.1 audit patches: D-CRIT-1 init anchor, D-MAJ-3 tick_tock clear, D-MAJ-4 iC toggle, D-MIN-5 stochastic slowing, D-MAJ-6 indicators brackets, D-MAJ-7 telegram.ext ring handler, D-MAJ-8 _safe_reply/_safe_edit fallback, D-MIN-9 indicators _md_escape on bar.")
+        logger.info("🩹 v4.5.2 audit patches: D-HARD-1 _populate_indicator_matrix concurrency snapshot, D-CLEAN-1 redundant st.t assignment removed.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
