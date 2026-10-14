@@ -2672,6 +2672,9 @@ class AEEA_Engine:
         elif st.iI == st.iw:
             st.iJ = st.iz
 
+    # ========================================================================
+    # D-RES-1: FF O() write-back semantics
+    # ========================================================================
     def _O(self, inp: int, inp0: int, inp1: int, current: bool, which: str = "C") -> bool:
         """FF O() write-back: re-derives the C/c flag from regime continuity.
 
@@ -2699,7 +2702,7 @@ class AEEA_Engine:
         regime = st.Regime[idx]
         is_range = (regime == "sRange" or regime == "tRange")
         if inp < inp1 and is_range:
-            return inp1  # inp3 == inp1 in the FF's call sites (Cc / cC)
+            return inp1
         return not inp1
 
     def _R(self, j: int) -> None:
@@ -4060,18 +4063,17 @@ class AEEA_Engine:
             self._sTP = bid - tp_price
             self._bTP = ask + tp_price
 
+    # ========================================================================
+    # D-RES-3: FF T() calls Normalize() with no argument, which in MQL4
+    # resolves to the caller's stale global j. The port previously called
+    # _normalize(st.y + 1), a fixed column that did not match the FF's
+    # behavior and overwrote the iA/cA column at j = st.y + 1 mid-tick.
+    # The trailing-stop arithmetic below uses only st.price,
+    # st.trailing_stop_entry, st.Premium[], and st.Discount[], none of which
+    # require a fresh normalization.
+    # ========================================================================
     def _execute_trailing_stop(self) -> None:
         st = self.state
-        # D-RES-3: the FF's T() calls Normalize() with no argument, which
-        # in MQL4 resolves to the zero-arg version using the caller's stale
-        # global j. The port previously called _normalize(st.y + 1), a
-        # fixed column that does not match the FF's behavior and that
-        # overwrites the iA/cA column at j = st.y + 1 mid-tick. The
-        # trailing-stop arithmetic below uses only st.price,
-        # st.trailing_stop_entry, st.Premium[], and st.Discount[], none of
-        # which require a fresh normalization. The _normalize calls already
-        # performed by _on_point()/_on_call()/_on_bar() in the same tick
-        # are sufficient.
         has_long = st.has_open_long
         has_short = st.has_open_short
         if not (has_long or has_short):
@@ -4224,6 +4226,9 @@ class AEEA_Engine:
             return projected_pnl_points > (friction_points + safety_buffer)
         return False
 
+    # ========================================================================
+    # D-RES-2: FF DoubleToString(price, Digits) parity for _Top()/_Bott()
+    # ========================================================================
     def _Top(self, emit_toast: bool = True) -> None:
         st = self.state
         _digits = SYMBOL_DIGITS.get(SYMBOL, SYMBOL_DIGITS_DEFAULT)
@@ -4443,7 +4448,7 @@ class AEEA_Engine:
             st.open = st.price
             st.iH = st.price
             st.iL = st.price
-        
+
         # The bid/ask validation above already covers the non-positive-bid
         # case, so this guard is now redundant for bid<=0. It is retained
         # as a defensive check against a future caller that bypasses the
@@ -4618,12 +4623,12 @@ class AEEA_Engine:
         if st.GF:
             self.OnReInit()
             st.GF = False
-        
+
         # FF does not re-fire signal alerts from OnTick(). The _signal()
         # function sends its own alert (via _send_signal_alert() at its
         # end), and the Kronecker dispatch subblocks send execution alerts.
         # No additional alert path is needed here.
-        
+
         if st.ab != st.ba:
             st.ab = st.ba
         # D-MAJ-3: FF OnTick() clears tickTock unconditionally at the very
@@ -5126,7 +5131,8 @@ class AEEA_Engine:
                         st.lOrder_id = -1
                     else:
                         st.has_open_short = False
-                        st.kOrder_id = -1                    break
+                        st.kOrder_id = -1
+                    break
         logger.info(f"📝 close_order: closed={closed}")
         if closed:
             self._emit_execution_toast("ManualClose", st.price, "CLOSE", closed[0] if len(closed) == 1 else -1, "manual")
@@ -7440,7 +7446,7 @@ class AEI_Bot:
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
         logger.info("🛑 𝒯\\_trail: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
         logger.info("🎯 δ gate: LOCAL m/n from authoritative H()/L() stamps.")
-        logger.info("🔄 O() regime mutation preserved as FF write-back (D-RES-1).")
+        logger.info("🔄 O() regime mutation restored via write-back (D-RES-1).")
         logger.info("📊 OnBar per-j HH/LL anchoring.")
         logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (aliased S, not grown copy).")
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
@@ -7463,7 +7469,7 @@ class AEI_Bot:
         logger.info("🆕 v4.5.0 symbol universe: Kraken-primary crypto (90+ pairs) and Stooq-primary futures/equities (45+ symbols).")
         logger.info("🩹 v4.5.1 audit patches: D-CRIT-1 init anchor, D-MAJ-3 tick_tock clear, D-MAJ-4 iC toggle, D-MIN-5 stochastic slowing, D-MAJ-6 indicators brackets, D-MAJ-7 telegram.ext ring handler, D-MAJ-8 _safe_reply/_safe_edit fallback, D-MIN-9 indicators _md_escape on bar.")
         logger.info("🩹 v4.5.2 audit patches: D-HARD-1 _populate_indicator_matrix concurrency snapshot, D-CLEAN-1 redundant st.t assignment removed, D-HARD-2 _ENGINE_LOCK, D-HARD-3 exclusive loop bound, D-HARD-4 legacy alert guard, D-HARD-5 frozen commission.")
-        logger.info("🩹 v4.5.3 audit patches: D-RES-1 _O() write-back, D-RES-2 digit-aware FVG price string, D-RES-3 trailing-stop normalize removed, D-RES-4 indicator matrix skip guard removed, D-RES-5 OnTrack second scan live bound, D-CLEAN-2 _initialized field removed, D-CLEAN-3 401/403 retry removed.")
+        logger.info("🩹 v4.5.3 audit patches: D-RES-1 O() write-back, D-RES-2 Top/Bott digit parity, D-RES-3 trailing normalize removed, D-RES-4 init skip guard removed, D-RES-5 OnTrack second-scan live bound, D-CLEAN-2 dead _initialized removed, D-CLEAN-3 401/403 no-retry.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
