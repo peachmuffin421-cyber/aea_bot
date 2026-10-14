@@ -10,7 +10,7 @@ Version: 4.5.1 (Audit-Patched Edition)
 
 v4.5.1 is a corrective release on top of v4.5.0 (Kraken-Primary Edition +
 Stooq-Primary Edition). It does not alter any FF-invariant logic beyond the
-four audit-identified sites enumerated below. Every other line of v4.5.0 is
+audit-identified sites enumerated below. Every other line of v4.5.0 is
 preserved verbatim.
 
 The v4.5.1 corrections are:
@@ -88,6 +88,12 @@ The v4.5.1 corrections are:
        no-op on the current alphabet. It future-proofs the template if the
        bar alphabet is ever extended. Resolved.
 
+  D-MIN-10 (minor, audit-patched). The module docstring declared
+       "Version: 4.5.1" but no module-level __version__ binding existed, so
+       downstream introspection could not read the version without parsing
+       the docstring. A module-level __version__ = "4.5.1" binding is now
+       emitted immediately after the docstring. Resolved.
+
 All v4.5.0 defect resolutions (D-49 through D-54) and enhancements (E-14,
 E-15, E-16) remain in force. All v4.4.2 defect resolutions (D-45, D-46,
 D-47, D-48) remain in force. All v4.4.1, v4.4.0, v4.3.0, v4.2.0, and
@@ -99,8 +105,11 @@ threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG merge
 (E-8), and the legend stacking (E-9) are all unchanged.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state transition
-is reproduced verbatim from v4.5.0 except at the nine patched sites above.
+is reproduced verbatim from v4.5.0 except at the ten patched sites above.
 """
+
+__version__ = "4.5.1"
+
 import asyncio
 import hashlib
 import hmac
