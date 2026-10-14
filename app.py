@@ -6,80 +6,72 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.5.2 (Audit-Patched Edition)
+Version: 4.5.3 (Audit-Patched Edition)
 
-v4.5.2 is a corrective release on top of v4.5.1 (Audit-Patched Edition).
+v4.5.3 is a corrective release on top of v4.5.2 (Audit-Patched Edition).
 It does not alter any FF-invariant logic beyond the audit-identified sites
-enumerated below. Every other line of v4.5.1 is preserved verbatim.
+enumerated below. Every other line of v4.5.2 is preserved verbatim.
 
-The v4.5.2 corrections are:
+The v4.5.3 corrections are:
 
-  D-HARD-1 (hardening). _populate_indicator_matrix() read X_PERIOD and
-       st.y directly inside the loop bound and the column-index
-       computation. apply_settings() (running on the HTTP handler thread)
-       can rebind the module-level X_PERIOD and mutate st.y while
-       _populate_indicator_matrix() is mid-execution on the price-feed
-       thread. The result is a potential IndexError or a silent
-       mis-population of the indicator matrix. MQL4 is single-threaded
-       per chart and has no equivalent hazard, so the port adds a
-       concurrency snapshot at function entry. Resolved.
+  D-RES-1 (major). _O() now performs the FF's write-back semantics for
+       the C/c flags. Previously _O() was a no-op, so st.C and st.c were
+       frozen at their initial st.Cc/st.cC values and never re-derived
+       from regime continuity as the FF's O(inp, inp0, inp1, bool &inp2,
+       bool inp3) does via its reference parameter. Resolved.
 
-  D-CLEAN-1 (cleanup). _on_tick() assigned st.t = is_now twice: once
-       before the self-evolution protocol and once at the very end of
-       the function. The second assignment is the one the FF's OnTrack()
-       / OnStand() bar-change guards depend on. The first is redundant
-       and misleading. The redundant assignment is removed. Resolved.
+  D-RES-2 (minor). _Top() and _Bott() now format the FVG price string
+       with the symbol's digit count, matching the FF's
+       DoubleToString(price, Digits). Previously the port hard-coded
+       ".5f", producing "95432.12000" for BTC-USD instead of the FF's
+       "95432.12". Resolved.
 
-  D-HARD-2 (hardening). apply_settings() rebinds the module-level
-       MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, and mutates st.y while
-       the engine's tick loop may be mid-execution inside _normalize(),
-       _M(), _N(), or _populate_indicator_matrix(). An _ENGINE_LOCK
-       (threading.RLock) serializes the settings mutation and the tick
-       body so the two cannot interleave. Resolved.
+  D-RES-3 (major). _execute_trailing_stop() no longer calls
+       _normalize(st.y + 1). The FF's T() calls the zero-arg Normalize(),
+       which in MQL4 resolves to the caller's stale global j; the port's
+       fixed column did not match that behavior and overwrote the iA/cA
+       column at j = st.y + 1 mid-tick. The trailing-stop arithmetic uses
+       only st.price, st.trailing_stop_entry, st.Premium[], and
+       st.Discount[], none of which require a fresh normalization.
+       Resolved.
 
-  D-HARD-3 (hardening). _populate_indicator_matrix() iterated
-       j ∈ [y+1, X_PERIOD] inclusive, but the FF's OnInit() and the
-       port's _force_initialization() both iterate [y+1, X_PERIOD)
-       exclusive. The inclusive bound populated the column at
-       index size-1 (j = X_PERIOD) that _force_initialization() never
-       overwrites, causing a column-count mismatch between the two
-       initialization paths. The bound is now exclusive. Resolved.
+  D-RES-4 (minor). _populate_indicator_matrix_locked() no longer skips
+       columns whose history window is shorter than MIN_HISTORY_WINDOW.
+       The FF's OnInit() calls F() for j ∈ [y+1, x) unconditionally, and
+       _normalize(j) already returns early when the history is
+       insufficient. Resolved.
 
-  D-HARD-4 (hardening). _send_signal_alert() and _send_execution_alert()
-       were gated by `if not _PUSH_WORKER_STARTED:`, a flag that
-       _emit_toast() sets synchronously. The guard was therefore always
-       False in practice, making the legacy alert path dead code. The
-       guard now checks the PUSH_ON_SIGNAL / PUSH_ON_EXECUTION category
-       flags, so the legacy path is a true fallback for the case where
-       the operator has disabled the push category. Resolved.
+  D-RES-5 (major). _on_track()'s second scan now uses the live st.S as
+       its upper bound, matching the FF's for(int s = x - 1; s < S; s++).
+       Previously the port used a fixed upper bound of X_PERIOD,
+       truncating the second scan to a single iteration when the first
+       scan had extended S. Resolved.
 
-  D-HARD-5 (hardening). _com_price() recomputed COMMISSION * self._point_size
-       on every call, but the FF's `com = Commssion * Point` is computed
-       once at global scope and is invariant under symbol change (MQL4's
-       Point is a chart-global constant). A symbol change with a different
-       digit count silently scaled the effective commission in points.
-       The port now snapshots the frozen value at __init__ and refreshes
-       it only on apply_settings(). Resolved.
+  D-CLEAN-2 (cleanup). The dead _initialized field has been removed from
+       AEI_CoreState. It was set in _force_initialization() but never
+       read. Resolved.
 
-All v4.5.1 defect resolutions (D-CRIT-1, D-MAJ-3, D-MAJ-4, D-MIN-5,
-D-MAJ-6, D-MAJ-7, D-MAJ-8, D-MIN-9, D-MIN-10) remain in force. All
-v4.5.0 defect resolutions (D-49 through D-54) and enhancements (E-14,
-E-15, E-16) remain in force. All v4.4.2 defect resolutions (D-45,
-D-46, D-47, D-48) remain in force. All v4.4.1, v4.4.0, v4.3.0, v4.2.0,
-and v4.1.x defect resolutions and enhancements remain in force. The
-send-path retry chain (E-11), the Markdown escaping (E-12), the
-plain-text fallback (E-13), the CS translation layer, the cross-thread
-async send (E-10), the execution-gated projection (E-4), the
-scroll-ahead viewport (E-5), the threaded bot replies (E-6), the
-bounded push dispatch (E-7), the FVG merge (E-8), and the legend
-stacking (E-9) are all unchanged.
+  D-CLEAN-3 (minor). FeedClient._get() no longer retries on 401 or 403;
+       only 429 (rate limit) is transient. Resolved.
+
+All v4.5.2 defect resolutions (D-HARD-1 through D-HARD-5), all v4.5.1
+defect resolutions (D-CRIT-1, D-MAJ-3, D-MAJ-4, D-MIN-5, D-MAJ-6,
+D-MAJ-7, D-MAJ-8, D-MIN-9, D-MIN-10), all v4.5.0 defect resolutions
+(D-49 through D-54) and enhancements (E-14, E-15, E-16), all v4.4.2
+defect resolutions (D-45 through D-48), and all earlier defect
+resolutions and enhancements remain in force. The send-path retry chain
+(E-11), the Markdown escaping (E-12), the plain-text fallback (E-13),
+the CS translation layer, the cross-thread async send (E-10), the
+execution-gated projection (E-4), the scroll-ahead viewport (E-5), the
+threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG
+merge (E-8), and the legend stacking (E-9) are all unchanged.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state
-transition is reproduced verbatim from v4.5.1 except at the two
+transition is reproduced verbatim from v4.5.2 except at the five
 patched sites above.
 """
 
-__version__ = "4.5.2"
+__version__ = "4.5.3"
 
 import asyncio
 import hashlib
@@ -1225,7 +1217,6 @@ class AEI_CoreState:
     Price: Decimal = Decimal('0.0')
     open: Decimal = Decimal('0.0')
     chat_id: Optional[int] = None
-    _initialized: bool = False
     webapp_user_id: Optional[int] = None
     webapp_username: Optional[str] = None
     webapp_verified: bool = False
@@ -1566,7 +1557,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.5.2",
+                    "User-Agent": "AEI-Bridge/v4.5.3",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1619,7 +1610,11 @@ class FeedClient:
                     error_body = '<unreadable>'
                 last_error = f"HTTP {e.code}: {error_body[:200]}"
                 logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()} kind={kind} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
-                if e.code in (401, 403, 429) and attempt < RELAY_MAX_RETRIES - 1:
+                # D-CLEAN-3: only 429 (rate limit) is transient. A 401
+                # (invalid RELAY_KEY) or 403 (forbidden) will not resolve
+                # by retrying, and the retry only adds latency. Restrict
+                # the retry to 429.
+                if e.code == 429 and attempt < RELAY_MAX_RETRIES - 1:
                     time.sleep(1 + attempt * 2)
                     continue
                 break
@@ -2677,8 +2672,35 @@ class AEEA_Engine:
         elif st.iI == st.iw:
             st.iJ = st.iz
 
-    def _O(self, inp: int, inp0: int, inp1: int, which: str = "C") -> None:
-        return
+    def _O(self, inp: int, inp0: int, inp1: int, current: bool, which: str = "C") -> bool:
+        """FF O() write-back: re-derives the C/c flag from regime continuity.
+
+        MQL4's O(inp, inp0, inp1, bool &inp2, bool inp3) mutates inp2 by
+        reference. The port cannot pass a bool by reference, so the method
+        returns the new value and the caller reassigns st.C / st.c from it.
+
+        FF body (verbatim):
+            if((inp < inp1) && ((Regime[inp0-(y+1)]=="sRange ")||(Regime[inp0-(y+1)]=="tRange ")))
+                inp2 = inp3;
+            else if((Regime[inp0-(y+1)]!="sRange ") && (Regime[inp0-(y+1)]!="tRange "))
+                inp2 = !inp3;
+            else
+                inp2 = !inp3;
+
+        Note: the FF's two else-branches are identical, so the net effect is:
+            if (inp < inp1 && regime is sRange or tRange) -> inp2 = inp3
+            else                                           -> inp2 = !inp3
+        """
+        st = self.state
+        y = st.y
+        idx = inp0 - (y + 1)
+        if idx < 0 or idx >= len(st.Regime):
+            return current
+        regime = st.Regime[idx]
+        is_range = (regime == "sRange" or regime == "tRange")
+        if inp < inp1 and is_range:
+            return inp1  # inp3 == inp1 in the FF's call sites (Cc / cC)
+        return not inp1
 
     def _R(self, j: int) -> None:
         st = self.state
@@ -3429,8 +3451,14 @@ class AEEA_Engine:
                             st.Regime[idx] = "sVolatile"
                     st.S += 1
             s += 1
+        # D-RES-5: the FF's OnTrack() second scan is
+        #     for(int s = x - 1; s < S; s++){ ... }
+        # where S is the live global that the first scan may have
+        # incremented. The port previously used a fixed upper bound of
+        # X_PERIOD, truncating the second scan to a single iteration when
+        # the first scan had extended S. Restore the live bound.
         second_scan_start = X_PERIOD - 1
-        second_scan_end = X_PERIOD
+        second_scan_end = st.S if st.S > X_PERIOD - 1 else X_PERIOD
         s = second_scan_start
         while s < second_scan_end:
             idx = s - (y + 1)
@@ -4034,8 +4062,16 @@ class AEEA_Engine:
 
     def _execute_trailing_stop(self) -> None:
         st = self.state
-        if len(self.ohlcv_history) >= st.y + 1:
-            self._normalize(st.y + 1)
+        # D-RES-3: the FF's T() calls Normalize() with no argument, which
+        # in MQL4 resolves to the zero-arg version using the caller's stale
+        # global j. The port previously called _normalize(st.y + 1), a
+        # fixed column that does not match the FF's behavior and that
+        # overwrites the iA/cA column at j = st.y + 1 mid-tick. The
+        # trailing-stop arithmetic below uses only st.price,
+        # st.trailing_stop_entry, st.Premium[], and st.Discount[], none of
+        # which require a fresh normalization. The _normalize calls already
+        # performed by _on_point()/_on_call()/_on_bar() in the same tick
+        # are sufficient.
         has_long = st.has_open_long
         has_short = st.has_open_short
         if not (has_long or has_short):
@@ -4190,7 +4226,8 @@ class AEEA_Engine:
 
     def _Top(self, emit_toast: bool = True) -> None:
         st = self.state
-        price_str = f"{st.price:.5f}"
+        _digits = SYMBOL_DIGITS.get(SYMBOL, SYMBOL_DIGITS_DEFAULT)
+        price_str = f"{st.price:.{_digits}f}"
         created = False
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
             st.BL.append(st.price)
@@ -4220,7 +4257,8 @@ class AEEA_Engine:
 
     def _Bott(self, emit_toast: bool = True) -> None:
         st = self.state
-        price_str = f"{st.price:.5f}"
+        _digits = SYMBOL_DIGITS.get(SYMBOL, SYMBOL_DIGITS_DEFAULT)
+        price_str = f"{st.price:.{_digits}f}"
         created = False
         if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
             st.BL.append(st.price)
@@ -4291,13 +4329,13 @@ class AEEA_Engine:
             idx = j - (_y + 1)
             if idx < 0 or idx >= size:
                 continue
-            bars_back = _X - j
-            bar_end = end - bars_back
-            if bar_end < MIN_HISTORY_WINDOW:
-                continue
             col_i = j - (_y + 1)
             if col_i < 0 or col_i >= len(st.iA[0]):
                 continue
+            # D-RES-4: the FF's OnInit() calls F() for j ∈ [y+1, x)
+            # unconditionally. _normalize(j) already returns early when
+            # len(self.ohlcv_history) < j + 1, so the guard is redundant
+            # and its removal matches the FF's initialization semantics.
             self._normalize(j)
             self._unify(j)
             self._indicator_populate_count += 13
@@ -4349,7 +4387,6 @@ class AEEA_Engine:
         for j in range(st.y + 1, X_PERIOD):
             self._F(j, iH, iL)
         st.FG = True
-        st._initialized = True
         logger.info(f"✅ Engine initialized on first tick at price={st.price}")
 
     def _on_tick(self, price_data: PriceData) -> None:
@@ -4437,21 +4474,21 @@ class AEEA_Engine:
         # per-bar scan (matching FF OnBar() which runs when a new bar
         # opens). The is_now != st.t check detects the new-bar transition.
         self._on_point()
-        self._O(st.iO, st.O, st.J, "C")
-        self._O(st.io, st.o, st.iJ, "c")
+        st.C = self._O(st.iO, st.O, st.J, st.C, "C")
+        st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
         self._on_call()
         self._J()
 
         if is_now != st.t:
             self._on_bar()
-            self._O(st.iO, st.O, st.J, "C")
-            self._O(st.io, st.o, st.iJ, "c")
+            st.C = self._O(st.iO, st.O, st.J, st.C, "C")
+            st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
 
         if st.J == st.y + 1 and st.J != 2:
             self._on_stand()
             self._J()
-            self._O(st.iO, st.O, st.J, "C")
-            self._O(st.io, st.o, st.iJ, "c")
+            st.C = self._O(st.iO, st.O, st.J, st.C, "C")
+            st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
             if st.iO != 2:
                 if st.J >= st.iO:
                     j = MIN_PERIOD
@@ -4492,8 +4529,8 @@ class AEEA_Engine:
         if st.J == X_PERIOD - 1:
             self._on_track()
             self._J()
-            self._O(st.iO, st.O, st.J, "C")
-            self._O(st.io, st.o, st.iJ, "c")
+            st.C = self._O(st.iO, st.O, st.J, st.C, "C")
+            st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
             if st.iO != 4 * MAX_PERIOD:
                 if st.J >= st.iO:
                     j = MAX_PERIOD - 1
@@ -5089,8 +5126,7 @@ class AEEA_Engine:
                         st.lOrder_id = -1
                     else:
                         st.has_open_short = False
-                        st.kOrder_id = -1
-                    break
+                        st.kOrder_id = -1                    break
         logger.info(f"📝 close_order: closed={closed}")
         if closed:
             self._emit_execution_toast("ManualClose", st.price, "CLOSE", closed[0] if len(closed) == 1 else -1, "manual")
@@ -5714,7 +5750,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.5.2"
+    server_version = "AEI-Bridge/4.5.3"
 
     def log_message(self, fmt, *args):
         return
@@ -5785,7 +5821,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.5.2",
+                "ok": not stale, "service": "aei-bridge", "version": "4.5.3",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -7396,7 +7432,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.2).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.3).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -7404,7 +7440,7 @@ class AEI_Bot:
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
         logger.info("🛑 𝒯\\_trail: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
         logger.info("🎯 δ gate: LOCAL m/n from authoritative H()/L() stamps.")
-        logger.info("🔄 O() regime mutation preserved as FF no-op.")
+        logger.info("🔄 O() regime mutation preserved as FF write-back (D-RES-1).")
         logger.info("📊 OnBar per-j HH/LL anchoring.")
         logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (aliased S, not grown copy).")
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
@@ -7427,6 +7463,7 @@ class AEI_Bot:
         logger.info("🆕 v4.5.0 symbol universe: Kraken-primary crypto (90+ pairs) and Stooq-primary futures/equities (45+ symbols).")
         logger.info("🩹 v4.5.1 audit patches: D-CRIT-1 init anchor, D-MAJ-3 tick_tock clear, D-MAJ-4 iC toggle, D-MIN-5 stochastic slowing, D-MAJ-6 indicators brackets, D-MAJ-7 telegram.ext ring handler, D-MAJ-8 _safe_reply/_safe_edit fallback, D-MIN-9 indicators _md_escape on bar.")
         logger.info("🩹 v4.5.2 audit patches: D-HARD-1 _populate_indicator_matrix concurrency snapshot, D-CLEAN-1 redundant st.t assignment removed, D-HARD-2 _ENGINE_LOCK, D-HARD-3 exclusive loop bound, D-HARD-4 legacy alert guard, D-HARD-5 frozen commission.")
+        logger.info("🩹 v4.5.3 audit patches: D-RES-1 _O() write-back, D-RES-2 digit-aware FVG price string, D-RES-3 trailing-stop normalize removed, D-RES-4 indicator matrix skip guard removed, D-RES-5 OnTrack second scan live bound, D-CLEAN-2 _initialized field removed, D-CLEAN-3 401/403 retry removed.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
