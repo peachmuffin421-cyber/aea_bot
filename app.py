@@ -30,6 +30,37 @@ The v4.5.2 corrections are:
        / OnStand() bar-change guards depend on. The first is redundant
        and misleading. The redundant assignment is removed. Resolved.
 
+  D-HARD-2 (hardening). apply_settings() rebinds the module-level
+       MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, and mutates st.y while
+       the engine's tick loop may be mid-execution inside _normalize(),
+       _M(), _N(), or _populate_indicator_matrix(). An _ENGINE_LOCK
+       (threading.RLock) serializes the settings mutation and the tick
+       body so the two cannot interleave. Resolved.
+
+  D-HARD-3 (hardening). _populate_indicator_matrix() iterated
+       j ∈ [y+1, X_PERIOD] inclusive, but the FF's OnInit() and the
+       port's _force_initialization() both iterate [y+1, X_PERIOD)
+       exclusive. The inclusive bound populated the column at
+       index size-1 (j = X_PERIOD) that _force_initialization() never
+       overwrites, causing a column-count mismatch between the two
+       initialization paths. The bound is now exclusive. Resolved.
+
+  D-HARD-4 (hardening). _send_signal_alert() and _send_execution_alert()
+       were gated by `if not _PUSH_WORKER_STARTED:`, a flag that
+       _emit_toast() sets synchronously. The guard was therefore always
+       False in practice, making the legacy alert path dead code. The
+       guard now checks the PUSH_ON_SIGNAL / PUSH_ON_EXECUTION category
+       flags, so the legacy path is a true fallback for the case where
+       the operator has disabled the push category. Resolved.
+
+  D-HARD-5 (hardening). _com_price() recomputed COMMISSION * self._point_size
+       on every call, but the FF's `com = Commssion * Point` is computed
+       once at global scope and is invariant under symbol change (MQL4's
+       Point is a chart-global constant). A symbol change with a different
+       digit count silently scaled the effective commission in points.
+       The port now snapshots the frozen value at __init__ and refreshes
+       it only on apply_settings(). Resolved.
+
 All v4.5.1 defect resolutions (D-CRIT-1, D-MAJ-3, D-MAJ-4, D-MIN-5,
 D-MAJ-6, D-MAJ-7, D-MAJ-8, D-MIN-9, D-MIN-10) remain in force. All
 v4.5.0 defect resolutions (D-49 through D-54) and enhancements (E-14,
@@ -741,6 +772,20 @@ _TOAST_FIRST_AVAILABLE_SEQ: int = 0
 
 _PUSH_DEDUP_LOCK = threading.Lock()
 _PUSH_DEDUP: Dict[str, float] = {}
+
+# ============================================================================
+# D-HARD-2: ENGINE LOCK
+# ============================================================================
+# apply_settings() (running on the HTTP handler thread) rebinds the
+# module-level MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, and mutates
+# st.y while the engine's tick loop (running on the price-feed thread)
+# may be mid-execution inside _normalize(), _M(), _N(), or
+# _populate_indicator_matrix(). MQL4 is single-threaded per chart and
+# has no equivalent hazard. The port adds an RLock so the settings
+# mutation and the tick body cannot interleave. The lock is re-entrant
+# because apply_settings() calls self.OnReInit(), which itself acquires
+# the lock to snapshot and restore state.
+_ENGINE_LOCK = threading.RLock()
 
 # ============================================================================
 # E-7: BOUNDED PUSH DISPATCH QUEUE
@@ -1768,6 +1813,13 @@ class AEEA_Engine:
         self._sTP: Decimal = Decimal('0.0')
         self._bTP: Decimal = Decimal('0.0')
         self._point_size: Decimal = symbol_point(SYMBOL)
+        # PATCH 1.8: snapshot the commission in price units at __init__ time,
+        # matching MQL4's `com = Commssion * Point` which is computed once in
+        # the global scope and is NOT recomputed on symbol change (MQL4's
+        # Point is a chart-global constant). The port's _com_price() then
+        # returns this frozen value, so a symbol change does not silently
+        # scale the effective commission in points.
+        self._com_price_frozen: Decimal = COMMISSION * (self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001'))
         self.orders: List[Order] = []
         self._next_ticket: int = 1
         self._alert_delivery_enabled: bool = True
@@ -1777,6 +1829,11 @@ class AEEA_Engine:
         self._last_projection_bar: int = -1
 
     def _com_price(self) -> Decimal:
+        # PATCH 1.8: return the frozen commission-in-price-units value
+        # snapshotted at __init__. This matches the FF's `com = Commssion * Point`
+        # global, which is computed once and is invariant under symbol change.
+        # If COMMISSION is updated by apply_settings(), the frozen value is
+        # refreshed there from the current COMMISSION and the frozen point size.
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
         return COMMISSION * point
 
@@ -1792,6 +1849,10 @@ class AEEA_Engine:
             logger.warning(f"Initial projection seed failed: {e}")
 
     def OnReInit(self) -> None:
+        with _ENGINE_LOCK:
+            self._OnReInit_locked()
+
+    def _OnReInit_locked(self) -> None:
         st = self.state
         saved_ohlcv = self.ohlcv_history.copy()
         saved_price = st.price
@@ -3787,12 +3848,11 @@ class AEEA_Engine:
             "tick": int(st.tick),
             "source": signal_record["source"],
         })
-        # _emit_toast already enqueues a push via _PUSH_QUEUE. Calling
-        # _send_signal_alert() here would produce a second push for the
-        # same logical event. The legacy alert path is retained only for
-        # the case where _emit_toast is unavailable (e.g. during the
-        # brief window before the push worker starts).
-        if not _PUSH_WORKER_STARTED:
+        # D-HARD-4: the legacy alert path is retained as a true fallback
+        # for the case where the operator has disabled the push category
+        # (PUSH_ON_SIGNAL=0), in which case _emit_toast's
+        # _format_push_message() returns None and no push is enqueued.
+        if not PUSH_ON_SIGNAL:
             self._send_signal_alert()
 
     def _on_gaurd(self, inp: int) -> bool:
@@ -4193,14 +4253,18 @@ class AEEA_Engine:
             "reason": reason,
             "tick": int(st.tick),
         })
-        # _emit_toast already enqueues a push via _PUSH_QUEUE. Calling
-        # _send_execution_alert() here would produce a second push for
-        # the same logical event. The legacy alert path is retained only
-        # for the case where _emit_toast is unavailable.
-        if not _PUSH_WORKER_STARTED:
+        # D-HARD-4: the legacy alert path is retained as a true fallback
+        # for the case where the operator has disabled the push category
+        # (PUSH_ON_EXECUTION=0), in which case _emit_toast's
+        # _format_push_message() returns None and no push is enqueued.
+        if not PUSH_ON_EXECUTION:
             self._send_execution_alert(event, price, side, ticket, reason)
 
     def _populate_indicator_matrix(self) -> None:
+        with _ENGINE_LOCK:
+            self._populate_indicator_matrix_locked()
+
+    def _populate_indicator_matrix_locked(self) -> None:
         st = self.state
         if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
             return
@@ -4214,7 +4278,16 @@ class AEEA_Engine:
         if size <= 0:
             return
         end = len(self.ohlcv_history)
-        for j in range(_y + 1, _X + 1):
+        # D-HARD-3: iterate [y+1, X_PERIOD) — EXCLUSIVE of X_PERIOD.
+        # The FF's OnInit() calls F() in the loop `for(j = y+1; j < x; j++)`,
+        # which is exclusive of x = X_PERIOD. The port's _force_initialization()
+        # also uses `range(st.y + 1, X_PERIOD)` — exclusive. This method must
+        # match that bound so the column at index size-1 (j = X_PERIOD) is not
+        # populated here and then left stale by _force_initialization(), which
+        # only writes columns [y+1, X_PERIOD-1]. The two initialization paths
+        # must write the same column set or the TWA's /diagnostics endpoint
+        # can read a column that one path wrote and the other did not.
+        for j in range(_y + 1, _X):
             idx = j - (_y + 1)
             if idx < 0 or idx >= size:
                 continue
@@ -4280,6 +4353,10 @@ class AEEA_Engine:
         logger.info(f"✅ Engine initialized on first tick at price={st.price}")
 
     def _on_tick(self, price_data: PriceData) -> None:
+        with _ENGINE_LOCK:
+            self._on_tick_locked(price_data)
+
+    def _on_tick_locked(self, price_data: PriceData) -> None:
         st = self.state
         st.tick += 1
         self._tick_log_counter += 1
@@ -5057,6 +5134,12 @@ class AEEA_Engine:
     def apply_settings(self, s: Dict[str, Any]) -> Dict[str, Any]:
         global MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, COMMISSION, STOP_LOSS, TAKE_PROFIT, LOT_SIZE, SLIPPAGE, Memory
         st = self.state
+        with _ENGINE_LOCK:
+            return self._apply_settings_locked(s)
+
+    def _apply_settings_locked(self, s: Dict[str, Any]) -> Dict[str, Any]:
+        global MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, COMMISSION, STOP_LOSS, TAKE_PROFIT, LOT_SIZE, SLIPPAGE, Memory
+        st = self.state
         try:
             errors = []
             new_max = MAX_PERIOD
@@ -5146,6 +5229,14 @@ class AEEA_Engine:
             TAKE_PROFIT = new_tp
             LOT_SIZE = new_lot
             SLIPPAGE = new_slip
+            # PATCH 1.8: refresh the frozen commission-in-price-units snapshot
+            # after a settings change. The frozen point size is the engine's
+            # current _point_size, which is set at __init__ and updated on
+            # symbol change. This preserves the FF's `com = Commssion * Point`
+            # semantics: com tracks Commssion, but the Point is the chart-
+            # global one in effect at the time of the last settings change.
+            _frozen_point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+            self._com_price_frozen = COMMISSION * _frozen_point
             if "Cc" in s: st.Cc = bool(s["Cc"])
             if "cC" in s: st.cC = bool(s["cC"])
             if "Memory" in s:
@@ -5167,6 +5258,11 @@ class AEEA_Engine:
             return {"error": str(e)}
 
     def change_symbol(self, new_symbol: str) -> Dict[str, Any]:
+        global SYMBOL
+        with _ENGINE_LOCK:
+            return self._change_symbol_locked(new_symbol)
+
+    def _change_symbol_locked(self, new_symbol: str) -> Dict[str, Any]:
         global SYMBOL
         try:
             if not new_symbol or not isinstance(new_symbol, str):
@@ -5197,7 +5293,7 @@ class AEEA_Engine:
             historical = self.feed.get_historical_klines(limit=200)
             if historical:
                 self.ohlcv_history = historical
-                self._populate_indicator_matrix()
+                self._populate_indicator_matrix_locked()
                 self._force_initialization()
             # E-4: seed the projection for the newly-selected symbol immediately
             # rather than waiting for the next execution.
@@ -7330,7 +7426,7 @@ class AEI_Bot:
         logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
         logger.info("🆕 v4.5.0 symbol universe: Kraken-primary crypto (90+ pairs) and Stooq-primary futures/equities (45+ symbols).")
         logger.info("🩹 v4.5.1 audit patches: D-CRIT-1 init anchor, D-MAJ-3 tick_tock clear, D-MAJ-4 iC toggle, D-MIN-5 stochastic slowing, D-MAJ-6 indicators brackets, D-MAJ-7 telegram.ext ring handler, D-MAJ-8 _safe_reply/_safe_edit fallback, D-MIN-9 indicators _md_escape on bar.")
-        logger.info("🩹 v4.5.2 audit patches: D-HARD-1 _populate_indicator_matrix concurrency snapshot, D-CLEAN-1 redundant st.t assignment removed.")
+        logger.info("🩹 v4.5.2 audit patches: D-HARD-1 _populate_indicator_matrix concurrency snapshot, D-CLEAN-1 redundant st.t assignment removed, D-HARD-2 _ENGINE_LOCK, D-HARD-3 exclusive loop bound, D-HARD-4 legacy alert guard, D-HARD-5 frozen commission.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
