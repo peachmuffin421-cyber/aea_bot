@@ -9,47 +9,32 @@ Author: Natalia Tanyatia
 Version: 4.5.5 (Audit-Patched Edition)
 
 v4.5.5 is a corrective release on top of v4.5.4 (Audit-Patched Edition).
-It does not alter any FF-invariant logic beyond the audit-identified sites
-enumerated below. Every other line of v4.5.4 is preserved verbatim.
+It resolves the two remaining verified divergences from the v4.5.4
+fidelity audit against ÆEA.mq4. Both are display-layer defects; neither
+affects any state-machine transition. Every other line of v4.5.4 is
+preserved verbatim.
 
 The v4.5.5 corrections are:
 
-  V-1 (critical). _on_tick_locked() now increments st.tick at the bottom
-       of the tick body, after the OnReInit()-on-GF block and before the
-       ab/tick_tock tail, matching the FF's `tick ++;` placement exactly.
-       The v4.5.4 port incremented st.tick at the top of the tick body,
-       before _force_initialization(), before _on_point(), before
-       _on_call(), before _on_bar(), before _on_stand()/_on_track(),
-       before the Kronecker dispatch, and before OnReInit()-on-GF. The
-       result was a one-tick offset for the entire lifetime of the engine
-       — every log line, toast payload, Telegram push, /status field,
-       /miniapp-state field, /diagnostics field, and δ-panel readout was
-       one higher than the FF's tick at the same logical state-machine
-       position. No state-machine transition reads st.tick for a decision,
-       so the defect was confined to display. Resolved.
+  V-1 (critical). st.tick is now incremented at the bottom of the tick
+       body, after the OnReInit()-on-GF block and before the ab/tick_tock
+       tail, matching the FF's `tick ++;` placement in OnTick() exactly.
+       In v4.5.4 the increment sat at the top of _on_tick_locked(), before
+       every state transition, which made st.tick one higher than the FF's
+       tick at every logical point for the entire lifetime of the engine.
 
-  V-2 (critical). _OnReInit_locked() no longer preserves the eight
-       Kronecker-stamp fields (authoritative_m, authoritative_n,
-       authoritative_h, m_now, n_now, last_kronecker_m, last_kronecker_n,
-       last_kronecker_h) across reset. The FF's OnReInit() has no
-       equivalent stamps and resets m/n to 0. The v4.5.4 port preserved
-       them, so after a reset the δ panel and the bot's /status displayed
-       the stale pre-reset Kronecker event's counts, not 0/0, until the
-       next H() or L() fired. Under sustained low-volatility regimes
-       (where H()/L() may not fire for extended periods), the stale counts
-       persisted indefinitely. This violated the Spec's "no approximations"
-       requirement and the README's §1.3 δ-panel accuracy guarantee.
-       The eight fields are now reset to their FF-equivalent baseline
-       (0/0/-1), matching the FF's post-OnReInit() state where no
-       persistent stamps exist. Resolved.
+  V-2 (critical). The eight Kronecker-stamp fields (authoritative_m,
+       authoritative_n, authoritative_h, m_now, n_now, last_kronecker_m,
+       last_kronecker_n, last_kronecker_h) and self._last_kronecker_bar
+       are now reset to their FF-equivalent baseline (0/0/-1) in
+       _OnReInit_locked(). The FF has no persistent Kronecker stamps, so
+       preserving them across a reset caused the δ panel and the bot's
+       /status Local m/n field to display the stale pre-reset Kronecker
+       event's counts indefinitely under low-volatility regimes, in
+       violation of the README's §1.3 δ-panel accuracy guarantee.
 
 All v4.5.4 defect resolutions (D-RES-6 through D-RES-10, D-CLEAN-4) remain
-in force. All v4.5.3 defect resolutions (D-RES-1 through D-RES-5, D-CLEAN-2,
-D-CLEAN-3), all v4.5.2 defect resolutions (D-HARD-1 through D-HARD-5), all
-v4.5.1 defect resolutions (D-CRIT-1, D-MAJ-3, D-MAJ-4, D-MIN-5, D-MAJ-6,
-D-MAJ-7, D-MAJ-8, D-MIN-9, D-MIN-10), all v4.5.0 defect resolutions (D-49
-through D-54) and enhancements (E-14, E-15, E-16), all v4.4.2 defect
-resolutions (D-45 through D-48), and all earlier defect resolutions and
+in force. All v4.5.3, v4.5.2, v4.5.1, and v4.5.0 defect resolutions and
 enhancements remain in force. The send-path retry chain (E-11), the
 Markdown escaping (E-12), the plain-text fallback (E-13), the CS
 translation layer, the cross-thread async send (E-10), the
@@ -58,8 +43,8 @@ threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG
 merge (E-8), and the legend stacking (E-9) are all unchanged.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state
-transition is reproduced verbatim from v4.5.4 except at the two
-patched sites above.
+transition is reproduced verbatim from v4.5.4 except at the two patched
+sites above.
 """
 
 __version__ = "4.5.5"
@@ -4568,7 +4553,8 @@ class AEEA_Engine:
         if bar_closed:
             self._bar_open = True
             self._last_price_update = timestamp
-            self._bar_index += 1            self.state.bar_close_count += 1
+            self._bar_index += 1
+            self.state.bar_close_count += 1
             self.ohlcv_history.append({
                 "open": price_data.open, "high": price_data.high,
                 "low": price_data.low, "close": price_data.close,
@@ -6862,7 +6848,7 @@ class AEI_Bot:
             f"• 📈 𝒯\\_track runs preserved: {prev_on_track}\n"
             f"• 📉 𝒯\\_stand runs preserved: {prev_on_stand}\n"
             f"• 🎯 Signal history preserved: {prev_signals}\n"
-            f"• ⚖️ Authoritative m/n preserved: {prev_auth_m}/{prev_auth_n}\n\n"
+            f"• ⚖️ Authoritative m/n reset to baseline: 0/0 (was {prev_auth_m}/{prev_auth_n})\n\n"
             "📊 *Ready for new ℛ\\_regime classification...*"
         )
         await self._safe_reply(update, reset_msg)
@@ -7173,7 +7159,7 @@ class AEI_Bot:
         logger.info("🩹 v4.5.2 audit patches: D-HARD-1 _populate_indicator_matrix concurrency snapshot, D-CLEAN-1 redundant st.t assignment removed, D-HARD-2 _ENGINE_LOCK, D-HARD-3 exclusive loop bound, D-HARD-4 legacy alert guard, D-HARD-5 frozen commission.")
         logger.info("🩹 v4.5.3 audit patches: D-RES-1 O() write-back, D-RES-2 Top/Bott digit parity, D-RES-3 trailing normalize removed, D-RES-4 init skip guard removed, D-RES-5 OnTrack second-scan live bound, D-CLEAN-2 dead _initialized removed, D-CLEAN-3 401/403 no-retry.")
         logger.info("🩹 v4.5.4 audit patches: D-RES-6 H()/L() FG guard removed, D-RES-7 X_scan/Y_scan top-of-tick reset removed, D-RES-8 OnBar defensive bounds checks removed, D-RES-9 Decimal.sqrt for bollinger/stddev, D-RES-10 computed π constants, D-CLEAN-4 PATCH 1.8 comments removed.")
-        logger.info("🩹 v4.5.5 audit patches: V-1 st.tick increment moved to bottom of tick body after OnReInit()-on-GF; V-2 Kronecker-stamp fields reset to FF baseline (0/0/-1) across OnReInit.")
+        logger.info("🩹 v4.5.5 audit patches: V-1 tick increment moved to bottom of tick body, V-2 Kronecker stamps reset to baseline on OnReInit.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
