@@ -6,79 +6,63 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.5.4 (Audit-Patched Edition)
+Version: 4.5.5 (Audit-Patched Edition)
 
-v4.5.4 is a corrective release on top of v4.5.3 (Audit-Patched Edition).
+v4.5.5 is a corrective release on top of v4.5.4 (Audit-Patched Edition).
 It does not alter any FF-invariant logic beyond the audit-identified sites
-enumerated below. Every other line of v4.5.3 is preserved verbatim.
+enumerated below. Every other line of v4.5.4 is preserved verbatim.
 
-The v4.5.4 corrections are:
+The v4.5.5 corrections are:
 
-  D-RES-6 (critical). _on_point() and _on_bar() now call _H() and _L()
-       unconditionally, matching the FF's OnPoint() and OnBar(), which
-       have no FG guard around H()/L(). The v4.5.3 port guarded the
-       calls on st.FG, a guard the FF does not have. In practice the
-       guard was a no-op (st.FG is True on the first tick after
-       _force_initialization() and remains True thereafter), but it was
-       a structural divergence from the FF's state machine. Removed.
+  V-1 (critical). _on_tick_locked() now increments st.tick at the bottom
+       of the tick body, after the OnReInit()-on-GF block and before the
+       ab/tick_tock tail, matching the FF's `tick ++;` placement exactly.
+       The v4.5.4 port incremented st.tick at the top of the tick body,
+       before _force_initialization(), before _on_point(), before
+       _on_call(), before _on_bar(), before _on_stand()/_on_track(),
+       before the Kronecker dispatch, and before OnReInit()-on-GF. The
+       result was a one-tick offset for the entire lifetime of the engine
+       — every log line, toast payload, Telegram push, /status field,
+       /miniapp-state field, /diagnostics field, and δ-panel readout was
+       one higher than the FF's tick at the same logical state-machine
+       position. No state-machine transition reads st.tick for a decision,
+       so the defect was confined to display. Resolved.
 
-  D-RES-7 (major). _on_tick_locked() no longer resets st.X_scan and
-       st.Y_scan at the top of the tick body. The FF's OnTick() does
-       not reset X or Y at the top of its body; X is set to y only at
-       the end of OnCall(), and to x at the end of OnTrack()/OnStand().
-       The v4.5.3 port's top-of-tick reset caused a behavioral
-       divergence on the tick immediately following an OnTrack() or
-       OnStand() run. Removed.
+  V-2 (critical). _OnReInit_locked() no longer preserves the eight
+       Kronecker-stamp fields (authoritative_m, authoritative_n,
+       authoritative_h, m_now, n_now, last_kronecker_m, last_kronecker_n,
+       last_kronecker_h) across reset. The FF's OnReInit() has no
+       equivalent stamps and resets m/n to 0. The v4.5.4 port preserved
+       them, so after a reset the δ panel and the bot's /status displayed
+       the stale pre-reset Kronecker event's counts, not 0/0, until the
+       next H() or L() fired. Under sustained low-volatility regimes
+       (where H()/L() may not fire for extended periods), the stale counts
+       persisted indefinitely. This violated the Spec's "no approximations"
+       requirement and the README's §1.3 δ-panel accuracy guarantee.
+       The eight fields are now reset to their FF-equivalent baseline
+       (0/0/-1), matching the FF's post-OnReInit() state where no
+       persistent stamps exist. Resolved.
 
-  D-RES-8 (major). _on_bar()'s third branch no longer carries the
-       defensive bounds checks (idx < len(st.LL) and idx < len(st.Discount)
-       and idx < len(st.HH) and idx < len(st.Premium)) that the FF's
-       OnBar() does not have. The FF's arrays are always correctly sized
-       (X_PERIOD - Y_START) after OnReInit(), so the checks were no-ops;
-       removing them restores exact FF parity.
-
-  D-RES-9 (minor). bollinger_bands() and stddev() now use Decimal.sqrt()
-       instead of Decimal(str(math.sqrt(float(variance)))). The prior
-       form converted the variance to a binary float, called math.sqrt,
-       converted back to str, and wrapped in Decimal — a finite-precision
-       operation that the Spec forbids. Decimal.sqrt() respects the
-       current context precision (50 digits, set at module load) and
-       stays within the symbolic-arithmetic discipline the Spec
-       mandates.
-
-  D-RES-10 (minor). _decimal_cos() now uses module-level _PI_D and
-       _TWO_PI_D values computed from the Machin formula at module load
-       (50-digit precision) instead of hard-coded π literals. The
-       computed values match the literals to 50 digits, so this is a
-       behavior-preserving change that satisfies the Spec's "symbolically
-       used and stored" requirement.
-
-  D-CLEAN-4 (cleanup). The three # PATCH 1.8 comments in _com_price(),
-       _apply_settings_locked(), and __init__() have been removed. They
-       described the patch history rather than the behavior, violating
-       the Spec's "Avoid/Remove comments indicating a patch in the
-       code-block partition(s) itself."
-
-All v4.5.3 defect resolutions (D-RES-1 through D-RES-5, D-CLEAN-2,
-D-CLEAN-3) remain in force. All v4.5.2 defect resolutions (D-HARD-1
-through D-HARD-5), all v4.5.1 defect resolutions (D-CRIT-1, D-MAJ-3,
-D-MAJ-4, D-MIN-5, D-MAJ-6, D-MAJ-7, D-MAJ-8, D-MIN-9, D-MIN-10), all
-v4.5.0 defect resolutions (D-49 through D-54) and enhancements (E-14,
-E-15, E-16), all v4.4.2 defect resolutions (D-45 through D-48), and all
-earlier defect resolutions and enhancements remain in force. The
-send-path retry chain (E-11), the Markdown escaping (E-12), the
-plain-text fallback (E-13), the CS translation layer, the cross-thread
-async send (E-10), the execution-gated projection (E-4), the
-scroll-ahead viewport (E-5), the threaded bot replies (E-6), the
-bounded push dispatch (E-7), the FVG merge (E-8), and the legend
-stacking (E-9) are all unchanged.
+All v4.5.4 defect resolutions (D-RES-6 through D-RES-10, D-CLEAN-4) remain
+in force. All v4.5.3 defect resolutions (D-RES-1 through D-RES-5, D-CLEAN-2,
+D-CLEAN-3), all v4.5.2 defect resolutions (D-HARD-1 through D-HARD-5), all
+v4.5.1 defect resolutions (D-CRIT-1, D-MAJ-3, D-MAJ-4, D-MIN-5, D-MAJ-6,
+D-MAJ-7, D-MAJ-8, D-MIN-9, D-MIN-10), all v4.5.0 defect resolutions (D-49
+through D-54) and enhancements (E-14, E-15, E-16), all v4.4.2 defect
+resolutions (D-45 through D-48), and all earlier defect resolutions and
+enhancements remain in force. The send-path retry chain (E-11), the
+Markdown escaping (E-12), the plain-text fallback (E-13), the CS
+translation layer, the cross-thread async send (E-10), the
+execution-gated projection (E-4), the scroll-ahead viewport (E-5), the
+threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG
+merge (E-8), and the legend stacking (E-9) are all unchanged.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state
-transition is reproduced verbatim from v4.5.3 except at the five
+transition is reproduced verbatim from v4.5.4 except at the two
 patched sites above.
 """
 
-__version__ = "4.5.4"
+__version__ = "4.5.5"
 
 import asyncio
 import hashlib
@@ -1545,7 +1529,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.5.4",
+                    "User-Agent": "AEI-Bridge/v4.5.5",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1843,15 +1827,6 @@ class AEEA_Engine:
         saved_webapp_uid = st.webapp_user_id
         saved_webapp_uname = st.webapp_username
         saved_webapp_verified = st.webapp_verified
-        saved_auth_m = st.authoritative_m
-        saved_auth_n = st.authoritative_n
-        saved_auth_h = st.authoritative_h
-        saved_m_now = st.m_now
-        saved_n_now = st.n_now
-        saved_lk_m = st.last_kronecker_m
-        saved_lk_n = st.last_kronecker_n
-        saved_lk_h = st.last_kronecker_h
-        saved_lk_bar = self._last_kronecker_bar
         saved_comment = self._last_comment_line
         saved_provider = st.last_provider
         saved_volume = st.last_volume
@@ -1950,18 +1925,18 @@ class AEEA_Engine:
         st.webapp_user_id = saved_webapp_uid
         st.webapp_username = saved_webapp_uname
         st.webapp_verified = saved_webapp_verified
-        st.authoritative_m = saved_auth_m
-        st.authoritative_n = saved_auth_n
-        st.authoritative_h = saved_auth_h
-        st.m_now = saved_m_now
-        st.n_now = saved_n_now
-        st.last_kronecker_m = saved_lk_m
-        st.last_kronecker_n = saved_lk_n
-        st.last_kronecker_h = saved_lk_h
+        st.authoritative_m = 0
+        st.authoritative_n = 0
+        st.authoritative_h = -1
+        st.m_now = 0
+        st.n_now = 0
+        st.last_kronecker_m = 0
+        st.last_kronecker_n = 0
+        st.last_kronecker_h = -1
         st.last_provider = saved_provider
         st.last_volume = saved_volume
         st.last_inbound_message_id = saved_inbound_msg
-        self._last_kronecker_bar = saved_lk_bar
+        self._last_kronecker_bar = -1
         self._last_comment_line = saved_comment
         self._last_projection_bar = -1
 
@@ -4284,7 +4259,6 @@ class AEEA_Engine:
 
     def _on_tick_locked(self, price_data: PriceData) -> None:
         st = self.state
-        st.tick += 1
         self._tick_log_counter += 1
         if self._tick_log_counter >= 100:
             self._tick_log_counter = 0
@@ -4481,6 +4455,7 @@ class AEEA_Engine:
             self.OnReInit()
             st.GF = False
 
+        st.tick += 1
         if st.ab != st.ba:
             st.ab = st.ba
         st.tick_tock = False
@@ -4593,8 +4568,7 @@ class AEEA_Engine:
         if bar_closed:
             self._bar_open = True
             self._last_price_update = timestamp
-            self._bar_index += 1
-            self.state.bar_close_count += 1
+            self._bar_index += 1            self.state.bar_close_count += 1
             self.ohlcv_history.append({
                 "open": price_data.open, "high": price_data.high,
                 "low": price_data.low, "close": price_data.close,
@@ -5530,7 +5504,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.5.4"
+    server_version = "AEI-Bridge/4.5.5"
 
     def log_message(self, fmt, *args):
         return
@@ -5601,7 +5575,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.5.4",
+                "ok": not stale, "service": "aei-bridge", "version": "4.5.5",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -7166,7 +7140,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.4).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.5).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -7199,6 +7173,7 @@ class AEI_Bot:
         logger.info("🩹 v4.5.2 audit patches: D-HARD-1 _populate_indicator_matrix concurrency snapshot, D-CLEAN-1 redundant st.t assignment removed, D-HARD-2 _ENGINE_LOCK, D-HARD-3 exclusive loop bound, D-HARD-4 legacy alert guard, D-HARD-5 frozen commission.")
         logger.info("🩹 v4.5.3 audit patches: D-RES-1 O() write-back, D-RES-2 Top/Bott digit parity, D-RES-3 trailing normalize removed, D-RES-4 init skip guard removed, D-RES-5 OnTrack second-scan live bound, D-CLEAN-2 dead _initialized removed, D-CLEAN-3 401/403 no-retry.")
         logger.info("🩹 v4.5.4 audit patches: D-RES-6 H()/L() FG guard removed, D-RES-7 X_scan/Y_scan top-of-tick reset removed, D-RES-8 OnBar defensive bounds checks removed, D-RES-9 Decimal.sqrt for bollinger/stddev, D-RES-10 computed π constants, D-CLEAN-4 PATCH 1.8 comments removed.")
+        logger.info("🩹 v4.5.5 audit patches: V-1 st.tick increment moved to bottom of tick body after OnReInit()-on-GF; V-2 Kronecker-stamp fields reset to FF baseline (0/0/-1) across OnReInit.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
