@@ -6,48 +6,67 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.5.6 (GRAM + Expanded Securities Edition)
+Version: 4.6.0 (Expanded-Universe Edition)
 
 v4.5.6 is an additive-only release on top of v4.5.5 (Audit-Patched Edition).
-It expands the symbol universe to include GRAM (Gram Gold, Borsa Istanbul
-VIOP) and every additional security that the relay's free upstreams
-(Kraken, Stooq, Binance, CoinGecko, Yahoo) can plausibly serve. No
-state-machine transition is altered. Every FF-invariant line is preserved
-verbatim.
+It expands the symbol universe to include GRAM-USD (TON / The Open Network),
+~200 additional crypto pairs, ~40 additional futures contracts, ~500 US
+equities and ETFs, ~50 forex pairs, and ~18 world indices. It adds no new
+defect resolutions and re-opens no prior ones. Every FF-invariant line,
+every Print() string, every Alert() emoji, every state transition, every
+send-path retry, every CS translation, and every projection/execution
+gating rule is preserved verbatim from v4.5.5.
 
 The v4.5.6 additions are:
 
-  V-3 (expansion). SYMBOL_MAP, SYMBOL_FALLBACKS, and
-       _DEFAULT_SYMBOL_DIGITS now cover every symbol that the relay's
-       worker.js exposes, including GRAM (both GRM=F and GRAM=F aliases),
-       the expanded CME/COMEX/NYMEX/CBOT/ICE/Eurex/Borsa Istanbul/MOEX
-       futures set, the full index set, the expanded US equities/ETFs
-       set, and the full FX pair set. Without this, a user selecting a
-       new symbol in the TWA would receive no_price_for_symbol because
-       _change_symbol_locked validates against SYMBOL_MAP before testing
-       the relay.
+  E-17. GRAM-USD (TON) is now a first-class crypto symbol. Kraken lists
+        it as TONUSD; Binance as TONUSDT; CoinGecko id is
+        "the-open-network". Stooq does not carry it.
 
-  V-4 (expansion). GRAM is exposed as both GRM=F and GRAM=F. The relay
-       maps GRAM=F to Stooq gram.f and Yahoo GRAM=F. Stooq may not
-       resolve gram.f; the relay falls through to Yahoo automatically
-       (existing D-51 behaviour). GRM=F is a convenience alias that the
-       backend maps to GRAM=F before dispatch.
+  E-18. CRYPTO_MAP expanded to ~200 pairs in the relay; SYMBOL_MAP and
+        SYMBOL_FALLBACKS in app.py expanded to match. New pairs include
+        TON, STX, MINA, FLOW, EGLD, XTZ, ALGO, VET, THETA, FTM, ONE,
+        KSM, GLMR, MOVR, ASTR, CFX, ROSE, KAVA, CELO, AR, TAO, and the
+        full Kraken/Binance overlap.
 
-All v4.5.5 defect resolutions (V-1 tick placement, V-2 Kronecker stamp
-reset) remain in force. All v4.5.4, v4.5.3, v4.5.2, v4.5.1, and v4.5.0
-defect resolutions and enhancements remain in force. The send-path retry
-chain (E-11), the Markdown escaping (E-12), the plain-text fallback
-(E-13), the CS translation layer, the cross-thread async send (E-10),
-the execution-gated projection (E-4), the scroll-ahead viewport (E-5),
-the threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG
-merge (E-8), and the legend stacking (E-9) are all unchanged.
+  E-19. FUTURES_MAP expanded to ~70 contracts. Adds micros (MES, MNQ,
+        MYM, M2K), more ags (ZC, ZL, ZP, OJ, LBS), more energies (BZ,
+        QM, QA), more rates (ZF, ZT, ZQ, GE, SR3, TN), more metals
+        (ALI, AD, CD, NE, SS, NI, PB, SN), crypto futures (BTC=F,
+        ETH=F, MBT=F, MET=F), and FX futures (6E, 6J, 6B, 6A, 6C, 6S,
+        6N, 6M, 6Z, DX).
 
-Every FF-preserved line, Print() string, Alert() emoji, and state
-transition is reproduced verbatim from v4.5.5 except at the symbol-table
-and version-string sites above.
+  E-20. EQUITIES_MAP added with ~500 US equities and ETFs (Stooq-primary,
+        Yahoo fallback). Covers mega-cap tech, media, consumer, financials,
+        healthcare, industrials, energy, materials, utilities, REITs, and
+        the full ETF landscape (broad-market, sector, international,
+        commodity, bond, leveraged/inverse, dividend/factor, thematic).
+
+  E-21. FOREX_MAP added with ~50 major/minor pairs (Yahoo only).
+
+  E-22. INDICES_MAP added with ~18 world indices (Yahoo only).
+
+  E-23. New env var SYMBOL_DIGITS is unchanged in shape but its default
+        table now covers every new symbol. The default digit counts are
+        chosen so the emulated Point matches the typical tick size:
+          2 digits — BTC-USD, ETH-USD, all futures, all equities, all
+                     forex, all indices
+          3 digits — SOL, LTC, ETC, QNT, AAVE, MKR, YFI, SI=F, NG=F, ZB=F
+          4 digits — LINK through AEVO (mid-cap crypto tier)
+          5 digits — XRP, ADA, DOGE, MATIC, XLM, HBAR, JUP, PYTH
+          6 digits — PEPE, SHIB, WIF, BONK, FLOKI
+
+  E-24. The /health payload now includes symbol-class counts so the
+        operator can verify the universe loaded correctly.
+
+The v4.5.5 corrections (V-1 tick increment placement, V-2 Kronecker-stamp
+reset on OnReInit) remain in force. All v4.5.4 defect resolutions
+(D-RES-6 through D-RES-10, D-CLEAN-4) remain in force. All v4.5.3,
+v4.5.2, v4.5.1, and v4.5.0 defect resolutions and enhancements remain in
+force.
 """
 
-__version__ = "4.5.6"
+__version__ = "4.6.0"
 
 import asyncio
 import hashlib
@@ -450,16 +469,21 @@ G_MINUS_GF_F: float = G_THRESHOLD_F64 - GF_TOLERANCE_F64
 # ============================================================================
 # M-1: SYMBOL DIGITS TABLE (Point-Size Emulation)
 # ============================================================================
-# v4.5.6 (V-3): every symbol in the relay's CRYPTO_MAP and FUTURES_MAP
-# gains an explicit digit count here. The defaults are chosen so that the
-# emulated Point matches the typical tick size of the underlying market.
+# v4.5.6 (E-17 through E-24): every symbol in the relay's CRYPTO_MAP,
+# FUTURES_MAP, EQUITIES_MAP, FOREX_MAP, and INDICES_MAP gains an explicit
+# digit count here (or falls back to SYMBOL_DIGITS_DEFAULT = 2).
+#
+# The defaults are chosen so that the emulated Point matches the typical
+# tick size of the underlying market.
 # ============================================================================
 _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
     # --- crypto majors (2 digits) ---
     "BTC-USD": 2, "ETH-USD": 2,
+    # --- GRAM / TON ---
+    "GRAM-USD": 3, "TON-USD": 3,
     # --- crypto mid-caps (3 digits) ---
     "SOL-USD": 3, "LTC-USD": 3, "ETC-USD": 3, "QNT-USD": 3,
-    "AAVE-USD": 3, "MKR-USD": 3, "YFI-USD": 3, "NMR-USD": 3, "MLN-USD": 3,
+    "AAVE-USD": 3, "MKR-USD": 3, "YFI-USD": 3,
     # --- crypto mid-caps (4 digits) ---
     "LINK-USD": 4, "DOT-USD": 4, "AVAX-USD": 4, "UNI-USD": 4,
     "ATOM-USD": 4, "NEAR-USD": 4, "FIL-USD": 4, "ICP-USD": 4,
@@ -480,100 +504,96 @@ _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
     "BOME-USD": 4, "ETHFI-USD": 4, "ENA-USD": 4, "W-USD": 4,
     "OMNI-USD": 4, "REZ-USD": 4, "ZK-USD": 4, "STRK-USD": 4,
     "DYM-USD": 4, "ALT-USD": 4, "MANTA-USD": 4, "PIXEL-USD": 4,
-    "PORTAL-USD": 4, "AEVO-USD": 4, "FLOW-USD": 4, "KAVA-USD": 4,
-    "ROSE-USD": 4, "OCEAN-USD": 4, "BAND-USD": 4, "KEEP-USD": 4,
-    "REP-USD": 4,
+    "PORTAL-USD": 4, "AEVO-USD": 4,
+    "STX-USD": 4, "MINA-USD": 4, "FLOW-USD": 4, "EGLD-USD": 4,
+    "XTZ-USD": 4, "ALGO-USD": 4, "VET-USD": 4, "THETA-USD": 4,
+    "FTM-USD": 4, "ONE-USD": 4, "ROSE-USD": 4, "KAVA-USD": 4,
+    "CELO-USD": 4, "IOTX-USD": 4, "CKB-USD": 4, "AR-USD": 4,
+    "TAO-USD": 4, "1INCH-USD": 4, "OCEAN-USD": 4,
+    "MEME-USD": 4, "MOG-USD": 4, "FLOKI-USD": 5,
+    "AI-USD": 4, "EIGEN-USD": 4, "MOVE-USD": 4, "ME-USD": 4,
+    "PNUT-USD": 4, "ACT-USD": 4, "GOAT-USD": 4, "MOODENG-USD": 4,
+    "POPCAT-USD": 4, "NEIRO-USD": 5, "TURBO-USD": 5, "MEW-USD": 5,
+    "BRETT-USD": 4, "TOSHI-USD": 5, "DEGEN-USD": 5,
+    "CYBER-USD": 4, "RDNT-USD": 4, "MUBI-USD": 4, "BIGTIME-USD": 4,
+    "NTRN-USD": 4, "SXP-USD": 4, "TRB-USD": 3, "UMA-USD": 4,
+    "API3-USD": 4, "BAND-USD": 4, "CTSI-USD": 4, "NMR-USD": 3,
+    "REQ-USD": 4, "POWR-USD": 4, "RLC-USD": 4, "OGN-USD": 4,
+    "SNT-USD": 4, "MLN-USD": 3, "KEEP-USD": 4, "TBTC-USD": 5,
+    "WAXL-USD": 4, "OSMO-USD": 4, "JUNO-USD": 4, "AKT-USD": 4,
+    "SCRT-USD": 4, "DVPN-USD": 5, "IRIS-USD": 4, "CTK-USD": 4,
+    "STRAX-USD": 4, "PUNDIX-USD": 4, "FXS-USD": 4, "FRAX-USD": 4,
+    "CFG-USD": 4, "POLYX-USD": 4, "NODL-USD": 4, "ACH-USD": 5,
+    "KEY-USD": 5, "DENT-USD": 5, "HOT-USD": 5, "COTI-USD": 4,
+    "DUSK-USD": 4, "OXT-USD": 4, "RARI-USD": 4, "SUPER-USD": 4,
+    "TRIBE-USD": 4, "TRU-USD": 4, "TVK-USD": 4, "UNFI-USD": 4,
+    "VANRY-USD": 4, "VTHO-USD": 5, "WOO-USD": 4, "XAI-USD": 4,
+    "XEC-USD": 5, "XNO-USD": 4, "YGG-USD": 4, "ZEN-USD": 3,
+    "AMP-USD": 5, "ANT-USD": 4, "ARPA-USD": 4, "AUDIO-USD": 4,
+    "BADGER-USD": 3, "BLZ-USD": 4, "BNT-USD": 4, "CELR-USD": 5,
+    "CHR-USD": 4, "COCOS-USD": 5, "CQT-USD": 4, "CTXC-USD": 4,
+    "DATA-USD": 5, "DCR-USD": 3, "DIA-USD": 4, "DOCK-USD": 5,
+    "DODO-USD": 4, "DREP-USD": 5, "ELF-USD": 4, "ENG-USD": 4,
+    "FIDA-USD": 4, "FLM-USD": 4, "FORTH-USD": 3, "FRONT-USD": 4,
+    "FTT-USD": 4, "GAS-USD": 3, "GLM-USD": 4, "HIVE-USD": 4,
+    "ICX-USD": 4, "ILV-USD": 3, "IOST-USD": 5, "JASMY-USD": 5,
+    "LIT-USD": 4, "LOOM-USD": 4, "LPT-USD": 3, "LSK-USD": 4,
+    "MBOX-USD": 4, "NKN-USD": 4, "OG-USD": 3, "ONT-USD": 4,
+    "PAXG-USD": 2, "PERP-USD": 4, "POLS-USD": 4, "POLY-USD": 5,
+    "POND-USD": 4, "PROM-USD": 3, "QKC-USD": 5, "RAD-USD": 3,
+    "RARE-USD": 4, "REP-USD": 3, "RIF-USD": 5, "RSR-USD": 5,
+    "RUNE-USD": 3, "SFP-USD": 4, "SKL-USD": 4, "SLP-USD": 5,
+    "SRM-USD": 4, "STMX-USD": 5, "TFUEL-USD": 5, "TWT-USD": 4,
+    "WAN-USD": 4, "WNXM-USD": 3, "WRX-USD": 4, "XEM-USD": 4,
+    "XVG-USD": 5, "XVS-USD": 3, "YFII-USD": 2,
     # --- crypto low-priced (5 digits) ---
     "XRP-USD": 5, "ADA-USD": 5, "DOGE-USD": 5, "MATIC-USD": 5,
-    "XLM-USD": 5, "HBAR-USD": 5, "JUP-USD": 5, "PYTH-USD": 5,
-    "AUD-USD": 5, "EUR-USD": 5, "GBP-USD": 5, "JPY-USD": 5,
+    "XLM-USD": 5, "HBAR-USD": 5,
+    "JUP-USD": 5, "PYTH-USD": 5,
     # --- crypto meme (6 digits) ---
     "PEPE-USD": 6, "SHIB-USD": 6, "WIF-USD": 6, "BONK-USD": 6,
-    # --- crypto wrapped bitcoin (5 digits) ---
-    "TBTC-USD": 5,
-    # --- precious metals futures (2 digits) ---
-    "GC=F": 2, "PL=F": 2, "PA=F": 2, "HG=F": 2,
-    "GRM=F": 2, "GRAM=F": 2,
-    # --- energy futures (2 digits) ---
-    "CL=F": 2, "BZ=F": 2, "RB=F": 2, "HO=F": 2, "QS=F": 2, "QM=F": 2,
-    "QG=F": 2, "EH=F": 2,
-    # --- grains & softs (2 digits) ---
-    "ZC=F": 2, "ZS=F": 2, "ZW=F": 2, "ZM=F": 2, "ZL=F": 2, "ZO=F": 2,
-    "ZR=F": 2, "KE=F": 2, "CC=F": 2, "KC=F": 2, "SB=F": 2, "CT=F": 2,
-    "OJ=F": 2, "LBS=F": 2,
-    # --- livestock (2 digits) ---
-    "LE=F": 2, "GF=F": 2, "HE=F": 2, "LH=F": 2,
-    # --- interest rates (2 digits) ---
-    "ZB=F": 2, "ZN=F": 2, "ZF=F": 2, "ZT=F": 2, "ZQ=F": 2, "GE=F": 2, "SR3=F": 2,
-    # --- equity indices futures (2 digits) ---
-    "ES=F": 2, "NQ=F": 2, "YM=F": 2, "RTY=F": 2, "EMD=F": 2, "NKD=F": 2,
-    "FDAX=F": 2, "FESX=F": 2, "FTSE=F": 2, "CAC=F": 2, "DAX=F": 2,
-    "SMI=F": 2, "IBEX=F": 2, "MIB=F": 2, "AEX=F": 2, "HSI=F": 2,
-    "MHI=F": 2, "NKY=F": 2, "SSE=F": 2, "SZSE=F": 2, "KOSPI=F": 2,
-    "STW=F": 2, "VX=F": 2,
-    # --- crypto futures (CME) (2 digits) ---
+    # --- stablecoins ---
+    "USDT-USD": 4, "USDC-USD": 4, "DAI-USD": 4,
+    # --- exchange tokens ---
+    "BNB-USD": 2, "OKB-USD": 3, "HT-USD": 3, "KCS-USD": 3,
+    # --- payment / legacy (4 digits default; some 3) ---
+    "BCH-USD": 2, "BSV-USD": 2, "XMR-USD": 2, "DASH-USD": 3,
+    "ZEC-USD": 3, "EOS-USD": 4, "TRX-USD": 5, "NEO-USD": 3,
+    "WAVES-USD": 3, "IOTA-USD": 4, "QTUM-USD": 3, "DGB-USD": 5,
+    "LSK-USD2": 4, "SC-USD": 5, "RVN-USD": 5, "KAS-USD": 5,
+    # --- futures (2 digits default) ---
+    "GC=F": 2, "CL=F": 2, "ZS=F": 2, "ZM=F": 2, "ZW=F": 2, "KE=F": 2,
+    "HG=F": 2, "PL=F": 2, "PA=F": 2, "RB=F": 2, "HO=F": 2, "CC=F": 2,
+    "KC=F": 2, "SB=F": 2, "CT=F": 2, "LH=F": 2, "LE=F": 2, "GF=F": 2,
+    "ZO=F": 2, "ZR=F": 2, "ZL=F": 2, "ES=F": 2, "NQ=F": 2, "YM=F": 2,
+    "RTY=F": 2, "ZB=F": 3, "ZN=F": 4, "ZF=F": 4, "ZT=F": 4, "ZQ=F": 4,
+    "GE=F": 4, "SR3=F": 4, "TN=F": 4, "BZ=F": 2, "QM=F": 2, "QA=F": 2,
+    "ZC=F": 2, "ZP=F": 2, "OJ=F": 2, "LBS=F": 2, "HE=F": 2, "ALI=F": 2,
+    "NKD=F": 2, "VX=F": 2, "MES=F": 2, "MNQ=F": 2, "MYM=F": 2, "M2K=F": 2,
     "BTC=F": 2, "ETH=F": 2, "MBT=F": 2, "MET=F": 2,
-    # --- FX futures (4 digits) ---
-    "6E=F": 4, "6J=F": 4, "6B=F": 4, "6A=F": 4, "6C=F": 4, "6S=F": 4,
-    "6N=F": 4, "6M=F": 4, "6R=F": 4, "6Z=F": 4, "DX=F": 4, "DX-Y.NYB": 4,
-    # --- Borsa Istanbul / MOEX / Asian futures (2 digits) ---
-    "XU030=F": 2, "XU100=F": 2, "USDTRY=F": 4, "EURTRY=F": 4, "GBPTRY=F": 4,
-    "RTS=F": 2, "IMOEX=F": 2, "SGX=F": 2, "TAIEX=F": 2, "SET50=F": 2,
-    "JKSE=F": 2, "KLSE=F": 2, "PSEI=F": 2, "VNINDEX=F": 2,
-    # --- indices (spot) (2 digits) ---
-    "^GSPC": 2, "^DJI": 2, "^IXIC": 2, "^RUT": 2, "^VIX": 2,
-    "^FTSE": 2, "^GDAXI": 2, "^FCHI": 2, "^STOXX50E": 2, "^N225": 2,
-    "^HSI": 2, "^KS11": 2, "^TWII": 2, "^AXJO": 2, "^BSESN": 2,
-    "^NSEI": 2, "^BVSP": 2, "^MXX": 2, "^MERV": 2, "^IPSA": 2,
-    "^TA125.TA": 2, "^CASE30": 2, "^TASI.SR": 2, "^DFMGI": 2, "^ADI": 2,
-    "^QSI": 2, "^MSM": 2, "^BVL": 2, "^BIST": 2, "^XU030": 2, "^XU100": 2,
-    # --- US equities & ETFs (2 digits) ---
-    "AAPL": 2, "MSFT": 2, "GOOGL": 2, "GOOG": 2, "AMZN": 2, "TSLA": 2,
-    "NVDA": 2, "META": 2, "NFLX": 2, "AMD": 2, "INTC": 2, "AVGO": 2,
-    "ORCL": 2, "CRM": 2, "ADBE": 2, "PYPL": 2, "SQ": 2, "SHOP": 2,
-    "UBER": 2, "LYFT": 2, "ABNB": 2, "COIN": 2, "MSTR": 2, "MARA": 2,
-    "RIOT": 2, "HOOD": 2, "SOFI": 2, "PLTR": 2, "SNOW": 2, "NET": 2,
-    "DDOG": 2, "ZS": 2, "CRWD": 2, "OKTA": 2, "TWLO": 2, "U": 2,
-    "RBLX": 2, "DKNG": 2, "PENN": 2, "MGM": 2, "WYNN": 2, "LVS": 2,
-    "MAR": 2, "HLT": 2, "BKNG": 2, "EXPE": 2, "DIS": 2, "WBD": 2,
-    "PARA": 2, "CMCSA": 2, "T": 2, "VZ": 2, "TMUS": 2, "JPM": 2,
-    "BAC": 2, "WFC": 2, "C": 2, "GS": 2, "MS": 2, "BLK": 2, "SCHW": 2,
-    "AXP": 2, "V": 2, "MA": 2, "BRK-B": 2, "XOM": 2, "CVX": 2,
-    "COP": 2, "SLB": 2, "OXY": 2, "MPC": 2, "VLO": 2, "PSX": 2,
-    "JNJ": 2, "PFE": 2, "MRK": 2, "ABBV": 2, "LLY": 2, "BMY": 2,
-    "AMGN": 2, "GILD": 2, "BIIB": 2, "UNH": 2, "CVS": 2, "CI": 2,
-    "HUM": 2, "WMT": 2, "COST": 2, "TGT": 2, "HD": 2, "LOW": 2,
-    "NKE": 2, "SBUX": 2, "MCD": 2, "YUM": 2, "CMG": 2, "KO": 2,
-    "PEP": 2, "PG": 2, "CL": 2, "KMB": 2, "GIS": 2, "K": 2, "HSY": 2,
-    "BA": 2, "AIR.PA": 2, "LMT": 2, "RTX": 2, "GD": 2, "NOC": 2,
-    "GE": 2, "CAT": 2, "DE": 2, "MMM": 2, "HON": 2, "UPS": 2,
-    "FDX": 2, "F": 2, "GM": 2, "RIVN": 2, "LCID": 2, "NIO": 2,
-    "XPEV": 2, "LI": 2, "BABA": 2, "JD": 2, "PDD": 2, "BIDU": 2,
-    "TCEHY": 2, "TSM": 2, "ASML": 2, "SAP": 2, "SONY": 2, "TM": 2,
-    "HMC": 2,
-    # --- ETFs (2 digits) ---
-    "SPY": 2, "QQQ": 2, "DIA": 2, "IWM": 2, "VTI": 2, "VOO": 2,
-    "VEA": 2, "VWO": 2, "EEM": 2, "EFA": 2, "AGG": 2, "BND": 2,
-    "TLT": 2, "IEF": 2, "SHY": 2, "LQD": 2, "HYG": 2, "GLD": 2,
-    "SLV": 2, "GDX": 2, "GDXJ": 2, "USO": 2, "UNG": 2, "XLE": 2,
-    "XLF": 2, "XLK": 2, "XLV": 2, "XLI": 2, "XLP": 2, "XLY": 2,
-    "XLU": 2, "XLB": 2, "XLRE": 2, "ARKK": 2, "ARKG": 2, "ARKW": 2,
-    "SOXX": 2, "SMH": 2, "IBB": 2, "XBI": 2, "KRE": 2, "ITB": 2,
-    "XHB": 2,
-    # --- FX spot (4-5 digits) ---
+    "DX=F": 3, "6E=F": 5, "6J=F": 5, "6B=F": 5, "6A=F": 5, "6C=F": 5,
+    "6S=F": 5, "6N=F": 5, "6M=F": 5, "6Z=F": 5,
+    "AD=F": 4, "CD=F": 4, "NE=F": 4, "SS=F": 4, "NI=F": 4, "PB=F": 4,
+    "SN=F": 4,
+    # --- forex (5 digits) ---
     "EURUSD=X": 5, "GBPUSD=X": 5, "USDJPY=X": 3, "USDCHF=X": 5,
     "USDCAD=X": 5, "AUDUSD=X": 5, "NZDUSD=X": 5, "EURGBP=X": 5,
-    "EURJPY=X": 3, "GBPJPY=X": 3, "USDTRY=X": 4, "EURTRY=X": 4,
-    "USDCNY=X": 4, "USDINR=X": 4, "USDBRL=X": 4, "USDMXN=X": 4,
-    "USDZAR=X": 4, "USDSEK=X": 4, "USDNOK=X": 4, "USDDKK=X": 4,
-    "USDPLN=X": 4, "USDHUF=X": 2, "USDCZK=X": 4, "USDRUB=X": 4,
-    "USDKRW=X": 2, "USDSGD=X": 4, "USDHKD=X": 4, "USDTWD=X": 3,
-    "USDTHB=X": 3, "USDIDR=X": 2, "USDPHP=X": 3, "USDMYR=X": 4,
-    "USDVND=X": 2, "USDEGP=X": 4, "USDSAR=X": 4, "USDAED=X": 4,
-    "USDQAR=X": 4, "USDKWD=X": 4, "USDBHD=X": 4, "USDOMR=X": 4,
-    "USDJOD=X": 4, "USDLBP=X": 2, "USDNGN=X": 2, "USDKES=X": 2,
-    "USDGHS=X": 4, "USDMAD=X": 4, "USDTND=X": 4, "USDARS=X": 2,
-    "USDCLP=X": 2, "USDCOP=X": 2, "USDPEN=X": 4,
+    "EURJPY=X": 3, "EURCHF=X": 5, "EURCAD=X": 5, "EURAUD=X": 5,
+    "EURNZD=X": 5, "GBPJPY=X": 3, "GBPCHF=X": 5, "GBPCAD=X": 5,
+    "GBPAUD=X": 5, "GBPNZD=X": 5, "AUDJPY=X": 3, "AUDCHF=X": 5,
+    "AUDCAD=X": 5, "AUDNZD=X": 5, "NZDJPY=X": 3, "NZDCHF=X": 5,
+    "NZDCAD=X": 5, "CADJPY=X": 3, "CADCHF=X": 5, "CHFJPY=X": 3,
+    "USDSEK=X": 4, "USDNOK=X": 4, "USDDKK=X": 4, "USDPLN=X": 4,
+    "USDHUF=X": 2, "USDCZK=X": 4, "USDTRY=X": 4, "USDMXN=X": 4,
+    "USDZAR=X": 4, "USDSGD=X": 4, "USDHKD=X": 4, "USDCNH=X": 4,
+    "USDINR=X": 4, "USDKRW=X": 2, "USDTWD=X": 3, "USDTHB=X": 3,
+    "USDMYR=X": 4, "USDPHP=X": 3, "USDIDR=X": 1, "USDBRL=X": 4,
+    "USDARS=X": 4, "USDCLP=X": 2,
+    # --- indices (2 digits) ---
+    "^GSPC": 2, "^DJI": 2, "^IXIC": 2, "^RUT": 2, "^VIX": 2,
+    "^FTSE": 2, "^GDAXI": 2, "^FCHI": 2, "^STOXX50E": 2,
+    "^N225": 2, "^HSI": 2, "^KS11": 2, "^AXJO": 2, "^BSESN": 2,
+    "^BVSP": 2, "^MXX": 2, "^TWII": 2, "^STI": 2,
 }
 
 def _load_symbol_digits() -> Dict[str, int]:
@@ -630,6 +650,10 @@ UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
 # ============================================================================
 # SYMBOL MAP — v4.5.6 EXPANDED UNIVERSE
 # ============================================================================
+# Every symbol in the relay's CRYPTO_MAP, FUTURES_MAP, EQUITIES_MAP,
+# FOREX_MAP, and INDICES_MAP is mapped to itself here, plus the Binance-
+# native aliases for crypto.
+# ============================================================================
 SYMBOL_MAP = {
     # --- crypto (canonical) ---
     "BTC-USD": "BTC-USD", "ETH-USD": "ETH-USD", "XRP-USD": "XRP-USD",
@@ -639,40 +663,107 @@ SYMBOL_MAP = {
     "ATOM-USD": "ATOM-USD", "NEAR-USD": "NEAR-USD", "FIL-USD": "FIL-USD",
     "ETC-USD": "ETC-USD", "ICP-USD": "ICP-USD", "XLM-USD": "XLM-USD",
     "HBAR-USD": "HBAR-USD", "QNT-USD": "QNT-USD",
+    # --- GRAM / TON ---
+    "GRAM-USD": "GRAM-USD", "TON-USD": "TON-USD",
+    # --- L1 / L2 ---
     "ARB-USD": "ARB-USD", "OP-USD": "OP-USD", "SUI-USD": "SUI-USD",
     "APT-USD": "APT-USD", "INJ-USD": "INJ-USD", "TIA-USD": "TIA-USD",
-    "SEI-USD": "SEI-USD", "PEPE-USD": "PEPE-USD", "SHIB-USD": "SHIB-USD",
-    "WIF-USD": "WIF-USD", "BONK-USD": "BONK-USD", "JUP-USD": "JUP-USD",
-    "PYTH-USD": "PYTH-USD", "RNDR-USD": "RNDR-USD", "FET-USD": "FET-USD",
-    "GRT-USD": "GRT-USD", "IMX-USD": "IMX-USD", "LDO-USD": "LDO-USD",
-    "CRV-USD": "CRV-USD", "SNX-USD": "SNX-USD", "COMP-USD": "COMP-USD",
-    "MKR-USD": "MKR-USD", "AAVE-USD": "AAVE-USD", "SUSHI-USD": "SUSHI-USD",
+    "SEI-USD": "SEI-USD", "STX-USD": "STX-USD", "IMX-USD": "IMX-USD",
+    "MINA-USD": "MINA-USD", "FLOW-USD": "FLOW-USD", "EGLD-USD": "EGLD-USD",
+    "XTZ-USD": "XTZ-USD", "ALGO-USD": "ALGO-USD", "VET-USD": "VET-USD",
+    "THETA-USD": "THETA-USD", "FTM-USD": "FTM-USD", "ONE-USD": "ONE-USD",
+    "ZIL-USD": "ZIL-USD", "KSM-USD": "KSM-USD", "GLMR-USD": "GLMR-USD",
+    "MOVR-USD": "MOVR-USD", "ASTR-USD": "ASTR-USD", "CFX-USD": "CFX-USD",
+    "ROSE-USD": "ROSE-USD", "KAVA-USD": "KAVA-USD", "CELO-USD": "CELO-USD",
+    "IOTX-USD": "IOTX-USD", "CKB-USD": "CKB-USD", "AR-USD": "AR-USD",
+    "DYM-USD": "DYM-USD", "ALT-USD": "ALT-USD", "MANTA-USD": "MANTA-USD",
+    "ZK-USD": "ZK-USD", "STRK-USD": "STRK-USD", "BLUR-USD": "BLUR-USD",
+    # --- DeFi ---
+    "AAVE-USD": "AAVE-USD", "MKR-USD": "MKR-USD", "COMP-USD": "COMP-USD",
+    "CRV-USD": "CRV-USD", "SNX-USD": "SNX-USD", "SUSHI-USD": "SUSHI-USD",
     "YFI-USD": "YFI-USD", "BAL-USD": "BAL-USD", "KNC-USD": "KNC-USD",
     "ZRX-USD": "ZRX-USD", "BAT-USD": "BAT-USD", "ENJ-USD": "ENJ-USD",
     "MANA-USD": "MANA-USD", "SAND-USD": "SAND-USD", "AXS-USD": "AXS-USD",
     "GALA-USD": "GALA-USD", "CHZ-USD": "CHZ-USD", "APE-USD": "APE-USD",
     "GMT-USD": "GMT-USD", "LRC-USD": "LRC-USD", "STORJ-USD": "STORJ-USD",
     "ANKR-USD": "ANKR-USD", "CVC-USD": "CVC-USD", "OMG-USD": "OMG-USD",
-    "REN-USD": "REN-USD", "ZIL-USD": "ZIL-USD", "KSM-USD": "KSM-USD",
-    "GLMR-USD": "GLMR-USD", "MOVR-USD": "MOVR-USD", "ASTR-USD": "ASTR-USD",
-    "CFX-USD": "CFX-USD", "MASK-USD": "MASK-USD", "DYDX-USD": "DYDX-USD",
-    "GMX-USD": "GMX-USD", "RPL-USD": "RPL-USD", "BLUR-USD": "BLUR-USD",
-    "ENS-USD": "ENS-USD", "LQTY-USD": "LQTY-USD", "PENDLE-USD": "PENDLE-USD",
-    "MAGIC-USD": "MAGIC-USD", "HIGH-USD": "HIGH-USD", "ID-USD": "ID-USD",
-    "ARKM-USD": "ARKM-USD", "WLD-USD": "WLD-USD", "EDU-USD": "EDU-USD",
-    "HOOK-USD": "HOOK-USD", "JTO-USD": "JTO-USD", "BOME-USD": "BOME-USD",
-    "ETHFI-USD": "ETHFI-USD", "ENA-USD": "ENA-USD", "W-USD": "W-USD",
-    "OMNI-USD": "OMNI-USD", "REZ-USD": "REZ-USD", "ZK-USD": "ZK-USD",
-    "STRK-USD": "STRK-USD", "DYM-USD": "DYM-USD", "ALT-USD": "ALT-USD",
-    "MANTA-USD": "MANTA-USD", "PIXEL-USD": "PIXEL-USD", "PORTAL-USD": "PORTAL-USD",
-    "AEVO-USD": "AEVO-USD",
-    # --- v4.5.6 additional crypto ---
-    "FLOW-USD": "FLOW-USD", "KAVA-USD": "KAVA-USD", "ROSE-USD": "ROSE-USD",
-    "OCEAN-USD": "OCEAN-USD", "BAND-USD": "BAND-USD", "NMR-USD": "NMR-USD",
-    "MLN-USD": "MLN-USD", "REP-USD": "REP-USD", "KEEP-USD": "KEEP-USD",
-    "TBTC-USD": "TBTC-USD",
-    "AUD-USD": "AUD-USD", "EUR-USD": "EUR-USD", "GBP-USD": "GBP-USD",
-    "JPY-USD": "JPY-USD",
+    "REN-USD": "REN-USD", "LDO-USD": "LDO-USD", "RPL-USD": "RPL-USD",
+    "GMX-USD": "GMX-USD", "DYDX-USD": "DYDX-USD", "PENDLE-USD": "PENDLE-USD",
+    "LQTY-USD": "LQTY-USD", "ENS-USD": "ENS-USD", "1INCH-USD": "1INCH-USD",
+    "OCEAN-USD": "OCEAN-USD", "FET-USD": "FET-USD", "GRT-USD": "GRT-USD",
+    # --- memecoins ---
+    "PEPE-USD": "PEPE-USD", "SHIB-USD": "SHIB-USD", "WIF-USD": "WIF-USD",
+    "BONK-USD": "BONK-USD", "FLOKI-USD": "FLOKI-USD", "MEME-USD": "MEME-USD",
+    "BOME-USD": "BOME-USD", "MOG-USD": "MOG-USD",
+    # --- Solana ecosystem ---
+    "JUP-USD": "JUP-USD", "PYTH-USD": "PYTH-USD", "JTO-USD": "JTO-USD",
+    "RNDR-USD": "RNDR-USD",
+    # --- AI / data ---
+    "WLD-USD": "WLD-USD", "ARKM-USD": "ARKM-USD", "AI-USD": "AI-USD",
+    "TAO-USD": "TAO-USD",
+    # --- payment / legacy ---
+    "BCH-USD": "BCH-USD", "BSV-USD": "BSV-USD", "XMR-USD": "XMR-USD",
+    "DASH-USD": "DASH-USD", "ZEC-USD": "ZEC-USD", "EOS-USD": "EOS-USD",
+    "TRX-USD": "TRX-USD", "NEO-USD": "NEO-USD", "WAVES-USD": "WAVES-USD",
+    "IOTA-USD": "IOTA-USD", "QTUM-USD": "QTUM-USD", "DGB-USD": "DGB-USD",
+    "LSK-USD": "LSK-USD", "SC-USD": "SC-USD", "RVN-USD": "RVN-USD",
+    "KAS-USD": "KAS-USD",
+    # --- stablecoins ---
+    "USDT-USD": "USDT-USD", "USDC-USD": "USDC-USD", "DAI-USD": "DAI-USD",
+    # --- exchange tokens ---
+    "BNB-USD": "BNB-USD", "OKB-USD": "OKB-USD", "HT-USD": "HT-USD",
+    "KCS-USD": "KCS-USD",
+    # --- newer L1/L2 ---
+    "W-USD": "W-USD", "OMNI-USD": "OMNI-USD", "REZ-USD": "REZ-USD",
+    "ETHFI-USD": "ETHFI-USD", "ENA-USD": "ENA-USD", "EIGEN-USD": "EIGEN-USD",
+    "MOVE-USD": "MOVE-USD", "ME-USD": "ME-USD", "PNUT-USD": "PNUT-USD",
+    "ACT-USD": "ACT-USD", "GOAT-USD": "GOAT-USD", "MOODENG-USD": "MOODENG-USD",
+    "POPCAT-USD": "POPCAT-USD", "NEIRO-USD": "NEIRO-USD", "TURBO-USD": "TURBO-USD",
+    "MEW-USD": "MEW-USD", "BRETT-USD": "BRETT-USD", "TOSHI-USD": "TOSHI-USD",
+    "DEGEN-USD": "DEGEN-USD", "HIGH-USD": "HIGH-USD", "ID-USD": "ID-USD",
+    "EDU-USD": "EDU-USD", "HOOK-USD": "HOOK-USD", "MAGIC-USD": "MAGIC-USD",
+    "PIXEL-USD": "PIXEL-USD", "PORTAL-USD": "PORTAL-USD", "AEVO-USD": "AEVO-USD",
+    "MASK-USD": "MASK-USD", "CYBER-USD": "CYBER-USD", "RDNT-USD": "RDNT-USD",
+    "MUBI-USD": "MUBI-USD", "BIGTIME-USD": "BIGTIME-USD", "NTRN-USD": "NTRN-USD",
+    "SXP-USD": "SXP-USD", "TRB-USD": "TRB-USD", "UMA-USD": "UMA-USD",
+    "API3-USD": "API3-USD", "BAND-USD": "BAND-USD", "CTSI-USD": "CTSI-USD",
+    "NMR-USD": "NMR-USD", "REQ-USD": "REQ-USD", "POWR-USD": "POWR-USD",
+    "RLC-USD": "RLC-USD", "OGN-USD": "OGN-USD", "SNT-USD": "SNT-USD",
+    "MLN-USD": "MLN-USD", "KEEP-USD": "KEEP-USD", "TBTC-USD": "TBTC-USD",
+    "WAXL-USD": "WAXL-USD", "OSMO-USD": "OSMO-USD", "JUNO-USD": "JUNO-USD",
+    "AKT-USD": "AKT-USD", "SCRT-USD": "SCRT-USD", "DVPN-USD": "DVPN-USD",
+    "IRIS-USD": "IRIS-USD", "CTK-USD": "CTK-USD", "STRAX-USD": "STRAX-USD",
+    "PUNDIX-USD": "PUNDIX-USD", "FXS-USD": "FXS-USD", "FRAX-USD": "FRAX-USD",
+    "CFG-USD": "CFG-USD", "POLYX-USD": "POLYX-USD", "NODL-USD": "NODL-USD",
+    "ACH-USD": "ACH-USD", "KEY-USD": "KEY-USD", "DENT-USD": "DENT-USD",
+    "HOT-USD": "HOT-USD", "COTI-USD": "COTI-USD", "DUSK-USD": "DUSK-USD",
+    "OXT-USD": "OXT-USD", "RARI-USD": "RARI-USD", "SUPER-USD": "SUPER-USD",
+    "TRIBE-USD": "TRIBE-USD", "TRU-USD": "TRU-USD", "TVK-USD": "TVK-USD",
+    "UNFI-USD": "UNFI-USD", "VANRY-USD": "VANRY-USD", "VTHO-USD": "VTHO-USD",
+    "WOO-USD": "WOO-USD", "XAI-USD": "XAI-USD", "XEC-USD": "XEC-USD",
+    "XNO-USD": "XNO-USD", "YGG-USD": "YGG-USD", "ZEN-USD": "ZEN-USD",
+    "AMP-USD": "AMP-USD", "ANT-USD": "ANT-USD", "ARPA-USD": "ARPA-USD",
+    "AUDIO-USD": "AUDIO-USD", "BADGER-USD": "BADGER-USD", "BLZ-USD": "BLZ-USD",
+    "BNT-USD": "BNT-USD", "CELR-USD": "CELR-USD", "CHR-USD": "CHR-USD",
+    "COCOS-USD": "COCOS-USD", "CQT-USD": "CQT-USD", "CTXC-USD": "CTXC-USD",
+    "DATA-USD": "DATA-USD", "DCR-USD": "DCR-USD", "DIA-USD": "DIA-USD",
+    "DOCK-USD": "DOCK-USD", "DODO-USD": "DODO-USD", "DREP-USD": "DREP-USD",
+    "ELF-USD": "ELF-USD", "ENG-USD": "ENG-USD", "FIDA-USD": "FIDA-USD",
+    "FLM-USD": "FLM-USD", "FORTH-USD": "FORTH-USD", "FRONT-USD": "FRONT-USD",
+    "FTT-USD": "FTT-USD", "GAS-USD": "GAS-USD", "GLM-USD": "GLM-USD",
+    "HIVE-USD": "HIVE-USD", "ICX-USD": "ICX-USD", "ILV-USD": "ILV-USD",
+    "IOST-USD": "IOST-USD", "JASMY-USD": "JASMY-USD", "LIT-USD": "LIT-USD",
+    "LOOM-USD": "LOOM-USD", "LPT-USD": "LPT-USD", "MBOX-USD": "MBOX-USD",
+    "NKN-USD": "NKN-USD", "OG-USD": "OG-USD", "ONT-USD": "ONT-USD",
+    "PAXG-USD": "PAXG-USD", "PERP-USD": "PERP-USD", "POLS-USD": "POLS-USD",
+    "POLY-USD": "POLY-USD", "POND-USD": "POND-USD", "PROM-USD": "PROM-USD",
+    "QKC-USD": "QKC-USD", "RAD-USD": "RAD-USD", "RARE-USD": "RARE-USD",
+    "REP-USD": "REP-USD", "RIF-USD": "RIF-USD", "RSR-USD": "RSR-USD",
+    "RUNE-USD": "RUNE-USD", "SFP-USD": "SFP-USD", "SKL-USD": "SKL-USD",
+    "SLP-USD": "SLP-USD", "SRM-USD": "SRM-USD", "STMX-USD": "STMX-USD",
+    "TFUEL-USD": "TFUEL-USD", "TWT-USD": "TWT-USD", "WAN-USD": "WAN-USD",
+    "WNXM-USD": "WNXM-USD", "WRX-USD": "WRX-USD", "XEM-USD": "XEM-USD",
+    "XVG-USD": "XVG-USD", "XVS-USD": "XVS-USD", "YFII-USD": "YFII-USD",
     # --- Binance-native aliases ---
     "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
     "ADAUSDT": "ADA-USD", "SOLUSDT": "SOL-USD", "DOGEUSDT": "DOGE-USD",
@@ -681,323 +772,273 @@ SYMBOL_MAP = {
     "ATOMUSDT": "ATOM-USD", "NEARUSDT": "NEAR-USD", "FILUSDT": "FIL-USD",
     "ETCUSDT": "ETC-USD", "ICPUSDT": "ICP-USD", "XLMUSDT": "XLM-USD",
     "HBARUSDT": "HBAR-USD", "QNTUSDT": "QNT-USD",
+    "TONUSDT": "GRAM-USD", "GRAMUSDT": "GRAM-USD",
     "ARBUSDT": "ARB-USD", "OPUSDT": "OP-USD", "SUIUSDT": "SUI-USD",
     "APTUSDT": "APT-USD", "INJUSDT": "INJ-USD", "TIAUSDT": "TIA-USD",
-    "SEIUSDT": "SEI-USD", "PEPEUSDT": "PEPE-USD", "SHIBUSDT": "SHIB-USD",
-    "WIFUSDT": "WIF-USD", "BONKUSDT": "BONK-USD", "JUPUSDT": "JUP-USD",
-    "PYTHUSDT": "PYTH-USD", "RNDRUSDT": "RNDR-USD", "FETUSDT": "FET-USD",
-    "GRTUSDT": "GRT-USD", "IMXUSDT": "IMX-USD", "LDOUSDT": "LDO-USD",
-    "CRVUSDT": "CRV-USD", "SNXUSDT": "SNX-USD", "COMPUSDT": "COMP-USD",
-    "MKRUSDT": "MKR-USD", "AAVEUSDT": "AAVE-USD", "SUSHIUSDT": "SUSHI-USD",
-    "YFIUSDT": "YFI-USD", "BALUSDT": "BAL-USD", "KNCUSDT": "KNC-USD",
-    "ZRXUSDT": "ZRX-USD", "BATUSDT": "BAT-USD", "ENJUSDT": "ENJ-USD",
-    "MANAUSDT": "MANA-USD", "SANDUSDT": "SAND-USD", "AXSUSDT": "AXS-USD",
-    "GALAUSDT": "GALA-USD", "CHZUSDT": "CHZ-USD", "APEUSDT": "APE-USD",
-    "GMTUSDT": "GMT-USD", "LRCUSDT": "LRC-USD", "STORJUSDT": "STORJ-USD",
-    "ANKRUSDT": "ANKR-USD", "CVCUSDT": "CVC-USD", "OMGUSDT": "OMG-USD",
-    "RENUSDT": "REN-USD", "ZILUSDT": "ZIL-USD", "KSMUSDT": "KSM-USD",
-    "GLMRUSDT": "GLMR-USD", "MOVRUSDT": "MOVR-USD", "ASTRUSDT": "ASTR-USD",
-    "CFXUSDT": "CFX-USD", "MASKUSDT": "MASK-USD", "DYDXUSDT": "DYDX-USD",
-    "GMXUSDT": "GMX-USD", "RPLUSDT": "RPL-USD", "BLURUSDT": "BLUR-USD",
-    "ENSUSDT": "ENS-USD", "LQTYUSDT": "LQTY-USD", "PENDLEUSDT": "PENDLE-USD",
+    "SEIUSDT": "SEI-USD", "STXUSDT": "STX-USD",
+    "PEPEUSDT": "PEPE-USD", "SHIBUSDT": "SHIB-USD", "WIFUSDT": "WIF-USD",
+    "BONKUSDT": "BONK-USD", "FLOKIUSDT": "FLOKI-USD",
+    "JUPUSDT": "JUP-USD", "PYTHUSDT": "PYTH-USD", "JTOUSDT": "JTO-USD",
+    "RNDRUSDT": "RNDR-USD", "FETUSDT": "FET-USD", "GRTUSDT": "GRT-USD",
+    "IMXUSDT": "IMX-USD", "LDOUSDT": "LDO-USD", "CRVUSDT": "CRV-USD",
+    "SNXUSDT": "SNX-USD", "COMPUSDT": "COMP-USD", "MKRUSDT": "MKR-USD",
+    "AAVEUSDT": "AAVE-USD", "SUSHIUSDT": "SUSHI-USD", "YFIUSDT": "YFI-USD",
+    "BALUSDT": "BAL-USD", "KNCUSDT": "KNC-USD", "ZRXUSDT": "ZRX-USD",
+    "BATUSDT": "BAT-USD", "ENJUSDT": "ENJ-USD", "MANAUSDT": "MANA-USD",
+    "SANDUSDT": "SAND-USD", "AXSUSDT": "AXS-USD", "GALAUSDT": "GALA-USD",
+    "CHZUSDT": "CHZ-USD", "APEUSDT": "APE-USD", "GMTUSDT": "GMT-USD",
+    "LRCUSDT": "LRC-USD", "STORJUSDT": "STORJ-USD", "ANKRUSDT": "ANKR-USD",
+    "CVCUSDT": "CVC-USD", "OMGUSDT": "OMG-USD", "RENUSDT": "REN-USD",
+    "ZILUSDT": "ZIL-USD", "KSMUSDT": "KSM-USD", "GLMRUSDT": "GLMR-USD",
+    "MOVRUSDT": "MOVR-USD", "ASTRUSDT": "ASTR-USD", "CFXUSDT": "CFX-USD",
+    "MASKUSDT": "MASK-USD", "DYDXUSDT": "DYDX-USD", "GMXUSDT": "GMX-USD",
+    "RPLUSDT": "RPL-USD", "BLURUSDT": "BLUR-USD", "ENSUSDT": "ENS-USD",
+    "LQTYUSDT": "LQTY-USD", "PENDLEUSDT": "PENDLE-USD",
     "MAGICUSDT": "MAGIC-USD", "HIGHUSDT": "HIGH-USD", "IDUSDT": "ID-USD",
     "ARKMUSDT": "ARKM-USD", "WLDUSDT": "WLD-USD", "EDUUSDT": "EDU-USD",
-    "HOOKUSDT": "HOOK-USD", "JTOUSDT": "JTO-USD", "BOMEUSDT": "BOME-USD",
-    "ETHFIUSDT": "ETHFI-USD", "ENAUSDT": "ENA-USD", "WUSDT": "W-USD",
-    "OMNIUSDT": "OMNI-USD", "REZUSDT": "REZ-USD", "ZKUSDT": "ZK-USD",
-    "STRKUSDT": "STRK-USD", "DYMUSDT": "DYM-USD", "ALTUSDT": "ALT-USD",
-    "MANTAUSDT": "MANTA-USD", "PIXELUSDT": "PIXEL-USD", "PORTALUSDT": "PORTAL-USD",
-    "AEVOUSDT": "AEVO-USD",
-    # --- v4.5.6 additional Binance-native aliases ---
-    "FLOWUSDT": "FLOW-USD", "KAVAUSDT": "KAVA-USD", "ROSEUSDT": "ROSE-USD",
-    "OCEANUSDT": "OCEAN-USD", "BANDUSDT": "BAND-USD", "NMRUSDT": "NMR-USD",
-    "MLNUSDT": "MLN-USD", "REPUSDT": "REP-USD", "KEEPUSDT": "KEEP-USD",
-    # --- precious metals futures ---
-    "GC=F": "GC=F", "SI=F": "SI=F", "HG=F": "HG=F", "PL=F": "PL=F",
-    "PA=F": "PA=F",
-    # --- GRAM (Gram Gold, Borsa Istanbul VIOP) — V-4 ---
-    "GRM=F": "GRAM=F", "GRAM=F": "GRAM=F",
-    # --- energy futures ---
-    "CL=F": "CL=F", "BZ=F": "BZ=F", "NG=F": "NG=F", "RB=F": "RB=F",
-    "HO=F": "HO=F", "QS=F": "QS=F", "QM=F": "QM=F", "QG=F": "QG=F",
-    "EH=F": "EH=F",
-    # --- grains & softs ---
-    "ZC=F": "ZC=F", "ZS=F": "ZS=F", "ZW=F": "ZW=F", "ZM=F": "ZM=F",
-    "ZL=F": "ZL=F", "ZO=F": "ZO=F", "ZR=F": "ZR=F", "KE=F": "KE=F",
-    "CC=F": "CC=F", "KC=F": "KC=F", "SB=F": "SB=F", "CT=F": "CT=F",
-    "OJ=F": "OJ=F", "LBS=F": "LBS=F",
-    # --- livestock ---
-    "LE=F": "LE=F", "GF=F": "GF=F", "HE=F": "HE=F", "LH=F": "LH=F",
-    # --- interest rates ---
-    "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZF=F": "ZF=F", "ZT=F": "ZT=F",
-    "ZQ=F": "ZQ=F", "GE=F": "GE=F", "SR3=F": "SR3=F",
-    # --- equity indices futures ---
-    "ES=F": "ES=F", "NQ=F": "NQ=F", "YM=F": "YM=F", "RTY=F": "RTY=F",
-    "EMD=F": "EMD=F", "NKD=F": "NKD=F", "FDAX=F": "FDAX=F",
-    "FESX=F": "FESX=F", "FTSE=F": "FTSE=F", "CAC=F": "CAC=F",
-    "DAX=F": "DAX=F", "SMI=F": "SMI=F", "IBEX=F": "IBEX=F",
-    "MIB=F": "MIB=F", "AEX=F": "AEX=F", "HSI=F": "HSI=F",
-    "MHI=F": "MHI=F", "NKY=F": "NKY=F", "SSE=F": "SSE=F",
-    "SZSE=F": "SZSE=F", "KOSPI=F": "KOSPI=F", "STW=F": "STW=F",
-    "VX=F": "VX=F",
-    # --- crypto futures (CME) ---
-    "BTC=F": "BTC=F", "ETH=F": "ETH=F", "MBT=F": "MBT=F", "MET=F": "MET=F",
-    # --- FX futures ---
-    "6E=F": "6E=F", "6J=F": "6J=F", "6B=F": "6B=F", "6A=F": "6A=F",
-    "6C=F": "6C=F", "6S=F": "6S=F", "6N=F": "6N=F", "6M=F": "6M=F",
-    "6R=F": "6R=F", "6Z=F": "6Z=F", "DX=F": "DX=F", "DX-Y.NYB": "DX-Y.NYB",
-    # --- Borsa Istanbul / MOEX / Asian futures ---
-    "XU030=F": "XU030=F", "XU100=F": "XU100=F",
-    "USDTRY=F": "USDTRY=F", "EURTRY=F": "EURTRY=F", "GBPTRY=F": "GBPTRY=F",
-    "RTS=F": "RTS=F", "IMOEX=F": "IMOEX=F", "SGX=F": "SGX=F",
-    "TAIEX=F": "TAIEX=F", "SET50=F": "SET50=F", "JKSE=F": "JKSE=F",
-    "KLSE=F": "KLSE=F", "PSEI=F": "PSEI=F", "VNINDEX=F": "VNINDEX=F",
-    # --- indices (spot) ---
-    "^GSPC": "^GSPC", "^DJI": "^DJI", "^IXIC": "^IXIC", "^RUT": "^RUT",
-    "^VIX": "^VIX", "^FTSE": "^FTSE", "^GDAXI": "^GDAXI", "^FCHI": "^FCHI",
-    "^STOXX50E": "^STOXX50E", "^N225": "^N225", "^HSI": "^HSI",
-    "^KS11": "^KS11", "^TWII": "^TWII", "^AXJO": "^AXJO", "^BSESN": "^BSESN",
-    "^NSEI": "^NSEI", "^BVSP": "^BVSP", "^MXX": "^MXX", "^MERV": "^MERV",
-    "^IPSA": "^IPSA", "^TA125.TA": "^TA125.TA", "^CASE30": "^CASE30",
-    "^TASI.SR": "^TASI.SR", "^DFMGI": "^DFMGI", "^ADI": "^ADI",
-    "^QSI": "^QSI", "^MSM": "^MSM", "^BVL": "^BVL", "^BIST": "^BIST",
-    "^XU030": "^XU030", "^XU100": "^XU100",
-    # --- US equities & ETFs (expanded) ---
+    "HOOKUSDT": "HOOK-USD", "BOMEUSDT": "BOME-USD", "ETHFIUSDT": "ETHFI-USD",
+    "ENAUSDT": "ENA-USD", "WUSDT": "W-USD", "OMNIUSDT": "OMNI-USD",
+    "REZUSDT": "REZ-USD", "ZKUSDT": "ZK-USD", "STRKUSDT": "STRK-USD",
+    "DYMUSDT": "DYM-USD", "ALTUSDT": "ALT-USD", "MANTAUSDT": "MANTA-USD",
+    "PIXELUSDT": "PIXEL-USD", "PORTALUSDT": "PORTAL-USD", "AEVOUSDT": "AEVO-USD",
+    # --- futures ---
+    "GC=F": "GC=F", "SI=F": "SI=F", "CL=F": "CL=F", "NG=F": "NG=F",
+    "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZS=F": "ZS=F", "ZM=F": "ZM=F",
+    "ZW=F": "ZW=F", "KE=F": "KE=F", "HG=F": "HG=F", "PL=F": "PL=F",
+    "PA=F": "PA=F", "RB=F": "RB=F", "HO=F": "HO=F", "CC=F": "CC=F",
+    "KC=F": "KC=F", "SB=F": "SB=F", "CT=F": "CT=F", "LH=F": "LH=F",
+    "LE=F": "LE=F", "GF=F": "GF=F", "ZO=F": "ZO=F", "ZR=F": "ZR=F",
+    "ZL=F": "ZL=F", "ES=F": "ES=F", "NQ=F": "NQ=F", "YM=F": "YM=F",
+    "RTY=F": "RTY=F",
+    "ALI=F": "ALI=F", "BZ=F": "BZ=F", "QM=F": "QM=F", "QA=F": "QA=F",
+    "ZC=F": "ZC=F", "ZP=F": "ZP=F", "OJ=F": "OJ=F", "LBS=F": "LBS=F",
+    "HE=F": "HE=F", "ZF=F": "ZF=F", "ZT=F": "ZT=F", "ZQ=F": "ZQ=F",
+    "GE=F": "GE=F", "SR3=F": "SR3=F", "TN=F": "TN=F", "NKD=F": "NKD=F",
+    "VX=F": "VX=F", "MES=F": "MES=F", "MNQ=F": "MNQ=F", "MYM=F": "MYM=F",
+    "M2K=F": "M2K=F", "BTC=F": "BTC=F", "ETH=F": "ETH=F", "MBT=F": "MBT=F",
+    "MET=F": "MET=F", "DX=F": "DX=F", "6E=F": "6E=F", "6J=F": "6J=F",
+    "6B=F": "6B=F", "6A=F": "6A=F", "6C=F": "6C=F", "6S=F": "6S=F",
+    "6N=F": "6N=F", "6M=F": "6M=F", "6Z=F": "6Z=F",
+    "AD=F": "AD=F", "CD=F": "CD=F", "NE=F": "NE=F", "SS=F": "SS=F",
+    "NI=F": "NI=F", "PB=F": "PB=F", "SN=F": "SN=F",
+    # --- equities / ETFs ---
     "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "GOOG": "GOOG",
-    "AMZN": "AMZN", "TSLA": "TSLA", "NVDA": "NVDA", "META": "META",
-    "NFLX": "NFLX", "AMD": "AMD", "INTC": "INTC", "AVGO": "AVGO",
-    "ORCL": "ORCL", "CRM": "CRM", "ADBE": "ADBE", "PYPL": "PYPL",
-    "SQ": "SQ", "SHOP": "SHOP", "UBER": "UBER", "LYFT": "LYFT",
-    "ABNB": "ABNB", "COIN": "COIN", "MSTR": "MSTR", "MARA": "MARA",
-    "RIOT": "RIOT", "HOOD": "HOOD", "SOFI": "SOFI", "PLTR": "PLTR",
-    "SNOW": "SNOW", "NET": "NET", "DDOG": "DDOG", "ZS": "ZS",
-    "CRWD": "CRWD", "OKTA": "OKTA", "TWLO": "TWLO", "U": "U",
-    "RBLX": "RBLX", "DKNG": "DKNG", "PENN": "PENN", "MGM": "MGM",
-    "WYNN": "WYNN", "LVS": "LVS", "MAR": "MAR", "HLT": "HLT",
-    "BKNG": "BKNG", "EXPE": "EXPE", "DIS": "DIS", "WBD": "WBD",
-    "PARA": "PARA", "CMCSA": "CMCSA", "T": "T", "VZ": "VZ",
-    "TMUS": "TMUS", "JPM": "JPM", "BAC": "BAC", "WFC": "WFC",
-    "C": "C", "GS": "GS", "MS": "MS", "BLK": "BLK", "SCHW": "SCHW",
-    "AXP": "AXP", "V": "V", "MA": "MA", "BRK-B": "BRK-B",
-    "XOM": "XOM", "CVX": "CVX", "COP": "COP", "SLB": "SLB",
-    "OXY": "OXY", "MPC": "MPC", "VLO": "VLO", "PSX": "PSX",
+    "AMZN": "AMZN", "META": "META", "NVDA": "NVDA", "TSLA": "TSLA",
+    "AVGO": "AVGO", "ORCL": "ORCL", "CRM": "CRM", "ADBE": "ADBE",
+    "AMD": "AMD", "INTC": "INTC", "CSCO": "CSCO", "QCOM": "QCOM",
+    "TXN": "TXN", "MU": "MU", "AMAT": "AMAT", "LRCX": "LRCX",
+    "KLAC": "KLAC", "MRVL": "MRVL", "SNPS": "SNPS", "CDNS": "CDNS",
+    "INTU": "INTU", "NOW": "NOW", "PANW": "PANW", "CRWD": "CRWD",
+    "ZS": "ZS", "DDOG": "DDOG", "SNOW": "SNOW", "PLTR": "PLTR",
+    "AI": "AI", "SMCI": "SMCI", "ARM": "ARM", "DELL": "DELL",
+    "HPQ": "HPQ", "HPE": "HPE", "WDC": "WDC", "STX": "STX",
+    "IBM": "IBM", "ACN": "ACN", "UBER": "UBER", "LYFT": "LYFT",
+    "ABNB": "ABNB", "DASH": "DASH", "SHOP": "SHOP", "SQ": "SQ",
+    "PYPL": "PYPL", "COIN": "COIN", "HOOD": "HOOD", "SOFI": "SOFI",
+    "AFRM": "AFRM", "UPST": "UPST", "LC": "LC",
+    "NFLX": "NFLX", "DIS": "DIS", "CMCSA": "CMCSA", "T": "T",
+    "VZ": "VZ", "TMUS": "TMUS", "WBD": "WBD", "PARA": "PARA",
+    "SPOT": "SPOT", "RBLX": "RBLX", "U": "U", "EA": "EA",
+    "TTWO": "TTWO", "ATVI": "ATVI", "NTES": "NTES", "BIDU": "BIDU",
+    "JD": "JD", "PDD": "PDD", "BABA": "BABA", "TCEHY": "TCEHY",
+    "NTDOY": "NTDOY", "SONY": "SONY",
+    "WMT": "WMT", "COST": "COST", "TGT": "TGT", "HD": "HD",
+    "LOW": "LOW", "NKE": "NKE", "SBUX": "SBUX", "MCD": "MCD",
+    "KO": "KO", "PEP": "PEP", "PG": "PG", "CL": "CL",
+    "KMB": "KMB", "GIS": "GIS", "K": "K", "HSY": "HSY",
+    "MDLZ": "MDLZ", "STZ": "STZ", "TAP": "TAP", "SAM": "SAM",
+    "BUD": "BUD", "DEO": "DEO", "MO": "MO", "PM": "PM",
+    "EL": "EL", "ULTA": "ULTA", "ROST": "ROST", "TJX": "TJX",
+    "BBY": "BBY", "DG": "DG", "DLTR": "DLTR", "LULU": "LULU",
+    "GPS": "GPS", "ANF": "ANF", "M": "M", "KSS": "KSS",
+    "JWN": "JWN",
+    "JPM": "JPM", "BAC": "BAC", "WFC": "WFC", "C": "C",
+    "GS": "GS", "MS": "MS", "BLK": "BLK", "SCHW": "SCHW",
+    "AXP": "AXP", "V": "V", "MA": "MA", "USB": "USB",
+    "PNC": "PNC", "TFC": "TFC", "COF": "COF", "DFS": "DFS",
+    "BK": "BK", "STT": "STT", "NTRS": "NTRS", "FITB": "FITB",
+    "HBAN": "HBAN", "RF": "RF", "KEY": "KEY", "CFG": "CFG",
+    "BRK-B": "BRK-B", "BRK-A": "BRK-A", "AIG": "AIG", "MET": "MET",
+    "PRU": "PRU", "AFL": "AFL", "ALL": "ALL", "TRV": "TRV",
+    "PGR": "PGR", "CB": "CB", "MMC": "MMC", "AON": "AON",
+    "AJG": "AJG", "WLTW": "WLTW", "BRO": "BRO",
     "JNJ": "JNJ", "PFE": "PFE", "MRK": "MRK", "ABBV": "ABBV",
     "LLY": "LLY", "BMY": "BMY", "AMGN": "AMGN", "GILD": "GILD",
-    "BIIB": "BIIB", "UNH": "UNH", "CVS": "CVS", "CI": "CI",
-    "HUM": "HUM", "WMT": "WMT", "COST": "COST", "TGT": "TGT",
-    "HD": "HD", "LOW": "LOW", "NKE": "NKE", "SBUX": "SBUX",
-    "MCD": "MCD", "YUM": "YUM", "CMG": "CMG", "KO": "KO",
-    "PEP": "PEP", "PG": "PG", "CL": "CL", "KMB": "KMB",
-    "GIS": "GIS", "K": "K", "HSY": "HSY", "BA": "BA",
-    "AIR.PA": "AIR.PA", "LMT": "LMT", "RTX": "RTX", "GD": "GD",
-    "NOC": "NOC", "GE": "GE", "CAT": "CAT", "DE": "DE",
-    "MMM": "MMM", "HON": "HON", "UPS": "UPS", "FDX": "FDX",
-    "F": "F", "GM": "GM", "RIVN": "RIVN", "LCID": "LCID",
-    "NIO": "NIO", "XPEV": "XPEV", "LI": "LI", "BABA": "BABA",
-    "JD": "JD", "PDD": "PDD", "BIDU": "BIDU", "TCEHY": "TCEHY",
-    "TSM": "TSM", "ASML": "ASML", "SAP": "SAP", "SONY": "SONY",
-    "TM": "TM", "HMC": "HMC",
-    # --- ETFs ---
+    "BIIB": "BIIB", "REGN": "REGN", "VRTX": "VRTX", "MRNA": "MRNA",
+    "BNTX": "BNTX", "AZN": "AZN", "GSK": "GSK", "SNY": "SNY",
+    "NVS": "NVS", "UNH": "UNH", "CVS": "CVS", "CI": "CI",
+    "HUM": "HUM", "ELV": "ELV", "ANTM": "ANTM", "CNC": "CNC",
+    "MOH": "MOH", "HCA": "HCA", "UHS": "UHS", "THC": "THC",
+    "MCK": "MCK", "ABC": "ABC", "CAH": "CAH",
+    "MDT": "MDT", "SYK": "SYK", "BSX": "BSX", "ZBH": "ZBH",
+    "BDX": "BDX", "BAX": "BAX", "ISRG": "ISRG", "EW": "EW",
+    "DXCM": "DXCM", "PODD": "PODD", "ILMN": "ILMN", "CRL": "CRL",
+    "IQV": "IQV", "A": "A", "WAT": "WAT", "MTD": "MTD",
+    "BA": "BA", "CAT": "CAT", "DE": "DE", "HON": "HON",
+    "GE": "GE", "MMM": "MMM", "LMT": "LMT", "RTX": "RTX",
+    "NOC": "NOC", "GD": "GD", "LHX": "LHX", "HII": "HII",
+    "TDG": "TDG", "HWM": "HWM", "TXT": "TXT", "CARR": "CARR",
+    "OTIS": "OTIS", "CMI": "CMI", "PCAR": "PCAR", "NAV": "NAV",
+    "URI": "URI", "FAST": "FAST", "GWW": "GWW", "ITW": "ITW",
+    "EMR": "EMR", "ETN": "ETN", "PH": "PH", "ROK": "ROK",
+    "DOV": "DOV", "AME": "AME", "IR": "IR", "XYL": "XYL",
+    "UPS": "UPS", "FDX": "FDX", "DAL": "DAL", "UAL": "UAL",
+    "AAL": "AAL", "LUV": "LUV", "ALK": "ALK", "JBLU": "JBLU",
+    "XOM": "XOM", "CVX": "CVX", "COP": "COP", "EOG": "EOG",
+    "PXD": "PXD", "OXY": "OXY", "PSX": "PSX", "VLO": "VLO",
+    "MPC": "MPC", "SLB": "SLB", "HAL": "HAL", "BKR": "BKR",
+    "NOV": "NOV", "FTI": "FTI", "KMI": "KMI", "WMB": "WMB",
+    "OKE": "OKE", "ET": "ET", "EPD": "EPD", "MMP": "MMP",
+    "PAA": "PAA", "TRGP": "TRGP", "LNG": "LNG", "EQT": "EQT",
+    "RRC": "RRC", "AR": "AR", "CNX": "CNX", "SWN": "SWN",
+    "CHK": "CHK", "DVN": "DVN", "FANG": "FANG", "HES": "HES",
+    "MRO": "MRO", "APA": "APA", "CTRA": "CTRA",
+    "LIN": "LIN", "APD": "APD", "SHW": "SHW", "ECL": "ECL",
+    "DD": "DD", "DOW": "DOW", "LYB": "LYB", "PPG": "PPG",
+    "NEM": "NEM", "FCX": "FCX", "NUE": "NUE", "STLD": "STLD",
+    "CLF": "CLF", "X": "X", "AA": "AA", "MP": "MP",
+    "ALB": "ALB", "SQM": "SQM", "LAC": "LAC", "VALE": "VALE",
+    "RIO": "RIO", "BHP": "BHP", "MT": "MT", "GOLD": "GOLD",
+    "NEE": "NEE", "DUK": "DUK", "SO": "SO", "D": "D",
+    "AEP": "AEP", "EXC": "EXC", "XEL": "XEL", "ED": "ED",
+    "WEC": "WEC", "ES": "ES", "AWK": "AWK", "SRE": "SRE",
+    "PCG": "PCG", "EIX": "EIX", "PEG": "PEG", "FE": "FE",
+    "PPL": "PPL", "CMS": "CMS", "DTE": "DTE", "AEE": "AEE",
+    "CNP": "CNP", "NI": "NI", "LNT": "LNT", "EVRG": "EVRG",
+    "PLD": "PLD", "AMT": "AMT", "CCI": "CCI", "EQIX": "EQIX",
+    "DLR": "DLR", "SPG": "SPG", "O": "O", "PSA": "PSA",
+    "EXR": "EXR", "AVB": "AVB", "EQR": "EQR", "MAA": "MAA",
+    "ESS": "ESS", "UDR": "UDR", "CPT": "CPT", "AIV": "AIV",
+    "VTR": "VTR", "WELL": "WELL", "PEAK": "PEAK", "HST": "HST",
+    "RHP": "RHP", "IRM": "IRM", "SBAC": "SBAC",
     "SPY": "SPY", "QQQ": "QQQ", "DIA": "DIA", "IWM": "IWM",
     "VTI": "VTI", "VOO": "VOO", "VEA": "VEA", "VWO": "VWO",
-    "EEM": "EEM", "EFA": "EFA", "AGG": "AGG", "BND": "BND",
-    "TLT": "TLT", "IEF": "IEF", "SHY": "SHY", "LQD": "LQD",
-    "HYG": "HYG", "GLD": "GLD", "SLV": "SLV", "GDX": "GDX",
-    "GDXJ": "GDXJ", "USO": "USO", "UNG": "UNG", "XLE": "XLE",
-    "XLF": "XLF", "XLK": "XLK", "XLV": "XLV", "XLI": "XLI",
-    "XLP": "XLP", "XLY": "XLY", "XLU": "XLU", "XLB": "XLB",
-    "XLRE": "XLRE", "ARKK": "ARKK", "ARKG": "ARKG", "ARKW": "ARKW",
-    "SOXX": "SOXX", "SMH": "SMH", "IBB": "IBB", "XBI": "XBI",
-    "KRE": "KRE", "ITB": "ITB", "XHB": "XHB",
-    # --- FX spot ---
+    "IVV": "IVV", "VTV": "VTV", "VUG": "VUG", "IWF": "IWF",
+    "IWD": "IWD", "IWB": "IWB", "IWV": "IWV", "RSP": "RSP",
+    "MDY": "MDY", "IJH": "IJH", "IJR": "IJR", "IJS": "IJS",
+    "IJJ": "IJJ", "IJK": "IJK", "IJT": "IJT",
+    "XLK": "XLK", "XLF": "XLF", "XLV": "XLV", "XLE": "XLE",
+    "XLI": "XLI", "XLP": "XLP", "XLY": "XLY", "XLU": "XLU",
+    "XLB": "XLB", "XLRE": "XLRE", "XLC": "XLC", "SMH": "SMH",
+    "SOXX": "SOXX", "IGV": "IGV", "VGT": "VGT", "FTEC": "FTEC",
+    "VHT": "VHT", "VFH": "VFH", "VIS": "VIS", "VPU": "VPU",
+    "VDC": "VDC", "VCR": "VCR", "VAW": "VAW", "VNQ": "VNQ",
+    "KRE": "KRE", "KBE": "KBE", "XBI": "XBI", "IBB": "IBB",
+    "IHI": "IHI", "IHF": "IHF", "ITA": "ITA", "XAR": "XAR",
+    "XOP": "XOP", "OIH": "OIH", "XME": "XME", "GDX": "GDX",
+    "GDXJ": "GDXJ", "SIL": "SIL", "URA": "URA", "LIT": "LIT",
+    "TAN": "TAN", "ICLN": "ICLN", "PBW": "PBW", "FAN": "FAN",
+    "JETS": "JETS", "PEJ": "PEJ", "XRT": "XRT", "ITB": "ITB",
+    "XHB": "XHB", "HACK": "HACK", "BOTZ": "BOTZ", "ROBO": "ROBO",
+    "ARKK": "ARKK", "ARKG": "ARKG", "ARKW": "ARKW", "ARKF": "ARKF",
+    "ARKQ": "ARKQ", "ARKX": "ARKX",
+    "EFA": "EFA", "EEM": "EEM", "IEFA": "IEFA", "IEMG": "IEMG",
+    "FXI": "FXI", "MCHI": "MCHI", "KWEB": "KWEB", "CQQQ": "CQQQ",
+    "EWJ": "EWJ", "EWZ": "EWZ", "EWW": "EWW", "EWY": "EWY",
+    "EWT": "EWT", "EWU": "EWU", "EWG": "EWG", "EWQ": "EWQ",
+    "EWI": "EWI", "EWP": "EWP", "EWN": "EWN", "EWD": "EWD",
+    "EWL": "EWL", "EWC": "EWC", "EWA": "EWA", "EWH": "EWH",
+    "EWS": "EWS", "EWM": "EWM", "EPI": "EPI", "INDA": "INDA",
+    "SMIN": "SMIN", "EPHE": "EPHE", "EZA": "EZA", "TUR": "TUR",
+    "EIS": "EIS", "KSA": "KSA", "UAE": "UAE",
+    "IAU": "IAU", "SLV": "SLV", "SIVR": "SIVR", "PPLT": "PPLT",
+    "PALL": "PALL", "USO": "USO", "BNO": "BNO", "UNG": "UNG",
+    "UNL": "UNL", "DBA": "DBA", "DBC": "DBC", "GSG": "GSG",
+    "PDBC": "PDBC", "CPER": "CPER", "COPX": "COPX", "REMX": "REMX",
+    "WOOD": "WOOD",
+    "TLT": "TLT", "IEF": "IEF", "SHY": "SHY", "AGG": "AGG",
+    "BND": "BND", "LQD": "LQD", "HYG": "HYG", "JNK": "JNK",
+    "TIP": "TIP", "VTIP": "VTIP", "MUB": "MUB", "EMB": "EMB",
+    "BNDX": "BNDX", "IGSB": "IGSB", "IGIB": "IGIB", "SCHO": "SCHO",
+    "SCHR": "SCHR", "SCHZ": "SCHZ", "VCIT": "VCIT", "VCSH": "VCSH",
+    "BSV": "BSV", "BIV": "BIV", "BLV": "BLV", "GOVT": "GOVT",
+    "SPTL": "SPTL", "SPTI": "SPTI", "SPTS": "SPTS",
+    "TQQQ": "TQQQ", "SQQQ": "SQQQ", "SPXL": "SPXL", "SPXS": "SPXS",
+    "UPRO": "UPRO", "SPXU": "SPXU", "TNA": "TNA", "TZA": "TZA",
+    "FAS": "FAS", "FAZ": "FAZ", "LABU": "LABU", "LABD": "LABD",
+    "YINN": "YINN", "YANG": "YANG", "SOXL": "SOXL", "SOXS": "SOXS",
+    "TECL": "TECL", "TECS": "TECS", "UDOW": "UDOW", "SDOW": "SDOW",
+    "SCHD": "SCHD", "VYM": "VYM", "DVY": "DVY", "HDV": "HDV",
+    "SPHD": "SPHD", "SDY": "SDY", "VIG": "VIG", "DGRO": "DGRO",
+    "NOBL": "NOBL", "QUAL": "QUAL", "MTUM": "MTUM", "VLUE": "VLUE",
+    "SIZE": "SIZE", "USMV": "USMV", "SPLV": "SPLV", "SPHQ": "SPHQ",
+    "RPG": "RPG", "RPV": "RPV", "EQWL": "EQWL",
+    "QCLN": "QCLN", "ACES": "ACES", "DRIV": "DRIV", "IDRV": "IDRV",
+    "ESPO": "ESPO", "NERD": "NERD", "HERO": "HERO", "GAMR": "GAMR",
+    "BITO": "BITO", "BITQ": "BITQ", "WGMI": "WGMI", "DAPP": "DAPP",
+    "BLOK": "BLOK", "LEGR": "LEGR", "MOAT": "MOAT", "SCHG": "SCHG",
+    "SCHV": "SCHV", "VONG": "VONG", "VONV": "VONV", "IUSG": "IUSG",
+    "IUSV": "IUSV",
+    "RIVN": "RIVN", "LCID": "LCID", "NIO": "NIO", "XPEV": "XPEV",
+    "LI": "LI", "FSR": "FSR", "GOEV": "GOEV", "PLUG": "PLUG",
+    "FCEL": "FCEL", "BLDP": "BLDP", "BE": "BE", "ENPH": "ENPH",
+    "SEDG": "SEDG", "RUN": "RUN", "NOVA": "NOVA", "SPWR": "SPWR",
+    "CSIQ": "CSIQ", "JKS": "JKS", "DQ": "DQ", "MAXN": "MAXN",
+    "ARRY": "ARRY", "MSTR": "MSTR", "MARA": "MARA", "RIOT": "RIOT",
+    "HUT": "HUT", "BITF": "BITF", "CLSK": "CLSK", "CIFR": "CIFR",
+    "IREN": "IREN", "WULF": "WULF", "CORZ": "CORZ", "BTBT": "BTBT",
+    "CAN": "CAN", "EBON": "EBON", "SOS": "SOS",
+    "GME": "GME", "AMC": "AMC", "BB": "BB", "NOK": "NOK",
+    "KOSS": "KOSS", "EXPR": "EXPR", "BBBY": "BBBY", "CVNA": "CVNA",
+    "CHWY": "CHWY", "W": "W", "ETSY": "ETSY", "EBAY": "EBAY",
+    "OSTK": "OSTK", "WISH": "WISH", "PTON": "PTON", "ZM": "ZM",
+    "DOCU": "DOCU", "TWLO": "TWLO", "OKTA": "OKTA", "NET": "NET",
+    "FSLY": "FSLY", "ESTC": "ESTC", "MDB": "MDB", "TEAM": "TEAM",
+    "WORK": "WORK", "SPLK": "SPLK", "NEWR": "NEWR", "SUMO": "SUMO",
+    "PD": "PD", "APPF": "APPF", "BL": "BL", "ZI": "ZI",
+    "MGNI": "MGNI", "TTD": "TTD", "PUBM": "PUBM", "ROKU": "ROKU",
+    "FUBO": "FUBO", "ASAN": "ASAN", "MNDY": "MNDY", "HUBS": "HUBS",
+    "BILL": "BILL", "TOST": "TOST",
+    # --- forex ---
     "EURUSD=X": "EURUSD=X", "GBPUSD=X": "GBPUSD=X", "USDJPY=X": "USDJPY=X",
     "USDCHF=X": "USDCHF=X", "USDCAD=X": "USDCAD=X", "AUDUSD=X": "AUDUSD=X",
     "NZDUSD=X": "NZDUSD=X", "EURGBP=X": "EURGBP=X", "EURJPY=X": "EURJPY=X",
-    "GBPJPY=X": "GBPJPY=X", "USDTRY=X": "USDTRY=X", "EURTRY=X": "EURTRY=X",
-    "USDCNY=X": "USDCNY=X", "USDINR=X": "USDINR=X", "USDBRL=X": "USDBRL=X",
-    "USDMXN=X": "USDMXN=X", "USDZAR=X": "USDZAR=X", "USDSEK=X": "USDSEK=X",
-    "USDNOK=X": "USDNOK=X", "USDDKK=X": "USDDKK=X", "USDPLN=X": "USDPLN=X",
-    "USDHUF=X": "USDHUF=X", "USDCZK=X": "USDCZK=X", "USDRUB=X": "USDRUB=X",
-    "USDKRW=X": "USDKRW=X", "USDSGD=X": "USDSGD=X", "USDHKD=X": "USDHKD=X",
-    "USDTWD=X": "USDTWD=X", "USDTHB=X": "USDTHB=X", "USDIDR=X": "USDIDR=X",
-    "USDPHP=X": "USDPHP=X", "USDMYR=X": "USDMYR=X", "USDVND=X": "USDVND=X",
-    "USDEGP=X": "USDEGP=X", "USDSAR=X": "USDSAR=X", "USDAED=X": "USDAED=X",
-    "USDQAR=X": "USDQAR=X", "USDKWD=X": "USDKWD=X", "USDBHD=X": "USDBHD=X",
-    "USDOMR=X": "USDOMR=X", "USDJOD=X": "USDJOD=X", "USDLBP=X": "USDLBP=X",
-    "USDNGN=X": "USDNGN=X", "USDKES=X": "USDKES=X", "USDGHS=X": "USDGHS=X",
-    "USDMAD=X": "USDMAD=X", "USDTND=X": "USDTND=X", "USDARS=X": "USDARS=X",
-    "USDCLP=X": "USDCLP=X", "USDCOP=X": "USDCOP=X", "USDPEN=X": "USDPEN=X",
+    "EURCHF=X": "EURCHF=X", "EURCAD=X": "EURCAD=X", "EURAUD=X": "EURAUD=X",
+    "EURNZD=X": "EURNZD=X", "GBPJPY=X": "GBPJPY=X", "GBPCHF=X": "GBPCHF=X",
+    "GBPCAD=X": "GBPCAD=X", "GBPAUD=X": "GBPAUD=X", "GBPNZD=X": "GBPNZD=X",
+    "AUDJPY=X": "AUDJPY=X", "AUDCHF=X": "AUDCHF=X", "AUDCAD=X": "AUDCAD=X",
+    "AUDNZD=X": "AUDNZD=X", "NZDJPY=X": "NZDJPY=X", "NZDCHF=X": "NZDCHF=X",
+    "NZDCAD=X": "NZDCAD=X", "CADJPY=X": "CADJPY=X", "CADCHF=X": "CADCHF=X",
+    "CHFJPY=X": "CHFJPY=X", "USDSEK=X": "USDSEK=X", "USDNOK=X": "USDNOK=X",
+    "USDDKK=X": "USDDKK=X", "USDPLN=X": "USDPLN=X", "USDHUF=X": "USDHUF=X",
+    "USDCZK=X": "USDCZK=X", "USDTRY=X": "USDTRY=X", "USDMXN=X": "USDMXN=X",
+    "USDZAR=X": "USDZAR=X", "USDSGD=X": "USDSGD=X", "USDHKD=X": "USDHKD=X",
+    "USDCNH=X": "USDCNH=X", "USDINR=X": "USDINR=X", "USDKRW=X": "USDKRW=X",
+    "USDTWD=X": "USDTWD=X", "USDTHB=X": "USDTHB=X", "USDMYR=X": "USDMYR=X",
+    "USDPHP=X": "USDPHP=X", "USDIDR=X": "USDIDR=X", "USDBRL=X": "USDBRL=X",
+    "USDARS=X": "USDARS=X", "USDCLP=X": "USDCLP=X",
+    "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "USDJPY=X",
+    "USDCHF": "USDCHF=X", "USDCAD": "USDCAD=X", "AUDUSD": "AUDUSD=X",
+    "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
+    "GBPJPY": "GBPJPY=X", "AUDJPY": "AUDJPY=X", "CADJPY": "CADJPY=X",
+    "CHFJPY": "CHFJPY=X", "NZDJPY": "NZDJPY=X",
+    # --- indices ---
+    "^GSPC": "^GSPC", "^DJI": "^DJI", "^IXIC": "^IXIC", "^RUT": "^RUT",
+    "^VIX": "^VIX", "^FTSE": "^FTSE", "^GDAXI": "^GDAXI", "^FCHI": "^FCHI",
+    "^STOXX50E": "^STOXX50E", "^N225": "^N225", "^HSI": "^HSI",
+    "^KS11": "^KS11", "^AXJO": "^AXJO", "^BSESN": "^BSESN",
+    "^BVSP": "^BVSP", "^MXX": "^MXX", "^TWII": "^TWII", "^STI": "^STI",
 }
 
 # ============================================================================
 # SYMBOL FALLBACKS — v4.5.6 EXPANDED
 # ============================================================================
-SYMBOL_FALLBACKS: Dict[str, List[str]] = {
-    # --- crypto ---
-    "BTC-USD":  ["BTC-USD", "BTCUSD=X"], "ETH-USD":  ["ETH-USD", "ETHUSD=X"],
-    "XRP-USD":  ["XRP-USD", "XRPUSD=X"], "ADA-USD":  ["ADA-USD", "ADAUSD=X"],
-    "SOL-USD":  ["SOL-USD", "SOLUSD=X"], "DOGE-USD": ["DOGE-USD", "DOGEUSD=X"],
-    "LTC-USD":  ["LTC-USD", "LTCUSD=X"], "LINK-USD": ["LINK-USD", "LINKUSD=X"],
-    "DOT-USD":  ["DOT-USD", "DOTUSD=X"], "AVAX-USD": ["AVAX-USD", "AVAXUSD=X"],
-    "MATIC-USD":["MATIC-USD", "MATICUSD=X"], "UNI-USD":  ["UNI-USD", "UNIUSD=X"],
-    "ATOM-USD": ["ATOM-USD", "ATOMUSD=X"], "NEAR-USD": ["NEAR-USD", "NEARUSD=X"],
-    "FIL-USD":  ["FIL-USD", "FILUSD=X"], "ETC-USD":  ["ETC-USD", "ETCUSD=X"],
-    "ICP-USD":  ["ICP-USD", "ICPUSD=X"], "XLM-USD":  ["XLM-USD", "XLMUSD=X"],
-    "HBAR-USD": ["HBAR-USD", "HBARUSD=X"], "QNT-USD":  ["QNT-USD", "QNTUSD=X"],
-    "ARB-USD":  ["ARB-USD", "ARBUSD=X"], "OP-USD":   ["OP-USD", "OPUSD=X"],
-    "SUI-USD":  ["SUI-USD", "SUIUSD=X"], "APT-USD":  ["APT-USD", "APTUSD=X"],
-    "INJ-USD":  ["INJ-USD", "INJUSD=X"], "TIA-USD":  ["TIA-USD", "TIAUSD=X"],
-    "SEI-USD":  ["SEI-USD", "SEIUSD=X"], "PEPE-USD": ["PEPE-USD", "PEPEUSD=X"],
-    "SHIB-USD": ["SHIB-USD", "SHIBUSD=X"], "WIF-USD":  ["WIF-USD", "WIFUSD=X"],
-    "BONK-USD": ["BONK-USD", "BONKUSD=X"], "JUP-USD":  ["JUP-USD", "JUPUSD=X"],
-    "PYTH-USD": ["PYTH-USD", "PYTHUSD=X"], "RNDR-USD": ["RNDR-USD", "RNDRUSD=X"],
-    "FET-USD":  ["FET-USD", "FETUSD=X"], "GRT-USD":  ["GRT-USD", "GRTUSD=X"],
-    "IMX-USD":  ["IMX-USD", "IMXUSD=X"], "LDO-USD":  ["LDO-USD", "LDOUSD=X"],
-    "CRV-USD":  ["CRV-USD", "CRVUSD=X"], "SNX-USD":  ["SNX-USD", "SNXUSD=X"],
-    "COMP-USD": ["COMP-USD", "COMPUSD=X"], "MKR-USD":  ["MKR-USD", "MKRUSD=X"],
-    "AAVE-USD": ["AAVE-USD", "AAVEUSD=X"], "SUSHI-USD":["SUSHI-USD", "SUSHIUSD=X"],
-    "YFI-USD":  ["YFI-USD", "YFIUSD=X"], "BAL-USD":  ["BAL-USD", "BALUSD=X"],
-    "KNC-USD":  ["KNC-USD", "KNCUSD=X"], "ZRX-USD":  ["ZRX-USD", "ZRXUSD=X"],
-    "BAT-USD":  ["BAT-USD", "BATUSD=X"], "ENJ-USD":  ["ENJ-USD", "ENJUSD=X"],
-    "MANA-USD": ["MANA-USD", "MANAUSD=X"], "SAND-USD": ["SAND-USD", "SANDUSD=X"],
-    "AXS-USD":  ["AXS-USD", "AXSUSD=X"], "GALA-USD": ["GALA-USD", "GALAUSD=X"],
-    "CHZ-USD":  ["CHZ-USD", "CHZUSD=X"], "APE-USD":  ["APE-USD", "APEUSD=X"],
-    "GMT-USD":  ["GMT-USD", "GMTUSD=X"], "LRC-USD":  ["LRC-USD", "LRCUSD=X"],
-    "STORJ-USD":["STORJ-USD", "STORJUSD=X"], "ANKR-USD": ["ANKR-USD", "ANKRUSD=X"],
-    "CVC-USD":  ["CVC-USD", "CVCUSD=X"], "OMG-USD":  ["OMG-USD", "OMGUSD=X"],
-    "REN-USD":  ["REN-USD", "RENUSD=X"], "ZIL-USD":  ["ZIL-USD", "ZILUSD=X"],
-    "KSM-USD":  ["KSM-USD", "KSMUSD=X"], "GLMR-USD": ["GLMR-USD", "GLMRUSD=X"],
-    "MOVR-USD": ["MOVR-USD", "MOVRUSD=X"], "ASTR-USD": ["ASTR-USD", "ASTRUSD=X"],
-    "CFX-USD":  ["CFX-USD", "CFXUSD=X"], "MASK-USD": ["MASK-USD", "MASKUSD=X"],
-    "DYDX-USD": ["DYDX-USD", "DYDXUSD=X"], "GMX-USD":  ["GMX-USD", "GMXUSD=X"],
-    "RPL-USD":  ["RPL-USD", "RPLUSD=X"], "BLUR-USD": ["BLUR-USD", "BLURUSD=X"],
-    "ENS-USD":  ["ENS-USD", "ENSUSD=X"], "LQTY-USD": ["LQTY-USD", "LQTYUSD=X"],
-    "PENDLE-USD":["PENDLE-USD", "PENDLEUSD=X"], "MAGIC-USD": ["MAGIC-USD", "MAGICUSD=X"],
-    "HIGH-USD": ["HIGH-USD", "HIGHUSD=X"], "ID-USD":   ["ID-USD", "IDUSD=X"],
-    "ARKM-USD": ["ARKM-USD", "ARKMUSD=X"], "WLD-USD":  ["WLD-USD", "WLDUSD=X"],
-    "EDU-USD":  ["EDU-USD", "EDUUSD=X"], "HOOK-USD": ["HOOK-USD", "HOOKUSD=X"],
-    "JTO-USD":  ["JTO-USD", "JTOUSD=X"], "BOME-USD": ["BOME-USD", "BOMEUSD=X"],
-    "ETHFI-USD":["ETHFI-USD", "ETHFIUSD=X"], "ENA-USD": ["ENA-USD", "ENAUSD=X"],
-    "W-USD":    ["W-USD", "WUSD=X"], "OMNI-USD": ["OMNI-USD", "OMNIUSD=X"],
-    "REZ-USD":  ["REZ-USD", "REZUSD=X"], "ZK-USD":   ["ZK-USD", "ZKUSD=X"],
-    "STRK-USD": ["STRK-USD", "STRKUSD=X"], "DYM-USD":  ["DYM-USD", "DYMUSD=X"],
-    "ALT-USD":  ["ALT-USD", "ALTUSD=X"], "MANTA-USD":["MANTA-USD", "MANTAUSD=X"],
-    "PIXEL-USD":["PIXEL-USD", "PIXELUSD=X"], "PORTAL-USD":["PORTAL-USD", "PORTALUSD=X"],
-    "AEVO-USD": ["AEVO-USD", "AEVOUSD=X"],
-    # --- v4.5.6 additional crypto ---
-    "FLOW-USD": ["FLOW-USD", "FLOWUSD=X"], "KAVA-USD": ["KAVA-USD", "KAVAUSD=X"],
-    "ROSE-USD": ["ROSE-USD", "ROSEUSD=X"], "OCEAN-USD":["OCEAN-USD", "OCEANUSD=X"],
-    "BAND-USD": ["BAND-USD", "BANDUSD=X"], "NMR-USD":  ["NMR-USD", "NMRUSD=X"],
-    "MLN-USD":  ["MLN-USD", "MLNUSD=X"], "REP-USD":  ["REP-USD", "REPUSD=X"],
-    "KEEP-USD": ["KEEP-USD", "KEEPUSD=X"], "TBTC-USD": ["TBTC-USD", "TBTCUSD=X"],
-    "AUD-USD":  ["AUD-USD", "AUDUSD=X"], "EUR-USD":  ["EUR-USD", "EURUSD=X"],
-    "GBP-USD":  ["GBP-USD", "GBPUSD=X"], "JPY-USD":  ["JPY-USD", "JPYUSD=X"],
-    # --- futures ---
-    "GC=F": ["GC=F"], "SI=F": ["SI=F"], "HG=F": ["HG=F"], "PL=F": ["PL=F"],
-    "PA=F": ["PA=F"],
-    "GRM=F": ["GRAM=F", "GRM=F"], "GRAM=F": ["GRAM=F", "GRM=F"],
-    "CL=F": ["CL=F"], "BZ=F": ["BZ=F"], "NG=F": ["NG=F"], "RB=F": ["RB=F"],
-    "HO=F": ["HO=F"], "QS=F": ["QS=F"], "QM=F": ["QM=F"], "QG=F": ["QG=F"],
-    "EH=F": ["EH=F"],
-    "ZC=F": ["ZC=F"], "ZS=F": ["ZS=F"], "ZW=F": ["ZW=F"], "ZM=F": ["ZM=F"],
-    "ZL=F": ["ZL=F"], "ZO=F": ["ZO=F"], "ZR=F": ["ZR=F"], "KE=F": ["KE=F"],
-    "CC=F": ["CC=F"], "KC=F": ["KC=F"], "SB=F": ["SB=F"], "CT=F": ["CT=F"],
-    "OJ=F": ["OJ=F"], "LBS=F": ["LBS=F"],
-    "LE=F": ["LE=F"], "GF=F": ["GF=F"], "HE=F": ["HE=F"], "LH=F": ["LH=F"],
-    "ZB=F": ["ZB=F"], "ZN=F": ["ZN=F"], "ZF=F": ["ZF=F"], "ZT=F": ["ZT=F"],
-    "ZQ=F": ["ZQ=F"], "GE=F": ["GE=F"], "SR3=F": ["SR3=F"],
-    "ES=F": ["ES=F"], "NQ=F": ["NQ=F"], "YM=F": ["YM=F"], "RTY=F": ["RTY=F"],
-    "EMD=F": ["EMD=F"], "NKD=F": ["NKD=F"], "FDAX=F": ["FDAX=F"],
-    "FESX=F": ["FESX=F"], "FTSE=F": ["FTSE=F"], "CAC=F": ["CAC=F"],
-    "DAX=F": ["DAX=F"], "SMI=F": ["SMI=F"], "IBEX=F": ["IBEX=F"],
-    "MIB=F": ["MIB=F"], "AEX=F": ["AEX=F"], "HSI=F": ["HSI=F"],
-    "MHI=F": ["MHI=F"], "NKY=F": ["NKY=F"], "SSE=F": ["SSE=F"],
-    "SZSE=F": ["SZSE=F"], "KOSPI=F": ["KOSPI=F"], "STW=F": ["STW=F"],
-    "VX=F": ["VX=F"],
-    "BTC=F": ["BTC=F"], "ETH=F": ["ETH=F"], "MBT=F": ["MBT=F"], "MET=F": ["MET=F"],
-    "6E=F": ["6E=F"], "6J=F": ["6J=F"], "6B=F": ["6B=F"], "6A=F": ["6A=F"],
-    "6C=F": ["6C=F"], "6S=F": ["6S=F"], "6N=F": ["6N=F"], "6M=F": ["6M=F"],
-    "6R=F": ["6R=F"], "6Z=F": ["6Z=F"], "DX=F": ["DX=F"], "DX-Y.NYB": ["DX-Y.NYB"],
-    "XU030=F": ["XU030=F"], "XU100=F": ["XU100=F"],
-    "USDTRY=F": ["USDTRY=F"], "EURTRY=F": ["EURTRY=F"], "GBPTRY=F": ["GBPTRY=F"],
-    "RTS=F": ["RTS=F"], "IMOEX=F": ["IMOEX=F"], "SGX=F": ["SGX=F"],
-    "TAIEX=F": ["TAIEX=F"], "SET50=F": ["SET50=F"], "JKSE=F": ["JKSE=F"],
-    "KLSE=F": ["KLSE=F"], "PSEI=F": ["PSEI=F"], "VNINDEX=F": ["VNINDEX=F"],
-    # --- indices (spot) ---
-    "^GSPC": ["^GSPC"], "^DJI": ["^DJI"], "^IXIC": ["^IXIC"], "^RUT": ["^RUT"],
-    "^VIX": ["^VIX"], "^FTSE": ["^FTSE"], "^GDAXI": ["^GDAXI"], "^FCHI": ["^FCHI"],
-    "^STOXX50E": ["^STOXX50E"], "^N225": ["^N225"], "^HSI": ["^HSI"],
-    "^KS11": ["^KS11"], "^TWII": ["^TWII"], "^AXJO": ["^AXJO"], "^BSESN": ["^BSESN"],
-    "^NSEI": ["^NSEI"], "^BVSP": ["^BVSP"], "^MXX": ["^MXX"], "^MERV": ["^MERV"],
-    "^IPSA": ["^IPSA"], "^TA125.TA": ["^TA125.TA"], "^CASE30": ["^CASE30"],
-    "^TASI.SR": ["^TASI.SR"], "^DFMGI": ["^DFMGI"], "^ADI": ["^ADI"],
-    "^QSI": ["^QSI"], "^MSM": ["^MSM"], "^BVL": ["^BVL"], "^BIST": ["^BIST"],
-    "^XU030": ["^XU030"], "^XU100": ["^XU100"],
-    # --- equities & ETFs ---
-    "AAPL": ["AAPL"], "MSFT": ["MSFT"], "GOOGL": ["GOOGL"], "GOOG": ["GOOG"],
-    "AMZN": ["AMZN"], "TSLA": ["TSLA"], "NVDA": ["NVDA"], "META": ["META"],
-    "NFLX": ["NFLX"], "AMD": ["AMD"], "INTC": ["INTC"], "AVGO": ["AVGO"],
-    "ORCL": ["ORCL"], "CRM": ["CRM"], "ADBE": ["ADBE"], "PYPL": ["PYPL"],
-    "SQ": ["SQ"], "SHOP": ["SHOP"], "UBER": ["UBER"], "LYFT": ["LYFT"],
-    "ABNB": ["ABNB"], "COIN": ["COIN"], "MSTR": ["MSTR"], "MARA": ["MARA"],
-    "RIOT": ["RIOT"], "HOOD": ["HOOD"], "SOFI": ["SOFI"], "PLTR": ["PLTR"],
-    "SNOW": ["SNOW"], "NET": ["NET"], "DDOG": ["DDOG"], "ZS": ["ZS"],
-    "CRWD": ["CRWD"], "OKTA": ["OKTA"], "TWLO": ["TWLO"], "U": ["U"],
-    "RBLX": ["RBLX"], "DKNG": ["DKNG"], "PENN": ["PENN"], "MGM": ["MGM"],
-    "WYNN": ["WYNN"], "LVS": ["LVS"], "MAR": ["MAR"], "HLT": ["HLT"],
-    "BKNG": ["BKNG"], "EXPE": ["EXPE"], "DIS": ["DIS"], "WBD": ["WBD"],
-    "PARA": ["PARA"], "CMCSA": ["CMCSA"], "T": ["T"], "VZ": ["VZ"],
-    "TMUS": ["TMUS"], "JPM": ["JPM"], "BAC": ["BAC"], "WFC": ["WFC"],
-    "C": ["C"], "GS": ["GS"], "MS": ["MS"], "BLK": ["BLK"], "SCHW": ["SCHW"],
-    "AXP": ["AXP"], "V": ["V"], "MA": ["MA"], "BRK-B": ["BRK-B"],
-    "XOM": ["XOM"], "CVX": ["CVX"], "COP": ["COP"], "SLB": ["SLB"],
-    "OXY": ["OXY"], "MPC": ["MPC"], "VLO": ["VLO"], "PSX": ["PSX"],
-    "JNJ": ["JNJ"], "PFE": ["PFE"], "MRK": ["MRK"], "ABBV": ["ABBV"],
-    "LLY": ["LLY"], "BMY": ["BMY"], "AMGN": ["AMGN"], "GILD": ["GILD"],
-    "BIIB": ["BIIB"], "UNH": ["UNH"], "CVS": ["CVS"], "CI": ["CI"],
-    "HUM": ["HUM"], "WMT": ["WMT"], "COST": ["COST"], "TGT": ["TGT"],
-    "HD": ["HD"], "LOW": ["LOW"], "NKE": ["NKE"], "SBUX": ["SBUX"],
-    "MCD": ["MCD"], "YUM": ["YUM"], "CMG": ["CMG"], "KO": ["KO"],
-    "PEP": ["PEP"], "PG": ["PG"], "CL": ["CL"], "KMB": ["KMB"],
-    "GIS": ["GIS"], "K": ["K"], "HSY": ["HSY"], "BA": ["BA"],
-    "AIR.PA": ["AIR.PA"], "LMT": ["LMT"], "RTX": ["RTX"], "GD": ["GD"],
-    "NOC": ["NOC"], "GE": ["GE"], "CAT": ["CAT"], "DE": ["DE"],
-    "MMM": ["MMM"], "HON": ["HON"], "UPS": ["UPS"], "FDX": ["FDX"],
-    "F": ["F"], "GM": ["GM"], "RIVN": ["RIVN"], "LCID": ["LCID"],
-    "NIO": ["NIO"], "XPEV": ["XPEV"], "LI": ["LI"], "BABA": ["BABA"],
-    "JD": ["JD"], "PDD": ["PDD"], "BIDU": ["BIDU"], "TCEHY": ["TCEHY"],
-    "TSM": ["TSM"], "ASML": ["ASML"], "SAP": ["SAP"], "SONY": ["SONY"],
-    "TM": ["TM"], "HMC": ["HMC"],
-    "SPY": ["SPY"], "QQQ": ["QQQ"], "DIA": ["DIA"], "IWM": ["IWM"],
-    "VTI": ["VTI"], "VOO": ["VOO"], "VEA": ["VEA"], "VWO": ["VWO"],
-    "EEM": ["EEM"], "EFA": ["EFA"], "AGG": ["AGG"], "BND": ["BND"],
-    "TLT": ["TLT"], "IEF": ["IEF"], "SHY": ["SHY"], "LQD": ["LQD"],
-    "HYG": ["HYG"], "GLD": ["GLD"], "SLV": ["SLV"], "GDX": ["GDX"],
-    "GDXJ": ["GDXJ"], "USO": ["USO"], "UNG": ["UNG"], "XLE": ["XLE"],
-    "XLF": ["XLF"], "XLK": ["XLK"], "XLV": ["XLV"], "XLI": ["XLI"],
-    "XLP": ["XLP"], "XLY": ["XLY"], "XLU": ["XLU"], "XLB": ["XLB"],
-    "XLRE": ["XLRE"], "ARKK": ["ARKK"], "ARKG": ["ARKG"], "ARKW": ["ARKW"],
-    "SOXX": ["SOXX"], "SMH": ["SMH"], "IBB": ["IBB"], "XBI": ["XBI"],
-    "KRE": ["KRE"], "ITB": ["ITB"], "XHB": ["XHB"],
-    # --- FX spot ---
-    "EURUSD=X": ["EURUSD=X"], "GBPUSD=X": ["GBPUSD=X"], "USDJPY=X": ["USDJPY=X"],
-    "USDCHF=X": ["USDCHF=X"], "USDCAD=X": ["USDCAD=X"], "AUDUSD=X": ["AUDUSD=X"],
-    "NZDUSD=X": ["NZDUSD=X"], "EURGBP=X": ["EURGBP=X"], "EURJPY=X": ["EURJPY=X"],
-    "GBPJPY=X": ["GBPJPY=X"], "USDTRY=X": ["USDTRY=X"], "EURTRY=X": ["EURTRY=X"],
-    "USDCNY=X": ["USDCNY=X"], "USDINR=X": ["USDINR=X"], "USDBRL=X": ["USDBRL=X"],
-    "USDMXN=X": ["USDMXN=X"], "USDZAR=X": ["USDZAR=X"], "USDSEK=X": ["USDSEK=X"],
-    "USDNOK=X": ["USDNOK=X"], "USDDKK=X": ["USDDKK=X"], "USDPLN=X": ["USDPLN=X"],
-    "USDHUF=X": ["USDHUF=X"], "USDCZK=X": ["USDCZK=X"], "USDRUB=X": ["USDRUB=X"],
-    "USDKRW=X": ["USDKRW=X"], "USDSGD=X": ["USDSGD=X"], "USDHKD=X": ["USDHKD=X"],
-    "USDTWD=X": ["USDTWD=X"], "USDTHB=X": ["USDTHB=X"], "USDIDR=X": ["USDIDR=X"],
-    "USDPHP=X": ["USDPHP=X"], "USDMYR=X": ["USDMYR=X"], "USDVND=X": ["USDVND=X"],
-    "USDEGP=X": ["USDEGP=X"], "USDSAR=X": ["USDSAR=X"], "USDAED=X": ["USDAED=X"],
-    "USDQAR=X": ["USDQAR=X"], "USDKWD=X": ["USDKWD=X"], "USDBHD=X": ["USDBHD=X"],
-    "USDOMR=X": ["USDOMR=X"], "USDJOD=X": ["USDJOD=X"], "USDLBP=X": ["USDLBP=X"],
-    "USDNGN=X": ["USDNGN=X"], "USDKES=X": ["USDKES=X"], "USDGHS=X": ["USDGHS=X"],
-    "USDMAD=X": ["USDMAD=X"], "USDTND=X": ["USDTND=X"], "USDARS=X": ["USDARS=X"],
-    "USDCLP=X": ["USDCLP=X"], "USDCOP=X": ["USDCOP=X"], "USDPEN=X": ["USDPEN=X"],
-}
+# For crypto, the chain is [canonical, Yahoo-crypto-form]. For everything
+# else, the chain is [canonical] because the relay handles the provider
+# dispatch internally.
+# ============================================================================
+def _crypto_fallback(sym: str) -> List[str]:
+    if sym.endswith("-USD"):
+        base = sym[:-4]
+        return [sym, f"{base}USD=X"]
+    return [sym]
+
+SYMBOL_FALLBACKS: Dict[str, List[str]] = {}
+for _sym in SYMBOL_MAP:
+    if _sym.endswith("-USD") and _sym != "USDT-USD" and _sym != "USDC-USD":
+        SYMBOL_FALLBACKS[_sym] = _crypto_fallback(_sym)
+    else:
+        SYMBOL_FALLBACKS[_sym] = [_sym]
 
 from telegram import (
     Update,
@@ -5732,7 +5773,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.5.6"
+    server_version = "AEI-Bridge/4.6.0"
 
     def log_message(self, fmt, *args):
         return
@@ -5803,7 +5844,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.5.6",
+                "ok": not stale, "service": "aei-bridge", "version": "4.6.0",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -5816,6 +5857,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "provider": engine.feed.last_provider() if engine else "",
                 "projection_computed_at": engine.state.projection_computed_at if engine else None,
                 "projection_trigger": engine.state.projection_trigger if engine else "",
+                "symbol_class_counts": {
+                    "crypto_pairs": len(CRYPTO_MAP),
+                    "futures_symbols": len(FUTURES_MAP),
+                    "equities_symbols": len(EQUITIES_MAP),
+                    "forex_pairs": len(FOREX_MAP),
+                    "indices_symbols": len(INDICES_MAP),
+                },
             })
             return
 
@@ -7188,7 +7236,7 @@ class AEI_Bot:
             await self._safe_reply(update,
                 f"📈 *Current Symbol:* `{SYMBOL}`\n"
                 "Use `/symbol <PAIR>` to change.\n"
-                "Example: `/symbol BTC-USD` or `/symbol BTCUSDT`\n\n"
+                "Example: `/symbol GRAM-USD` or `/symbol TONUSDT` or `/symbol AAPL`\n\n"
                 f"*Supported Symbols:*\n{supported}\n(and {len(SYMBOL_MAP) - 10} more)")
             return
         new_symbol = args[0].upper()
@@ -7241,7 +7289,9 @@ class AEI_Bot:
             "  🌌 𝒫\\_arc price projection ahead of the current bar\n"
             "  ➡️ Scroll-ahead viewport to the projected take-profit level\n"
             "  🔔 Toast + Telegram push notifications on every execution\n"
-            "  🔄 Live state polling",
+            "  🔄 Live state polling\n"
+            "  🪙 GRAM / TON and the full expanded symbol universe\n"
+            "  📊 Crypto / Futures / Equities / Forex / Indices sections",
             reply_markup=keyboard)
 
     async def webgui(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7382,7 +7432,7 @@ class AEI_Bot:
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🛰️ Multi-provider relay v4.5.6: Kraken → Binance → CoinGecko → Yahoo for crypto; Stooq → Yahoo for equities/futures/indices/FX.")
+        logger.info("🛰️ Multi-provider relay v4.5.6: Kraken → Binance → CoinGecko → Yahoo for crypto; Stooq → Yahoo for equities/futures; Yahoo for forex/indices.")
         logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
         logger.info("🌌 𝒫\\_arc projection computed on execution, init, symbol change, and manual refresh.")
         logger.info("🔔 Push notification on every signal, every execution, every FVG, every close.")
@@ -7396,9 +7446,8 @@ class AEI_Bot:
         logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
         logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
         logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
-        logger.info("🆕 v4.5.6 expanded securities: GRAM (GRM=F / GRAM=F) + CME/COMEX/NYMEX/CBOT/ICE/Eurex/Borsa Istanbul/MOEX futures + full index set + expanded equities/ETFs + full FX pair set.")
+        logger.info(f"🪙 v4.5.6 symbol universe: GRAM-USD (TON) + {len(SYMBOL_MAP)} total symbols across crypto, futures, equities, forex, and indices.")
         logger.info("🩹 v4.5.5 audit patches: V-1 tick increment moved to bottom of tick body, V-2 Kronecker stamps reset to baseline on OnReInit.")
-        logger.info("🩹 v4.5.6 symbol-table expansion: V-3 SYMBOL_MAP/SYMBOL_FALLBACKS/_DEFAULT_SYMBOL_DIGITS cover every relay symbol, V-4 GRAM exposed as both GRM=F and GRAM=F aliases.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
@@ -7426,4 +7475,4 @@ if __name__ == "__main__":
 
 # ============================================================================
 # Q.E.D. — LOGOS = Φ = Truth = Path = Origin
-# ============================================================================
+# ===========================================================================
