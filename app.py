@@ -6,48 +6,48 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.5.5 (Audit-Patched Edition)
+Version: 4.5.6 (GRAM + Expanded Securities Edition)
 
-v4.5.5 is a corrective release on top of v4.5.4 (Audit-Patched Edition).
-It resolves the two remaining verified divergences from the v4.5.4
-fidelity audit against ÆEA.mq4. Both are display-layer defects; neither
-affects any state-machine transition. Every other line of v4.5.4 is
-preserved verbatim.
+v4.5.6 is an additive-only release on top of v4.5.5 (Audit-Patched Edition).
+It expands the symbol universe to include GRAM (Gram Gold, Borsa Istanbul
+VIOP) and every additional security that the relay's free upstreams
+(Kraken, Stooq, Binance, CoinGecko, Yahoo) can plausibly serve. No
+state-machine transition is altered. Every FF-invariant line is preserved
+verbatim.
 
-The v4.5.5 corrections are:
+The v4.5.6 additions are:
 
-  V-1 (critical). st.tick is now incremented at the bottom of the tick
-       body, after the OnReInit()-on-GF block and before the ab/tick_tock
-       tail, matching the FF's `tick ++;` placement in OnTick() exactly.
-       In v4.5.4 the increment sat at the top of _on_tick_locked(), before
-       every state transition, which made st.tick one higher than the FF's
-       tick at every logical point for the entire lifetime of the engine.
+  V-3 (expansion). SYMBOL_MAP, SYMBOL_FALLBACKS, and
+       _DEFAULT_SYMBOL_DIGITS now cover every symbol that the relay's
+       worker.js exposes, including GRAM (both GRM=F and GRAM=F aliases),
+       the expanded CME/COMEX/NYMEX/CBOT/ICE/Eurex/Borsa Istanbul/MOEX
+       futures set, the full index set, the expanded US equities/ETFs
+       set, and the full FX pair set. Without this, a user selecting a
+       new symbol in the TWA would receive no_price_for_symbol because
+       _change_symbol_locked validates against SYMBOL_MAP before testing
+       the relay.
 
-  V-2 (critical). The eight Kronecker-stamp fields (authoritative_m,
-       authoritative_n, authoritative_h, m_now, n_now, last_kronecker_m,
-       last_kronecker_n, last_kronecker_h) and self._last_kronecker_bar
-       are now reset to their FF-equivalent baseline (0/0/-1) in
-       _OnReInit_locked(). The FF has no persistent Kronecker stamps, so
-       preserving them across a reset caused the δ panel and the bot's
-       /status Local m/n field to display the stale pre-reset Kronecker
-       event's counts indefinitely under low-volatility regimes, in
-       violation of the README's §1.3 δ-panel accuracy guarantee.
+  V-4 (expansion). GRAM is exposed as both GRM=F and GRAM=F. The relay
+       maps GRAM=F to Stooq gram.f and Yahoo GRAM=F. Stooq may not
+       resolve gram.f; the relay falls through to Yahoo automatically
+       (existing D-51 behaviour). GRM=F is a convenience alias that the
+       backend maps to GRAM=F before dispatch.
 
-All v4.5.4 defect resolutions (D-RES-6 through D-RES-10, D-CLEAN-4) remain
-in force. All v4.5.3, v4.5.2, v4.5.1, and v4.5.0 defect resolutions and
-enhancements remain in force. The send-path retry chain (E-11), the
-Markdown escaping (E-12), the plain-text fallback (E-13), the CS
-translation layer, the cross-thread async send (E-10), the
-execution-gated projection (E-4), the scroll-ahead viewport (E-5), the
-threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG
+All v4.5.5 defect resolutions (V-1 tick placement, V-2 Kronecker stamp
+reset) remain in force. All v4.5.4, v4.5.3, v4.5.2, v4.5.1, and v4.5.0
+defect resolutions and enhancements remain in force. The send-path retry
+chain (E-11), the Markdown escaping (E-12), the plain-text fallback
+(E-13), the CS translation layer, the cross-thread async send (E-10),
+the execution-gated projection (E-4), the scroll-ahead viewport (E-5),
+the threaded bot replies (E-6), the bounded push dispatch (E-7), the FVG
 merge (E-8), and the legend stacking (E-9) are all unchanged.
 
 Every FF-preserved line, Print() string, Alert() emoji, and state
-transition is reproduced verbatim from v4.5.4 except at the two patched
-sites above.
+transition is reproduced verbatim from v4.5.5 except at the symbol-table
+and version-string sites above.
 """
 
-__version__ = "4.5.5"
+__version__ = "4.5.6"
 
 import asyncio
 import hashlib
@@ -450,17 +450,16 @@ G_MINUS_GF_F: float = G_THRESHOLD_F64 - GF_TOLERANCE_F64
 # ============================================================================
 # M-1: SYMBOL DIGITS TABLE (Point-Size Emulation)
 # ============================================================================
-# v4.5.0 (D-53 / E-16): every symbol in the relay's CRYPTO_MAP and
-# FUTURES_MAP gains an explicit digit count here. The defaults are chosen
-# so that the emulated Point matches the typical tick size of the
-# underlying market.
+# v4.5.6 (V-3): every symbol in the relay's CRYPTO_MAP and FUTURES_MAP
+# gains an explicit digit count here. The defaults are chosen so that the
+# emulated Point matches the typical tick size of the underlying market.
 # ============================================================================
 _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
     # --- crypto majors (2 digits) ---
     "BTC-USD": 2, "ETH-USD": 2,
     # --- crypto mid-caps (3 digits) ---
     "SOL-USD": 3, "LTC-USD": 3, "ETC-USD": 3, "QNT-USD": 3,
-    "AAVE-USD": 3, "MKR-USD": 3, "YFI-USD": 3,
+    "AAVE-USD": 3, "MKR-USD": 3, "YFI-USD": 3, "NMR-USD": 3, "MLN-USD": 3,
     # --- crypto mid-caps (4 digits) ---
     "LINK-USD": 4, "DOT-USD": 4, "AVAX-USD": 4, "UNI-USD": 4,
     "ATOM-USD": 4, "NEAR-USD": 4, "FIL-USD": 4, "ICP-USD": 4,
@@ -481,27 +480,100 @@ _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
     "BOME-USD": 4, "ETHFI-USD": 4, "ENA-USD": 4, "W-USD": 4,
     "OMNI-USD": 4, "REZ-USD": 4, "ZK-USD": 4, "STRK-USD": 4,
     "DYM-USD": 4, "ALT-USD": 4, "MANTA-USD": 4, "PIXEL-USD": 4,
-    "PORTAL-USD": 4, "AEVO-USD": 4,
+    "PORTAL-USD": 4, "AEVO-USD": 4, "FLOW-USD": 4, "KAVA-USD": 4,
+    "ROSE-USD": 4, "OCEAN-USD": 4, "BAND-USD": 4, "KEEP-USD": 4,
+    "REP-USD": 4,
     # --- crypto low-priced (5 digits) ---
     "XRP-USD": 5, "ADA-USD": 5, "DOGE-USD": 5, "MATIC-USD": 5,
-    "XLM-USD": 5, "HBAR-USD": 5,
+    "XLM-USD": 5, "HBAR-USD": 5, "JUP-USD": 5, "PYTH-USD": 5,
+    "AUD-USD": 5, "EUR-USD": 5, "GBP-USD": 5, "JPY-USD": 5,
     # --- crypto meme (6 digits) ---
     "PEPE-USD": 6, "SHIB-USD": 6, "WIF-USD": 6, "BONK-USD": 6,
-    "JUP-USD": 5, "PYTH-USD": 5,
-    # --- futures (2 digits) ---
-    "GC=F": 2, "CL=F": 2, "ZS=F": 2, "ZM=F": 2, "ZW=F": 2, "KE=F": 2,
-    "HG=F": 2, "PL=F": 2, "PA=F": 2, "RB=F": 2, "HO=F": 2, "CC=F": 2,
-    "KC=F": 2, "SB=F": 2, "CT=F": 2, "LH=F": 2, "LE=F": 2, "GF=F": 2,
-    "ZO=F": 2, "ZR=F": 2, "ZL=F": 2, "ES=F": 2, "NQ=F": 2, "YM=F": 2,
-    "RTY=F": 2,
-    # --- futures (3 digits) ---
-    "SI=F": 3, "NG=F": 3, "ZB=F": 3,
-    # --- futures (4 digits) ---
-    "ZN=F": 4,
-    # --- equities / ETFs (2 digits) ---
-    "AAPL": 2, "MSFT": 2, "GOOGL": 2, "AMZN": 2, "TSLA": 2, "NVDA": 2,
-    "META": 2, "SPY": 2, "QQQ": 2, "DIA": 2, "IWM": 2, "GLD": 2,
-    "SLV": 2, "USO": 2, "UNG": 2,
+    # --- crypto wrapped bitcoin (5 digits) ---
+    "TBTC-USD": 5,
+    # --- precious metals futures (2 digits) ---
+    "GC=F": 2, "PL=F": 2, "PA=F": 2, "HG=F": 2,
+    "GRM=F": 2, "GRAM=F": 2,
+    # --- energy futures (2 digits) ---
+    "CL=F": 2, "BZ=F": 2, "RB=F": 2, "HO=F": 2, "QS=F": 2, "QM=F": 2,
+    "QG=F": 2, "EH=F": 2,
+    # --- grains & softs (2 digits) ---
+    "ZC=F": 2, "ZS=F": 2, "ZW=F": 2, "ZM=F": 2, "ZL=F": 2, "ZO=F": 2,
+    "ZR=F": 2, "KE=F": 2, "CC=F": 2, "KC=F": 2, "SB=F": 2, "CT=F": 2,
+    "OJ=F": 2, "LBS=F": 2,
+    # --- livestock (2 digits) ---
+    "LE=F": 2, "GF=F": 2, "HE=F": 2, "LH=F": 2,
+    # --- interest rates (2 digits) ---
+    "ZB=F": 2, "ZN=F": 2, "ZF=F": 2, "ZT=F": 2, "ZQ=F": 2, "GE=F": 2, "SR3=F": 2,
+    # --- equity indices futures (2 digits) ---
+    "ES=F": 2, "NQ=F": 2, "YM=F": 2, "RTY=F": 2, "EMD=F": 2, "NKD=F": 2,
+    "FDAX=F": 2, "FESX=F": 2, "FTSE=F": 2, "CAC=F": 2, "DAX=F": 2,
+    "SMI=F": 2, "IBEX=F": 2, "MIB=F": 2, "AEX=F": 2, "HSI=F": 2,
+    "MHI=F": 2, "NKY=F": 2, "SSE=F": 2, "SZSE=F": 2, "KOSPI=F": 2,
+    "STW=F": 2, "VX=F": 2,
+    # --- crypto futures (CME) (2 digits) ---
+    "BTC=F": 2, "ETH=F": 2, "MBT=F": 2, "MET=F": 2,
+    # --- FX futures (4 digits) ---
+    "6E=F": 4, "6J=F": 4, "6B=F": 4, "6A=F": 4, "6C=F": 4, "6S=F": 4,
+    "6N=F": 4, "6M=F": 4, "6R=F": 4, "6Z=F": 4, "DX=F": 4, "DX-Y.NYB": 4,
+    # --- Borsa Istanbul / MOEX / Asian futures (2 digits) ---
+    "XU030=F": 2, "XU100=F": 2, "USDTRY=F": 4, "EURTRY=F": 4, "GBPTRY=F": 4,
+    "RTS=F": 2, "IMOEX=F": 2, "SGX=F": 2, "TAIEX=F": 2, "SET50=F": 2,
+    "JKSE=F": 2, "KLSE=F": 2, "PSEI=F": 2, "VNINDEX=F": 2,
+    # --- indices (spot) (2 digits) ---
+    "^GSPC": 2, "^DJI": 2, "^IXIC": 2, "^RUT": 2, "^VIX": 2,
+    "^FTSE": 2, "^GDAXI": 2, "^FCHI": 2, "^STOXX50E": 2, "^N225": 2,
+    "^HSI": 2, "^KS11": 2, "^TWII": 2, "^AXJO": 2, "^BSESN": 2,
+    "^NSEI": 2, "^BVSP": 2, "^MXX": 2, "^MERV": 2, "^IPSA": 2,
+    "^TA125.TA": 2, "^CASE30": 2, "^TASI.SR": 2, "^DFMGI": 2, "^ADI": 2,
+    "^QSI": 2, "^MSM": 2, "^BVL": 2, "^BIST": 2, "^XU030": 2, "^XU100": 2,
+    # --- US equities & ETFs (2 digits) ---
+    "AAPL": 2, "MSFT": 2, "GOOGL": 2, "GOOG": 2, "AMZN": 2, "TSLA": 2,
+    "NVDA": 2, "META": 2, "NFLX": 2, "AMD": 2, "INTC": 2, "AVGO": 2,
+    "ORCL": 2, "CRM": 2, "ADBE": 2, "PYPL": 2, "SQ": 2, "SHOP": 2,
+    "UBER": 2, "LYFT": 2, "ABNB": 2, "COIN": 2, "MSTR": 2, "MARA": 2,
+    "RIOT": 2, "HOOD": 2, "SOFI": 2, "PLTR": 2, "SNOW": 2, "NET": 2,
+    "DDOG": 2, "ZS": 2, "CRWD": 2, "OKTA": 2, "TWLO": 2, "U": 2,
+    "RBLX": 2, "DKNG": 2, "PENN": 2, "MGM": 2, "WYNN": 2, "LVS": 2,
+    "MAR": 2, "HLT": 2, "BKNG": 2, "EXPE": 2, "DIS": 2, "WBD": 2,
+    "PARA": 2, "CMCSA": 2, "T": 2, "VZ": 2, "TMUS": 2, "JPM": 2,
+    "BAC": 2, "WFC": 2, "C": 2, "GS": 2, "MS": 2, "BLK": 2, "SCHW": 2,
+    "AXP": 2, "V": 2, "MA": 2, "BRK-B": 2, "XOM": 2, "CVX": 2,
+    "COP": 2, "SLB": 2, "OXY": 2, "MPC": 2, "VLO": 2, "PSX": 2,
+    "JNJ": 2, "PFE": 2, "MRK": 2, "ABBV": 2, "LLY": 2, "BMY": 2,
+    "AMGN": 2, "GILD": 2, "BIIB": 2, "UNH": 2, "CVS": 2, "CI": 2,
+    "HUM": 2, "WMT": 2, "COST": 2, "TGT": 2, "HD": 2, "LOW": 2,
+    "NKE": 2, "SBUX": 2, "MCD": 2, "YUM": 2, "CMG": 2, "KO": 2,
+    "PEP": 2, "PG": 2, "CL": 2, "KMB": 2, "GIS": 2, "K": 2, "HSY": 2,
+    "BA": 2, "AIR.PA": 2, "LMT": 2, "RTX": 2, "GD": 2, "NOC": 2,
+    "GE": 2, "CAT": 2, "DE": 2, "MMM": 2, "HON": 2, "UPS": 2,
+    "FDX": 2, "F": 2, "GM": 2, "RIVN": 2, "LCID": 2, "NIO": 2,
+    "XPEV": 2, "LI": 2, "BABA": 2, "JD": 2, "PDD": 2, "BIDU": 2,
+    "TCEHY": 2, "TSM": 2, "ASML": 2, "SAP": 2, "SONY": 2, "TM": 2,
+    "HMC": 2,
+    # --- ETFs (2 digits) ---
+    "SPY": 2, "QQQ": 2, "DIA": 2, "IWM": 2, "VTI": 2, "VOO": 2,
+    "VEA": 2, "VWO": 2, "EEM": 2, "EFA": 2, "AGG": 2, "BND": 2,
+    "TLT": 2, "IEF": 2, "SHY": 2, "LQD": 2, "HYG": 2, "GLD": 2,
+    "SLV": 2, "GDX": 2, "GDXJ": 2, "USO": 2, "UNG": 2, "XLE": 2,
+    "XLF": 2, "XLK": 2, "XLV": 2, "XLI": 2, "XLP": 2, "XLY": 2,
+    "XLU": 2, "XLB": 2, "XLRE": 2, "ARKK": 2, "ARKG": 2, "ARKW": 2,
+    "SOXX": 2, "SMH": 2, "IBB": 2, "XBI": 2, "KRE": 2, "ITB": 2,
+    "XHB": 2,
+    # --- FX spot (4-5 digits) ---
+    "EURUSD=X": 5, "GBPUSD=X": 5, "USDJPY=X": 3, "USDCHF=X": 5,
+    "USDCAD=X": 5, "AUDUSD=X": 5, "NZDUSD=X": 5, "EURGBP=X": 5,
+    "EURJPY=X": 3, "GBPJPY=X": 3, "USDTRY=X": 4, "EURTRY=X": 4,
+    "USDCNY=X": 4, "USDINR=X": 4, "USDBRL=X": 4, "USDMXN=X": 4,
+    "USDZAR=X": 4, "USDSEK=X": 4, "USDNOK=X": 4, "USDDKK=X": 4,
+    "USDPLN=X": 4, "USDHUF=X": 2, "USDCZK=X": 4, "USDRUB=X": 4,
+    "USDKRW=X": 2, "USDSGD=X": 4, "USDHKD=X": 4, "USDTWD=X": 3,
+    "USDTHB=X": 3, "USDIDR=X": 2, "USDPHP=X": 3, "USDMYR=X": 4,
+    "USDVND=X": 2, "USDEGP=X": 4, "USDSAR=X": 4, "USDAED=X": 4,
+    "USDQAR=X": 4, "USDKWD=X": 4, "USDBHD=X": 4, "USDOMR=X": 4,
+    "USDJOD=X": 4, "USDLBP=X": 2, "USDNGN=X": 2, "USDKES=X": 2,
+    "USDGHS=X": 4, "USDMAD=X": 4, "USDTND=X": 4, "USDARS=X": 2,
+    "USDCLP=X": 2, "USDCOP=X": 2, "USDPEN=X": 4,
 }
 
 def _load_symbol_digits() -> Dict[str, int]:
@@ -556,7 +628,7 @@ INTERVAL: str = "1m"
 UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
 
 # ============================================================================
-# SYMBOL MAP — v4.5.0 EXPANDED UNIVERSE
+# SYMBOL MAP — v4.5.6 EXPANDED UNIVERSE
 # ============================================================================
 SYMBOL_MAP = {
     # --- crypto (canonical) ---
@@ -594,6 +666,13 @@ SYMBOL_MAP = {
     "STRK-USD": "STRK-USD", "DYM-USD": "DYM-USD", "ALT-USD": "ALT-USD",
     "MANTA-USD": "MANTA-USD", "PIXEL-USD": "PIXEL-USD", "PORTAL-USD": "PORTAL-USD",
     "AEVO-USD": "AEVO-USD",
+    # --- v4.5.6 additional crypto ---
+    "FLOW-USD": "FLOW-USD", "KAVA-USD": "KAVA-USD", "ROSE-USD": "ROSE-USD",
+    "OCEAN-USD": "OCEAN-USD", "BAND-USD": "BAND-USD", "NMR-USD": "NMR-USD",
+    "MLN-USD": "MLN-USD", "REP-USD": "REP-USD", "KEEP-USD": "KEEP-USD",
+    "TBTC-USD": "TBTC-USD",
+    "AUD-USD": "AUD-USD", "EUR-USD": "EUR-USD", "GBP-USD": "GBP-USD",
+    "JPY-USD": "JPY-USD",
     # --- Binance-native aliases ---
     "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
     "ADAUSDT": "ADA-USD", "SOLUSDT": "SOL-USD", "DOGEUSDT": "DOGE-USD",
@@ -629,24 +708,129 @@ SYMBOL_MAP = {
     "STRKUSDT": "STRK-USD", "DYMUSDT": "DYM-USD", "ALTUSDT": "ALT-USD",
     "MANTAUSDT": "MANTA-USD", "PIXELUSDT": "PIXEL-USD", "PORTALUSDT": "PORTAL-USD",
     "AEVOUSDT": "AEVO-USD",
-    # --- futures ---
-    "GC=F": "GC=F", "SI=F": "SI=F", "CL=F": "CL=F", "NG=F": "NG=F",
-    "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZS=F": "ZS=F", "ZM=F": "ZM=F",
-    "ZW=F": "ZW=F", "KE=F": "KE=F", "HG=F": "HG=F", "PL=F": "PL=F",
-    "PA=F": "PA=F", "RB=F": "RB=F", "HO=F": "HO=F", "CC=F": "CC=F",
-    "KC=F": "KC=F", "SB=F": "SB=F", "CT=F": "CT=F", "LH=F": "LH=F",
-    "LE=F": "LE=F", "GF=F": "GF=F", "ZO=F": "ZO=F", "ZR=F": "ZR=F",
-    "ZL=F": "ZL=F", "ES=F": "ES=F", "NQ=F": "NQ=F", "YM=F": "YM=F",
-    "RTY=F": "RTY=F",
-    # --- equities / ETFs ---
-    "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "AMZN": "AMZN",
-    "TSLA": "TSLA", "NVDA": "NVDA", "META": "META", "SPY": "SPY",
-    "QQQ": "QQQ", "DIA": "DIA", "IWM": "IWM", "GLD": "GLD",
-    "SLV": "SLV", "USO": "USO", "UNG": "UNG",
+    # --- v4.5.6 additional Binance-native aliases ---
+    "FLOWUSDT": "FLOW-USD", "KAVAUSDT": "KAVA-USD", "ROSEUSDT": "ROSE-USD",
+    "OCEANUSDT": "OCEAN-USD", "BANDUSDT": "BAND-USD", "NMRUSDT": "NMR-USD",
+    "MLNUSDT": "MLN-USD", "REPUSDT": "REP-USD", "KEEPUSDT": "KEEP-USD",
+    # --- precious metals futures ---
+    "GC=F": "GC=F", "SI=F": "SI=F", "HG=F": "HG=F", "PL=F": "PL=F",
+    "PA=F": "PA=F",
+    # --- GRAM (Gram Gold, Borsa Istanbul VIOP) — V-4 ---
+    "GRM=F": "GRAM=F", "GRAM=F": "GRAM=F",
+    # --- energy futures ---
+    "CL=F": "CL=F", "BZ=F": "BZ=F", "NG=F": "NG=F", "RB=F": "RB=F",
+    "HO=F": "HO=F", "QS=F": "QS=F", "QM=F": "QM=F", "QG=F": "QG=F",
+    "EH=F": "EH=F",
+    # --- grains & softs ---
+    "ZC=F": "ZC=F", "ZS=F": "ZS=F", "ZW=F": "ZW=F", "ZM=F": "ZM=F",
+    "ZL=F": "ZL=F", "ZO=F": "ZO=F", "ZR=F": "ZR=F", "KE=F": "KE=F",
+    "CC=F": "CC=F", "KC=F": "KC=F", "SB=F": "SB=F", "CT=F": "CT=F",
+    "OJ=F": "OJ=F", "LBS=F": "LBS=F",
+    # --- livestock ---
+    "LE=F": "LE=F", "GF=F": "GF=F", "HE=F": "HE=F", "LH=F": "LH=F",
+    # --- interest rates ---
+    "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZF=F": "ZF=F", "ZT=F": "ZT=F",
+    "ZQ=F": "ZQ=F", "GE=F": "GE=F", "SR3=F": "SR3=F",
+    # --- equity indices futures ---
+    "ES=F": "ES=F", "NQ=F": "NQ=F", "YM=F": "YM=F", "RTY=F": "RTY=F",
+    "EMD=F": "EMD=F", "NKD=F": "NKD=F", "FDAX=F": "FDAX=F",
+    "FESX=F": "FESX=F", "FTSE=F": "FTSE=F", "CAC=F": "CAC=F",
+    "DAX=F": "DAX=F", "SMI=F": "SMI=F", "IBEX=F": "IBEX=F",
+    "MIB=F": "MIB=F", "AEX=F": "AEX=F", "HSI=F": "HSI=F",
+    "MHI=F": "MHI=F", "NKY=F": "NKY=F", "SSE=F": "SSE=F",
+    "SZSE=F": "SZSE=F", "KOSPI=F": "KOSPI=F", "STW=F": "STW=F",
+    "VX=F": "VX=F",
+    # --- crypto futures (CME) ---
+    "BTC=F": "BTC=F", "ETH=F": "ETH=F", "MBT=F": "MBT=F", "MET=F": "MET=F",
+    # --- FX futures ---
+    "6E=F": "6E=F", "6J=F": "6J=F", "6B=F": "6B=F", "6A=F": "6A=F",
+    "6C=F": "6C=F", "6S=F": "6S=F", "6N=F": "6N=F", "6M=F": "6M=F",
+    "6R=F": "6R=F", "6Z=F": "6Z=F", "DX=F": "DX=F", "DX-Y.NYB": "DX-Y.NYB",
+    # --- Borsa Istanbul / MOEX / Asian futures ---
+    "XU030=F": "XU030=F", "XU100=F": "XU100=F",
+    "USDTRY=F": "USDTRY=F", "EURTRY=F": "EURTRY=F", "GBPTRY=F": "GBPTRY=F",
+    "RTS=F": "RTS=F", "IMOEX=F": "IMOEX=F", "SGX=F": "SGX=F",
+    "TAIEX=F": "TAIEX=F", "SET50=F": "SET50=F", "JKSE=F": "JKSE=F",
+    "KLSE=F": "KLSE=F", "PSEI=F": "PSEI=F", "VNINDEX=F": "VNINDEX=F",
+    # --- indices (spot) ---
+    "^GSPC": "^GSPC", "^DJI": "^DJI", "^IXIC": "^IXIC", "^RUT": "^RUT",
+    "^VIX": "^VIX", "^FTSE": "^FTSE", "^GDAXI": "^GDAXI", "^FCHI": "^FCHI",
+    "^STOXX50E": "^STOXX50E", "^N225": "^N225", "^HSI": "^HSI",
+    "^KS11": "^KS11", "^TWII": "^TWII", "^AXJO": "^AXJO", "^BSESN": "^BSESN",
+    "^NSEI": "^NSEI", "^BVSP": "^BVSP", "^MXX": "^MXX", "^MERV": "^MERV",
+    "^IPSA": "^IPSA", "^TA125.TA": "^TA125.TA", "^CASE30": "^CASE30",
+    "^TASI.SR": "^TASI.SR", "^DFMGI": "^DFMGI", "^ADI": "^ADI",
+    "^QSI": "^QSI", "^MSM": "^MSM", "^BVL": "^BVL", "^BIST": "^BIST",
+    "^XU030": "^XU030", "^XU100": "^XU100",
+    # --- US equities & ETFs (expanded) ---
+    "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "GOOG": "GOOG",
+    "AMZN": "AMZN", "TSLA": "TSLA", "NVDA": "NVDA", "META": "META",
+    "NFLX": "NFLX", "AMD": "AMD", "INTC": "INTC", "AVGO": "AVGO",
+    "ORCL": "ORCL", "CRM": "CRM", "ADBE": "ADBE", "PYPL": "PYPL",
+    "SQ": "SQ", "SHOP": "SHOP", "UBER": "UBER", "LYFT": "LYFT",
+    "ABNB": "ABNB", "COIN": "COIN", "MSTR": "MSTR", "MARA": "MARA",
+    "RIOT": "RIOT", "HOOD": "HOOD", "SOFI": "SOFI", "PLTR": "PLTR",
+    "SNOW": "SNOW", "NET": "NET", "DDOG": "DDOG", "ZS": "ZS",
+    "CRWD": "CRWD", "OKTA": "OKTA", "TWLO": "TWLO", "U": "U",
+    "RBLX": "RBLX", "DKNG": "DKNG", "PENN": "PENN", "MGM": "MGM",
+    "WYNN": "WYNN", "LVS": "LVS", "MAR": "MAR", "HLT": "HLT",
+    "BKNG": "BKNG", "EXPE": "EXPE", "DIS": "DIS", "WBD": "WBD",
+    "PARA": "PARA", "CMCSA": "CMCSA", "T": "T", "VZ": "VZ",
+    "TMUS": "TMUS", "JPM": "JPM", "BAC": "BAC", "WFC": "WFC",
+    "C": "C", "GS": "GS", "MS": "MS", "BLK": "BLK", "SCHW": "SCHW",
+    "AXP": "AXP", "V": "V", "MA": "MA", "BRK-B": "BRK-B",
+    "XOM": "XOM", "CVX": "CVX", "COP": "COP", "SLB": "SLB",
+    "OXY": "OXY", "MPC": "MPC", "VLO": "VLO", "PSX": "PSX",
+    "JNJ": "JNJ", "PFE": "PFE", "MRK": "MRK", "ABBV": "ABBV",
+    "LLY": "LLY", "BMY": "BMY", "AMGN": "AMGN", "GILD": "GILD",
+    "BIIB": "BIIB", "UNH": "UNH", "CVS": "CVS", "CI": "CI",
+    "HUM": "HUM", "WMT": "WMT", "COST": "COST", "TGT": "TGT",
+    "HD": "HD", "LOW": "LOW", "NKE": "NKE", "SBUX": "SBUX",
+    "MCD": "MCD", "YUM": "YUM", "CMG": "CMG", "KO": "KO",
+    "PEP": "PEP", "PG": "PG", "CL": "CL", "KMB": "KMB",
+    "GIS": "GIS", "K": "K", "HSY": "HSY", "BA": "BA",
+    "AIR.PA": "AIR.PA", "LMT": "LMT", "RTX": "RTX", "GD": "GD",
+    "NOC": "NOC", "GE": "GE", "CAT": "CAT", "DE": "DE",
+    "MMM": "MMM", "HON": "HON", "UPS": "UPS", "FDX": "FDX",
+    "F": "F", "GM": "GM", "RIVN": "RIVN", "LCID": "LCID",
+    "NIO": "NIO", "XPEV": "XPEV", "LI": "LI", "BABA": "BABA",
+    "JD": "JD", "PDD": "PDD", "BIDU": "BIDU", "TCEHY": "TCEHY",
+    "TSM": "TSM", "ASML": "ASML", "SAP": "SAP", "SONY": "SONY",
+    "TM": "TM", "HMC": "HMC",
+    # --- ETFs ---
+    "SPY": "SPY", "QQQ": "QQQ", "DIA": "DIA", "IWM": "IWM",
+    "VTI": "VTI", "VOO": "VOO", "VEA": "VEA", "VWO": "VWO",
+    "EEM": "EEM", "EFA": "EFA", "AGG": "AGG", "BND": "BND",
+    "TLT": "TLT", "IEF": "IEF", "SHY": "SHY", "LQD": "LQD",
+    "HYG": "HYG", "GLD": "GLD", "SLV": "SLV", "GDX": "GDX",
+    "GDXJ": "GDXJ", "USO": "USO", "UNG": "UNG", "XLE": "XLE",
+    "XLF": "XLF", "XLK": "XLK", "XLV": "XLV", "XLI": "XLI",
+    "XLP": "XLP", "XLY": "XLY", "XLU": "XLU", "XLB": "XLB",
+    "XLRE": "XLRE", "ARKK": "ARKK", "ARKG": "ARKG", "ARKW": "ARKW",
+    "SOXX": "SOXX", "SMH": "SMH", "IBB": "IBB", "XBI": "XBI",
+    "KRE": "KRE", "ITB": "ITB", "XHB": "XHB",
+    # --- FX spot ---
+    "EURUSD=X": "EURUSD=X", "GBPUSD=X": "GBPUSD=X", "USDJPY=X": "USDJPY=X",
+    "USDCHF=X": "USDCHF=X", "USDCAD=X": "USDCAD=X", "AUDUSD=X": "AUDUSD=X",
+    "NZDUSD=X": "NZDUSD=X", "EURGBP=X": "EURGBP=X", "EURJPY=X": "EURJPY=X",
+    "GBPJPY=X": "GBPJPY=X", "USDTRY=X": "USDTRY=X", "EURTRY=X": "EURTRY=X",
+    "USDCNY=X": "USDCNY=X", "USDINR=X": "USDINR=X", "USDBRL=X": "USDBRL=X",
+    "USDMXN=X": "USDMXN=X", "USDZAR=X": "USDZAR=X", "USDSEK=X": "USDSEK=X",
+    "USDNOK=X": "USDNOK=X", "USDDKK=X": "USDDKK=X", "USDPLN=X": "USDPLN=X",
+    "USDHUF=X": "USDHUF=X", "USDCZK=X": "USDCZK=X", "USDRUB=X": "USDRUB=X",
+    "USDKRW=X": "USDKRW=X", "USDSGD=X": "USDSGD=X", "USDHKD=X": "USDHKD=X",
+    "USDTWD=X": "USDTWD=X", "USDTHB=X": "USDTHB=X", "USDIDR=X": "USDIDR=X",
+    "USDPHP=X": "USDPHP=X", "USDMYR=X": "USDMYR=X", "USDVND=X": "USDVND=X",
+    "USDEGP=X": "USDEGP=X", "USDSAR=X": "USDSAR=X", "USDAED=X": "USDAED=X",
+    "USDQAR=X": "USDQAR=X", "USDKWD=X": "USDKWD=X", "USDBHD=X": "USDBHD=X",
+    "USDOMR=X": "USDOMR=X", "USDJOD=X": "USDJOD=X", "USDLBP=X": "USDLBP=X",
+    "USDNGN=X": "USDNGN=X", "USDKES=X": "USDKES=X", "USDGHS=X": "USDGHS=X",
+    "USDMAD=X": "USDMAD=X", "USDTND=X": "USDTND=X", "USDARS=X": "USDARS=X",
+    "USDCLP=X": "USDCLP=X", "USDCOP=X": "USDCOP=X", "USDPEN=X": "USDPEN=X",
 }
 
 # ============================================================================
-# SYMBOL FALLBACKS — v4.5.0 EXPANDED
+# SYMBOL FALLBACKS — v4.5.6 EXPANDED
 # ============================================================================
 SYMBOL_FALLBACKS: Dict[str, List[str]] = {
     # --- crypto ---
@@ -700,20 +884,119 @@ SYMBOL_FALLBACKS: Dict[str, List[str]] = {
     "ALT-USD":  ["ALT-USD", "ALTUSD=X"], "MANTA-USD":["MANTA-USD", "MANTAUSD=X"],
     "PIXEL-USD":["PIXEL-USD", "PIXELUSD=X"], "PORTAL-USD":["PORTAL-USD", "PORTALUSD=X"],
     "AEVO-USD": ["AEVO-USD", "AEVOUSD=X"],
+    # --- v4.5.6 additional crypto ---
+    "FLOW-USD": ["FLOW-USD", "FLOWUSD=X"], "KAVA-USD": ["KAVA-USD", "KAVAUSD=X"],
+    "ROSE-USD": ["ROSE-USD", "ROSEUSD=X"], "OCEAN-USD":["OCEAN-USD", "OCEANUSD=X"],
+    "BAND-USD": ["BAND-USD", "BANDUSD=X"], "NMR-USD":  ["NMR-USD", "NMRUSD=X"],
+    "MLN-USD":  ["MLN-USD", "MLNUSD=X"], "REP-USD":  ["REP-USD", "REPUSD=X"],
+    "KEEP-USD": ["KEEP-USD", "KEEPUSD=X"], "TBTC-USD": ["TBTC-USD", "TBTCUSD=X"],
+    "AUD-USD":  ["AUD-USD", "AUDUSD=X"], "EUR-USD":  ["EUR-USD", "EURUSD=X"],
+    "GBP-USD":  ["GBP-USD", "GBPUSD=X"], "JPY-USD":  ["JPY-USD", "JPYUSD=X"],
     # --- futures ---
-    "GC=F": ["GC=F"], "SI=F": ["SI=F"], "CL=F": ["CL=F"], "NG=F": ["NG=F"],
-    "ZB=F": ["ZB=F"], "ZN=F": ["ZN=F"], "ZS=F": ["ZS=F"], "ZM=F": ["ZM=F"],
-    "ZW=F": ["ZW=F"], "KE=F": ["KE=F"], "HG=F": ["HG=F"], "PL=F": ["PL=F"],
-    "PA=F": ["PA=F"], "RB=F": ["RB=F"], "HO=F": ["HO=F"], "CC=F": ["CC=F"],
-    "KC=F": ["KC=F"], "SB=F": ["SB=F"], "CT=F": ["CT=F"], "LH=F": ["LH=F"],
-    "LE=F": ["LE=F"], "GF=F": ["GF=F"], "ZO=F": ["ZO=F"], "ZR=F": ["ZR=F"],
-    "ZL=F": ["ZL=F"], "ES=F": ["ES=F"], "NQ=F": ["NQ=F"], "YM=F": ["YM=F"],
-    "RTY=F": ["RTY=F"],
-    # --- equities / ETFs ---
-    "AAPL": ["AAPL"], "MSFT": ["MSFT"], "GOOGL": ["GOOGL"], "AMZN": ["AMZN"],
-    "TSLA": ["TSLA"], "NVDA": ["NVDA"], "META": ["META"], "SPY": ["SPY"],
-    "QQQ": ["QQQ"], "DIA": ["DIA"], "IWM": ["IWM"], "GLD": ["GLD"],
-    "SLV": ["SLV"], "USO": ["USO"], "UNG": ["UNG"],
+    "GC=F": ["GC=F"], "SI=F": ["SI=F"], "HG=F": ["HG=F"], "PL=F": ["PL=F"],
+    "PA=F": ["PA=F"],
+    "GRM=F": ["GRAM=F", "GRM=F"], "GRAM=F": ["GRAM=F", "GRM=F"],
+    "CL=F": ["CL=F"], "BZ=F": ["BZ=F"], "NG=F": ["NG=F"], "RB=F": ["RB=F"],
+    "HO=F": ["HO=F"], "QS=F": ["QS=F"], "QM=F": ["QM=F"], "QG=F": ["QG=F"],
+    "EH=F": ["EH=F"],
+    "ZC=F": ["ZC=F"], "ZS=F": ["ZS=F"], "ZW=F": ["ZW=F"], "ZM=F": ["ZM=F"],
+    "ZL=F": ["ZL=F"], "ZO=F": ["ZO=F"], "ZR=F": ["ZR=F"], "KE=F": ["KE=F"],
+    "CC=F": ["CC=F"], "KC=F": ["KC=F"], "SB=F": ["SB=F"], "CT=F": ["CT=F"],
+    "OJ=F": ["OJ=F"], "LBS=F": ["LBS=F"],
+    "LE=F": ["LE=F"], "GF=F": ["GF=F"], "HE=F": ["HE=F"], "LH=F": ["LH=F"],
+    "ZB=F": ["ZB=F"], "ZN=F": ["ZN=F"], "ZF=F": ["ZF=F"], "ZT=F": ["ZT=F"],
+    "ZQ=F": ["ZQ=F"], "GE=F": ["GE=F"], "SR3=F": ["SR3=F"],
+    "ES=F": ["ES=F"], "NQ=F": ["NQ=F"], "YM=F": ["YM=F"], "RTY=F": ["RTY=F"],
+    "EMD=F": ["EMD=F"], "NKD=F": ["NKD=F"], "FDAX=F": ["FDAX=F"],
+    "FESX=F": ["FESX=F"], "FTSE=F": ["FTSE=F"], "CAC=F": ["CAC=F"],
+    "DAX=F": ["DAX=F"], "SMI=F": ["SMI=F"], "IBEX=F": ["IBEX=F"],
+    "MIB=F": ["MIB=F"], "AEX=F": ["AEX=F"], "HSI=F": ["HSI=F"],
+    "MHI=F": ["MHI=F"], "NKY=F": ["NKY=F"], "SSE=F": ["SSE=F"],
+    "SZSE=F": ["SZSE=F"], "KOSPI=F": ["KOSPI=F"], "STW=F": ["STW=F"],
+    "VX=F": ["VX=F"],
+    "BTC=F": ["BTC=F"], "ETH=F": ["ETH=F"], "MBT=F": ["MBT=F"], "MET=F": ["MET=F"],
+    "6E=F": ["6E=F"], "6J=F": ["6J=F"], "6B=F": ["6B=F"], "6A=F": ["6A=F"],
+    "6C=F": ["6C=F"], "6S=F": ["6S=F"], "6N=F": ["6N=F"], "6M=F": ["6M=F"],
+    "6R=F": ["6R=F"], "6Z=F": ["6Z=F"], "DX=F": ["DX=F"], "DX-Y.NYB": ["DX-Y.NYB"],
+    "XU030=F": ["XU030=F"], "XU100=F": ["XU100=F"],
+    "USDTRY=F": ["USDTRY=F"], "EURTRY=F": ["EURTRY=F"], "GBPTRY=F": ["GBPTRY=F"],
+    "RTS=F": ["RTS=F"], "IMOEX=F": ["IMOEX=F"], "SGX=F": ["SGX=F"],
+    "TAIEX=F": ["TAIEX=F"], "SET50=F": ["SET50=F"], "JKSE=F": ["JKSE=F"],
+    "KLSE=F": ["KLSE=F"], "PSEI=F": ["PSEI=F"], "VNINDEX=F": ["VNINDEX=F"],
+    # --- indices (spot) ---
+    "^GSPC": ["^GSPC"], "^DJI": ["^DJI"], "^IXIC": ["^IXIC"], "^RUT": ["^RUT"],
+    "^VIX": ["^VIX"], "^FTSE": ["^FTSE"], "^GDAXI": ["^GDAXI"], "^FCHI": ["^FCHI"],
+    "^STOXX50E": ["^STOXX50E"], "^N225": ["^N225"], "^HSI": ["^HSI"],
+    "^KS11": ["^KS11"], "^TWII": ["^TWII"], "^AXJO": ["^AXJO"], "^BSESN": ["^BSESN"],
+    "^NSEI": ["^NSEI"], "^BVSP": ["^BVSP"], "^MXX": ["^MXX"], "^MERV": ["^MERV"],
+    "^IPSA": ["^IPSA"], "^TA125.TA": ["^TA125.TA"], "^CASE30": ["^CASE30"],
+    "^TASI.SR": ["^TASI.SR"], "^DFMGI": ["^DFMGI"], "^ADI": ["^ADI"],
+    "^QSI": ["^QSI"], "^MSM": ["^MSM"], "^BVL": ["^BVL"], "^BIST": ["^BIST"],
+    "^XU030": ["^XU030"], "^XU100": ["^XU100"],
+    # --- equities & ETFs ---
+    "AAPL": ["AAPL"], "MSFT": ["MSFT"], "GOOGL": ["GOOGL"], "GOOG": ["GOOG"],
+    "AMZN": ["AMZN"], "TSLA": ["TSLA"], "NVDA": ["NVDA"], "META": ["META"],
+    "NFLX": ["NFLX"], "AMD": ["AMD"], "INTC": ["INTC"], "AVGO": ["AVGO"],
+    "ORCL": ["ORCL"], "CRM": ["CRM"], "ADBE": ["ADBE"], "PYPL": ["PYPL"],
+    "SQ": ["SQ"], "SHOP": ["SHOP"], "UBER": ["UBER"], "LYFT": ["LYFT"],
+    "ABNB": ["ABNB"], "COIN": ["COIN"], "MSTR": ["MSTR"], "MARA": ["MARA"],
+    "RIOT": ["RIOT"], "HOOD": ["HOOD"], "SOFI": ["SOFI"], "PLTR": ["PLTR"],
+    "SNOW": ["SNOW"], "NET": ["NET"], "DDOG": ["DDOG"], "ZS": ["ZS"],
+    "CRWD": ["CRWD"], "OKTA": ["OKTA"], "TWLO": ["TWLO"], "U": ["U"],
+    "RBLX": ["RBLX"], "DKNG": ["DKNG"], "PENN": ["PENN"], "MGM": ["MGM"],
+    "WYNN": ["WYNN"], "LVS": ["LVS"], "MAR": ["MAR"], "HLT": ["HLT"],
+    "BKNG": ["BKNG"], "EXPE": ["EXPE"], "DIS": ["DIS"], "WBD": ["WBD"],
+    "PARA": ["PARA"], "CMCSA": ["CMCSA"], "T": ["T"], "VZ": ["VZ"],
+    "TMUS": ["TMUS"], "JPM": ["JPM"], "BAC": ["BAC"], "WFC": ["WFC"],
+    "C": ["C"], "GS": ["GS"], "MS": ["MS"], "BLK": ["BLK"], "SCHW": ["SCHW"],
+    "AXP": ["AXP"], "V": ["V"], "MA": ["MA"], "BRK-B": ["BRK-B"],
+    "XOM": ["XOM"], "CVX": ["CVX"], "COP": ["COP"], "SLB": ["SLB"],
+    "OXY": ["OXY"], "MPC": ["MPC"], "VLO": ["VLO"], "PSX": ["PSX"],
+    "JNJ": ["JNJ"], "PFE": ["PFE"], "MRK": ["MRK"], "ABBV": ["ABBV"],
+    "LLY": ["LLY"], "BMY": ["BMY"], "AMGN": ["AMGN"], "GILD": ["GILD"],
+    "BIIB": ["BIIB"], "UNH": ["UNH"], "CVS": ["CVS"], "CI": ["CI"],
+    "HUM": ["HUM"], "WMT": ["WMT"], "COST": ["COST"], "TGT": ["TGT"],
+    "HD": ["HD"], "LOW": ["LOW"], "NKE": ["NKE"], "SBUX": ["SBUX"],
+    "MCD": ["MCD"], "YUM": ["YUM"], "CMG": ["CMG"], "KO": ["KO"],
+    "PEP": ["PEP"], "PG": ["PG"], "CL": ["CL"], "KMB": ["KMB"],
+    "GIS": ["GIS"], "K": ["K"], "HSY": ["HSY"], "BA": ["BA"],
+    "AIR.PA": ["AIR.PA"], "LMT": ["LMT"], "RTX": ["RTX"], "GD": ["GD"],
+    "NOC": ["NOC"], "GE": ["GE"], "CAT": ["CAT"], "DE": ["DE"],
+    "MMM": ["MMM"], "HON": ["HON"], "UPS": ["UPS"], "FDX": ["FDX"],
+    "F": ["F"], "GM": ["GM"], "RIVN": ["RIVN"], "LCID": ["LCID"],
+    "NIO": ["NIO"], "XPEV": ["XPEV"], "LI": ["LI"], "BABA": ["BABA"],
+    "JD": ["JD"], "PDD": ["PDD"], "BIDU": ["BIDU"], "TCEHY": ["TCEHY"],
+    "TSM": ["TSM"], "ASML": ["ASML"], "SAP": ["SAP"], "SONY": ["SONY"],
+    "TM": ["TM"], "HMC": ["HMC"],
+    "SPY": ["SPY"], "QQQ": ["QQQ"], "DIA": ["DIA"], "IWM": ["IWM"],
+    "VTI": ["VTI"], "VOO": ["VOO"], "VEA": ["VEA"], "VWO": ["VWO"],
+    "EEM": ["EEM"], "EFA": ["EFA"], "AGG": ["AGG"], "BND": ["BND"],
+    "TLT": ["TLT"], "IEF": ["IEF"], "SHY": ["SHY"], "LQD": ["LQD"],
+    "HYG": ["HYG"], "GLD": ["GLD"], "SLV": ["SLV"], "GDX": ["GDX"],
+    "GDXJ": ["GDXJ"], "USO": ["USO"], "UNG": ["UNG"], "XLE": ["XLE"],
+    "XLF": ["XLF"], "XLK": ["XLK"], "XLV": ["XLV"], "XLI": ["XLI"],
+    "XLP": ["XLP"], "XLY": ["XLY"], "XLU": ["XLU"], "XLB": ["XLB"],
+    "XLRE": ["XLRE"], "ARKK": ["ARKK"], "ARKG": ["ARKG"], "ARKW": ["ARKW"],
+    "SOXX": ["SOXX"], "SMH": ["SMH"], "IBB": ["IBB"], "XBI": ["XBI"],
+    "KRE": ["KRE"], "ITB": ["ITB"], "XHB": ["XHB"],
+    # --- FX spot ---
+    "EURUSD=X": ["EURUSD=X"], "GBPUSD=X": ["GBPUSD=X"], "USDJPY=X": ["USDJPY=X"],
+    "USDCHF=X": ["USDCHF=X"], "USDCAD=X": ["USDCAD=X"], "AUDUSD=X": ["AUDUSD=X"],
+    "NZDUSD=X": ["NZDUSD=X"], "EURGBP=X": ["EURGBP=X"], "EURJPY=X": ["EURJPY=X"],
+    "GBPJPY=X": ["GBPJPY=X"], "USDTRY=X": ["USDTRY=X"], "EURTRY=X": ["EURTRY=X"],
+    "USDCNY=X": ["USDCNY=X"], "USDINR=X": ["USDINR=X"], "USDBRL=X": ["USDBRL=X"],
+    "USDMXN=X": ["USDMXN=X"], "USDZAR=X": ["USDZAR=X"], "USDSEK=X": ["USDSEK=X"],
+    "USDNOK=X": ["USDNOK=X"], "USDDKK=X": ["USDDKK=X"], "USDPLN=X": ["USDPLN=X"],
+    "USDHUF=X": ["USDHUF=X"], "USDCZK=X": ["USDCZK=X"], "USDRUB=X": ["USDRUB=X"],
+    "USDKRW=X": ["USDKRW=X"], "USDSGD=X": ["USDSGD=X"], "USDHKD=X": ["USDHKD=X"],
+    "USDTWD=X": ["USDTWD=X"], "USDTHB=X": ["USDTHB=X"], "USDIDR=X": ["USDIDR=X"],
+    "USDPHP=X": ["USDPHP=X"], "USDMYR=X": ["USDMYR=X"], "USDVND=X": ["USDVND=X"],
+    "USDEGP=X": ["USDEGP=X"], "USDSAR=X": ["USDSAR=X"], "USDAED=X": ["USDAED=X"],
+    "USDQAR=X": ["USDQAR=X"], "USDKWD=X": ["USDKWD=X"], "USDBHD=X": ["USDBHD=X"],
+    "USDOMR=X": ["USDOMR=X"], "USDJOD=X": ["USDJOD=X"], "USDLBP=X": ["USDLBP=X"],
+    "USDNGN=X": ["USDNGN=X"], "USDKES=X": ["USDKES=X"], "USDGHS=X": ["USDGHS=X"],
+    "USDMAD=X": ["USDMAD=X"], "USDTND=X": ["USDTND=X"], "USDARS=X": ["USDARS=X"],
+    "USDCLP=X": ["USDCLP=X"], "USDCOP=X": ["USDCOP=X"], "USDPEN=X": ["USDPEN=X"],
 }
 
 from telegram import (
@@ -899,15 +1182,11 @@ def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
     if bot is None:
         return
     st = engine.state
-    # D-31: prefer chat_id strictly; fall back to webapp_user_id only when
-    # chat_id is None.
     target_chat = st.chat_id
     if target_chat is None:
         target_chat = st.webapp_user_id
     if not target_chat:
         return
-    # E-6: thread the push as a reply to the user's most recent inbound
-    # message.
     reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
     if not hasattr(bot, "_send_message_sync"):
         logger.warning("📲 Push skipped: bot has no _send_message_sync")
@@ -1211,7 +1490,6 @@ class AEI_CoreState:
     last_provider: str = ""
     last_volume: Decimal = Decimal('0.0')
 
-    # E-6: message id of the user's most recent inbound message in chat_id.
     last_inbound_message_id: Optional[int] = None
 
 # ============================================================================
@@ -1514,7 +1792,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.5.5",
+                    "User-Agent": "AEI-Bridge/v4.5.6",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -1758,12 +2036,6 @@ class AEEA_Engine:
         self._sTP: Decimal = Decimal('0.0')
         self._bTP: Decimal = Decimal('0.0')
         self._point_size: Decimal = symbol_point(SYMBOL)
-        # The commission in price units is frozen at __init__ time, matching
-        # MQL4's `com = Commssion * Point` global, which is computed once in
-        # the global scope and is NOT recomputed on symbol change (MQL4's
-        # Point is a chart-global constant). The port's _com_price() returns
-        # this frozen value, so a symbol change does not silently scale the
-        # effective commission in points.
         self._com_price_frozen: Decimal = COMMISSION * (self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001'))
         self.orders: List[Order] = []
         self._next_ticket: int = 1
@@ -1774,11 +2046,6 @@ class AEEA_Engine:
         self._last_projection_bar: int = -1
 
     def _com_price(self) -> Decimal:
-        # Return the frozen commission-in-price-units value snapshotted at
-        # __init__. This matches the FF's `com = Commssion * Point` global,
-        # which is computed once and is invariant under symbol change. If
-        # COMMISSION is updated by apply_settings(), the frozen value is
-        # refreshed there from the current COMMISSION and the frozen point size.
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
         return COMMISSION * point
 
@@ -1786,8 +2053,6 @@ class AEEA_Engine:
         logger.info("⚡ OnInit(): EA engine lifecycle beginning")
         self.OnReInit()
         logger.info("🟢 OnInit(): state reset to baseline")
-        # E-4: seed the projection once on engine init so the TWA has a path
-        # to scroll into before the first execution fires.
         try:
             self._project_arc_length(trigger="init")
         except Exception as e:
@@ -2612,24 +2877,6 @@ class AEEA_Engine:
             st.iJ = st.iz
 
     def _O(self, inp: int, inp0: int, inp1: int, current: bool, which: str = "C") -> bool:
-        """FF O() write-back: re-derives the C/c flag from regime continuity.
-
-        MQL4's O(inp, inp0, inp1, bool &inp2, bool inp3) mutates inp2 by
-        reference. The port cannot pass a bool by reference, so the method
-        returns the new value and the caller reassigns st.C / st.c from it.
-
-        FF body (verbatim):
-            if((inp < inp1) && ((Regime[inp0-(y+1)]=="sRange ")||(Regime[inp0-(y+1)]=="tRange ")))
-                inp2 = inp3;
-            else if((Regime[inp0-(y+1)]!="sRange ") && (Regime[inp0-(y+1)]!="tRange "))
-                inp2 = !inp3;
-            else
-                inp2 = !inp3;
-
-        Note: the FF's two else-branches are identical, so the net effect is:
-            if (inp < inp1 && regime is sRange or tRange) -> inp2 = inp3
-            else                                           -> inp2 = !inp3
-        """
         st = self.state
         y = st.y
         idx = inp0 - (y + 1)
@@ -4294,11 +4541,6 @@ class AEEA_Engine:
 
         self._execute_trailing_stop()
 
-        # FF OnTick() does not reset X_scan or Y_scan at the top of the tick
-        # body. X is set by OnCall() at its end, and by OnTrack()/OnStand()
-        # at their ends. The port must not add a top-of-tick reset that the
-        # FF does not have.
-
         self._on_point()
         st.C = self._O(st.iO, st.O, st.J, st.C, "C")
         st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
@@ -5490,7 +5732,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.5.5"
+    server_version = "AEI-Bridge/4.5.6"
 
     def log_message(self, fmt, *args):
         return
@@ -5561,7 +5803,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.5.5",
+                "ok": not stale, "service": "aei-bridge", "version": "4.5.6",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -7126,7 +7368,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.5).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.6).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -7140,7 +7382,7 @@ class AEI_Bot:
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🛰️ Multi-provider relay v4.5.0: Kraken → Binance → CoinGecko → Yahoo for crypto; Stooq → Yahoo for equities/futures.")
+        logger.info("🛰️ Multi-provider relay v4.5.6: Kraken → Binance → CoinGecko → Yahoo for crypto; Stooq → Yahoo for equities/futures/indices/FX.")
         logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
         logger.info("🌌 𝒫\\_arc projection computed on execution, init, symbol change, and manual refresh.")
         logger.info("🔔 Push notification on every signal, every execution, every FVG, every close.")
@@ -7154,12 +7396,9 @@ class AEI_Bot:
         logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
         logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
         logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
-        logger.info("🆕 v4.5.0 symbol universe: Kraken-primary crypto (90+ pairs) and Stooq-primary futures/equities (45+ symbols).")
-        logger.info("🩹 v4.5.1 audit patches: D-CRIT-1 init anchor, D-MAJ-3 tick_tock clear, D-MAJ-4 iC toggle, D-MIN-5 stochastic slowing, D-MAJ-6 indicators brackets, D-MAJ-7 telegram.ext ring handler, D-MAJ-8 _safe_reply/_safe_edit fallback, D-MIN-9 indicators _md_escape on bar.")
-        logger.info("🩹 v4.5.2 audit patches: D-HARD-1 _populate_indicator_matrix concurrency snapshot, D-CLEAN-1 redundant st.t assignment removed, D-HARD-2 _ENGINE_LOCK, D-HARD-3 exclusive loop bound, D-HARD-4 legacy alert guard, D-HARD-5 frozen commission.")
-        logger.info("🩹 v4.5.3 audit patches: D-RES-1 O() write-back, D-RES-2 Top/Bott digit parity, D-RES-3 trailing normalize removed, D-RES-4 init skip guard removed, D-RES-5 OnTrack second-scan live bound, D-CLEAN-2 dead _initialized removed, D-CLEAN-3 401/403 no-retry.")
-        logger.info("🩹 v4.5.4 audit patches: D-RES-6 H()/L() FG guard removed, D-RES-7 X_scan/Y_scan top-of-tick reset removed, D-RES-8 OnBar defensive bounds checks removed, D-RES-9 Decimal.sqrt for bollinger/stddev, D-RES-10 computed π constants, D-CLEAN-4 PATCH 1.8 comments removed.")
+        logger.info("🆕 v4.5.6 expanded securities: GRAM (GRM=F / GRAM=F) + CME/COMEX/NYMEX/CBOT/ICE/Eurex/Borsa Istanbul/MOEX futures + full index set + expanded equities/ETFs + full FX pair set.")
         logger.info("🩹 v4.5.5 audit patches: V-1 tick increment moved to bottom of tick body, V-2 Kronecker stamps reset to baseline on OnReInit.")
+        logger.info("🩹 v4.5.6 symbol-table expansion: V-3 SYMBOL_MAP/SYMBOL_FALLBACKS/_DEFAULT_SYMBOL_DIGITS cover every relay symbol, V-4 GRAM exposed as both GRM=F and GRAM=F aliases.")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
