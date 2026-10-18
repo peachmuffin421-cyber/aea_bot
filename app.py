@@ -7418,6 +7418,39 @@ class AEI_Bot:
         BRIDGE_ENGINE_REF["bot"] = self
         self.engine.application = application
         logger.info("🔗 BRIDGE_ENGINE_REF populated in _post_init")
+        
+        if self._bridge_server is None:
+            server = BridgeServer()
+            server.start()
+            self._bridge_server = server
+            logger.info("🌐 BridgeServer started from _post_init")
+            
+        url = self._resolve_webapp_url()
+        if not url:
+            logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
+            return
+        try:
+            await application.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="ÆEA Mini App", web_app=WebAppInfo(url=url)))
+            logger.info(f"✅ MenuButtonWebApp registered: {url}")
+        except Exception as e:
+            logger.warning(f"Failed to set menu button: {e}")async def _post_init(self, application) -> None:
+        try:
+            self._loop = asyncio.get_running_loop()
+            logger.info("🔁 Event loop captured for cross-thread send")
+        except RuntimeError:
+            self._loop = None
+            logger.warning("⚠️ No running loop in _post_init; sends will be dropped")
+        BRIDGE_ENGINE_REF["engine"] = self.engine
+        BRIDGE_ENGINE_REF["bot"] = self
+        self.engine.application = application
+        logger.info("🔗 BRIDGE_ENGINE_REF populated in _post_init")
+        
+        if self._bridge_server is None:
+            server = BridgeServer()
+            server.start()
+            self._bridge_server = server
+            logger.info("🌐 BridgeServer started from _post_init")
+            
         url = self._resolve_webapp_url()
         if not url:
             logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
