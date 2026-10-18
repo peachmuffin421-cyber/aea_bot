@@ -1,6 +1,3 @@
-> "Proceed with the constraint-locked contiguously generated segments [currently in progress through this active session] of the unabridged newly revised README.MD covering all the supporting files [satisfying all Audit directives], all together, as one, concatenated.
-Note: Your native response format is already markdown so there's no need to use markdown code blocks."
-
 # **ÆEA — Deployment Guide**
 
 Version: 4.6.0 (Final Edition 3 — Audit-Patched) — CS-Translated UI
