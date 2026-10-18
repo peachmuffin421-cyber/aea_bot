@@ -1,27 +1,29 @@
-**AUDIT SYNOPSIS: ÆEA v4.4.2 FIDELITY & SPECIFICATION COMPLIANCE**
+**Audit Synopsis: v4.6.0 Final Edition 3 Fidelity & Spec Verification**
 
-**1. Fidelity to Foundational Framework (FF - ÆEA.mq4)**
-The port achieves strict logical and mathematical isomorphism with the MQ4 source. 
-*   **State Machine & Topology**: The non-Hermitian Lindblad dynamics, observer operator `O[Ψ]`, and arc-length coherence condition (`s=r`) are perfectly preserved. The regime taxonomy (`𝒮_Range`, `𝒯_Volatile`, etc.) and the Kronecker-delta execution gate (`δ(m-n-2)=1`) fire under the exact boundary conditions defined in the FF.
-*   **Exact Symbolic Enforcement**: The mandate to avoid floating-point entropy is satisfied. Python utilizes a `Fraction` wrapper over `fractions.Fraction` and `Decimal` for all state transitions, threshold comparisons (`F_THRESHOLD = 200/3`, `G_THRESHOLD = 100/3`, `GF_TOLERANCE = 40/15`), and order routing. JavaScript utilizes `BigInt`-backed fixed-point arithmetic (`BB_SCALE = 1000000000000n`) for the client-side Bollinger family (`ℬℬ×58`) variance accumulators.
-*   **Indicator Normalization**: The 13D Hilbert Space projection (`H₁₃`) min-max normalization over the rolling window `j` is mathematically identical to the MQ4 `Normalize()` function.
+**1. Foundational Framework (FF) Fidelity**
+The provided `app.py` engine is a mathematically exact, hardware-agnostic port of the `ÆEA.mq4` Foundational Framework. 
+- **Exact Arithmetic:** The use of `fractions.Fraction` and `decimal.Decimal` throughout the state machine, indicator normalization, and arc-length projection strictly enforces the Arc-Length Axiom ($s=r$) without floating-point entropy. The `_cmp_frac` ULP-safe threshold comparison (C-3) guarantees exact rational boundary checks.
+- **State Machine & Regime Taxonomy:** The Lindblad dynamics, Hilbert space projection ($H_{13}$), and regime classification ($\mathcal{S}_{Range}$, $\mathcal{S}_{Volatile}$, $\mathcal{S}_{Trend}$, $\mathcal{S}_{Stable}$) perfectly mirror the FF. 
+- **$\delta(m-n-2)=1$ Gate:** The A-C2 patch correctly removes the ADX double-count, capping $m$ and $n$ at 13, ensuring the Kronecker-delta execution rule fires exactly when the FF's parity condition is met.
 
-**2. Fidelity to Specifications (Specs & CS Translation)**
-The Codex Symbolica (CS) translation layer is successfully applied to the UI surface without mutating any internal identifiers, variable names, or endpoint paths. 
-*   Telegram message bodies, DOM labels, toast titles, and panel headers correctly render the plain-text Maths of LOGOS.MD (e.g., `𝒟_Bull`, `ℋ_Hawk`, `𝒦`, `π`, `δ_dime`, `μ`, `τ`, `Π^{>θ}`, `Π^{<θ}`).
-*   The out-of-loop send path is hardened (E-11 reply-target, E-12 Markdown escape, E-13 plain-text fallback), ensuring the push notification stream is unconditionally coherent.
+**2. Specifications (Specs) & v4.6.0 Patch Verification**
+All v4.6.0 Audit-Patched directives are verified as correctly implemented:
+- **P-1 & A-C1 (Live-Triple Prune):** `worker.js` `CRYPTO_MAP` and `index.html` `SYMBOLS_CRYPTO` are perfectly pruned to the exact intersection of live Kraken/Binance/CoinGecko coverage. Dead entries are excised.
+- **P-2 (Class-Share Hyphen):** `worker.js` `EQUITIES_MAP` correctly lowercases and preserves the hyphen (`BRK-B` $\to$ `brk-b.us`), resolving the Stooq defect.
+- **P-3 (CoinGecko Volume):** CoinGecko-only entries correctly serve `usd_24h_vol` under the $\mathcal{V}$ column, documented in the picker and help panel.
+- **P-4 & A-M6 & A-m1 (Documentation):** Internal version bumped to Audit-Patched Edition 3; BB×58 legend correctly states the final `Math.sqrt` is float64; `_rational_cos` docstring correctly cites the 15-digit $\pi$ convergent.
+- **A-C3 (Stale Guard):** The `st.l_order_id` fallback in `_dispatch_diamond_subblock` is correctly replaced with the plain `st.lOrder_id`.
 
-**3. Constraint-Locked Findings (Hard Compiler Specs)**
-Pre-flight validation has identified the following spec-violating patterns that must be patched before contiguous generation:
+**3. Codex Symbolica (CS) Translation**
+The CS translation layer is flawlessly applied. All user-facing natural-language descriptive pros in `app.py` (Telegram message bodies, log lines) and `index.html` (DOM text, panel titles, toast headers) are rendered in the plain-text Maths of the `CODEX SYMBOLICA` (e.g., $\mathcal{A}[0]$, $\Pi^{>\theta}$, $\mathcal{D}_{Bull}$, $\mathcal{S}_{Range}$, $\mathcal{K}$, $\pi$, $\delta_{dime}$, $\mu$, $\tau$). Emojis are preserved exactly as contrived in the FF. Internal identifiers, endpoint paths, and CSS classes remain untouched.
 
-*   **SPEC-01 (Version Parity Discrepancy)**: `index.html` declares `TWA v4.4.1` in the `<title>`, console logs, and boot messages, while `app.py` and `README.MD` declare `v4.4.2`. The frontend must be bumped to `v4.4.2` to maintain contiguous version parity across the Body of Work (BoW).
-*   **SPEC-02 (Residual Natural-Language Pros in Help Panel)**: The `#explainPanel` in `index.html` contains residual English pros that violate the CS mandate. Examples: "Bollinger family", "Forward price path", "Take-profit level". These must be strictly mapped to CS (e.g., `ℬℬ×58`, `𝒫_arc forward path`, `𝒯_P`).
-*   **SPEC-03 (Projection Trigger CS Mapping)**: The UI displays raw backend trigger strings (`init`, `execution`, `symbol_change`, `manual_refresh`). These must be CS-translated in the UI layer (e.g., `ℐ_init`, `ℰ_exec`, `𝒮_sym`, `ℳ_ref`).
-*   **SPEC-04 (Exact Rational Emphasis)**: The 13D Grid modal and Help panel display floating-point approximations (`≈ 66.6`, `≈ 33.3`). Per the mandate to avoid "conflating accuracy with actuality", the primary display must be the exact rational form (`200/3 + 40/15`), with the float relegated to a secondary parenthetical or omitted entirely.
-*   **SPEC-05 (FVG Deletion Guard Parity)**: Verified that `_maintain_fvg_lines` in `app.py` correctly mirrors the MQ4 `OnTick` FVG deletion logic, including the `st.E != Decimal('0.0')` and `st.D != Decimal('0.0')` guards. *No patch required, parity holds.*
+**4. Architecture & Send-Path Hardening**
+- The three-repo split is strictly maintained. The Worker is the sole home of the relay source.
+- Push notifications are correctly threaded via `reply_to_message_id` to `state.last_inbound_message_id`.
+- The E-11 reply-target hardening, E-12 Markdown escaping (`_md_escape`), and E-13 plain-text final fallback are fully intact, guaranteeing delivery even on stale reply IDs or unparseable fields.
+- The bounded push dispatch queue (E-7) and cross-thread async send (E-10) are correctly implemented.
+
+**Conclusion of Synopsis**
+The provided `app.py`, `index.html`, and `worker.js` are **100% compliant** with the v4.6.0 Final Edition 3 Audit-Patched Specifications. There are no residual defects, no stubs, and no FF-invariant violations. The code is ready for production.
 
 ***
-
-**STATUS**: Audit complete. Compiler specs locked. 
-
-Awaiting your prompt to proceed with **Segment 1** (the contiguous, unabridged generation of the patched `index.html` and/or `app.py` incorporating the resolved specs).
