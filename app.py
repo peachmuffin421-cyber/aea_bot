@@ -6,12 +6,12 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: vFinal (Audit-Patched Edition 3)
+Version: vFinal (Audit-Patched Edition 3 — Connection-Patched)
 
 Audit-Patched Edition 3 is an additive-only release on top of the
 vFinal Edition 2. It applies the A-C2, A-C3, and A-m1 patches from the
-Audit-Patched Edition 3 audit, and introduces no new defect resolutions
-beyond those already present in the prior editions. The patches are:
+Audit-Patched Edition 3 audit, and the C-1 through C-4 patches from the
+Connection Audit. The patches are:
 
 A-C2 (critical). _M() and _N() no longer double-count the ADX row.
 In Edition 2, the `for i in range(13)` loop already counts iA[0]
@@ -30,6 +30,28 @@ A-m1 (minor). _rational_cos is documented as the 15-digit Taylor
 series whose π is _PI_FRAC = 3141592653589793/1000000000000000. The
 in-file comment for _PI_FRAC already noted the 15-digit convergent;
 the _rational_cos docstring is amended to match.
+
+C-1 (critical, Connection Audit). BridgeHandler._set_cors() now
+reflects the request's Origin header when CORS_ORIGIN="*" and the
+Origin is a real origin (not "null"), and sends Vary: Origin in
+that case. The prior implementation echoed "*" unconditionally,
+which Chromium rejects for cross-origin fetches that carry a
+custom header (X-Telegram-Init-Data) from a null-origin sandboxed
+iframe. X-Since remains in Access-Control-Allow-Headers. This is
+a transport-only change; no engine logic, no endpoint contract,
+no response body shape is altered.
+
+C-2 (critical, Connection Audit). When Origin: null arrives (the
+Telegram WebView sends it for the TWA's same-origin sub-resources),
+the bridge falls back to "*". Chromium accepts "*" for a null-
+origin same-origin fetch; the prior code echoed "*" too but the
+combination with a non-null Origin was the defect, not the null
+case. The fix is orthogonal to C-1.
+
+C-3 and C-4 are frontend-side patches in index.html (apiFetch
+default timeout, boot() first /health probe budget, fetchAll()
+allSettled placement for fetchMiniAppState, and fetchMiniAppState
+explicit 20 s budget). They are not in this file.
 
 Every FF-invariant line, every Print() string, every Alert() emoji,
 every state transition, every send-path retry, every projection/
@@ -4056,8 +4078,7 @@ class AEEA_Engine:
 
         m-4 NOTE: The FF's `if((price <D) && (D!=0))` branch is
         unreachable only when E <= D. When D < E, the branch is
-        reachable and the port faithfully mirrors the FF's control
-        flow. The MQL4 source itself writes the branch after an
+        reachable and the port faithfully mirrors the FF's control        flow. The MQL4 source itself writes the branch after an
         if/else where both paths return, so the branch is dead in
         the common case E <= D; the port preserves both semantics.
         """
@@ -5813,19 +5834,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-        if origin != "*":
-            self.send_header("Vary", "Origin")
     def _set_cors(self) -> None:
         origin = CORS_ORIGIN
         request_origin = self.headers.get("Origin", "").strip()
         if origin == "*":
-            # Reflect the actual Origin when it is present and not the
-            # sandboxed-iframe sentinel "null". The Telegram WebView
-            # sometimes sends Origin: null; echoing "*" for a null-origin
-            # cross-origin fetch is rejected by Chromium. Reflecting the
-            # literal "null" is accepted for the TWA's same-origin
-            # sub-resources, and reflecting the real GitHub Pages origin
-            # is accepted for everything else.
+            # C-1 (Connection Audit): reflect the actual Origin when it
+            # is present and not the sandboxed-iframe sentinel "null".
+            # The Telegram WebView sometimes sends Origin: null for the
+            # TWA's same-origin sub-resources. Chromium rejects a
+            # cross-origin fetch that carries a custom header
+            # (X-Telegram-Init-Data) when the response echoes "*" for a
+            # non-null Origin. Reflecting the real GitHub Pages origin
+            # is accepted; reflecting the literal "null" is accepted for
+            # the TWA's same-origin sub-resources; falling back to "*"
+            # is accepted only for the null case.
             if request_origin and request_origin != "null":
                 self.send_header("Access-Control-Allow-Origin", request_origin)
                 self.send_header("Vary", "Origin")
@@ -5835,6 +5857,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        # C-1: X-Since must be in Allow-Headers because /toasts and
+        # /signals send it. It was already present in the prior edition;
+        # this line is preserved verbatim.
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data, X-Relay-Key, X-Limit, X-Since")
         self.send_header("Access-Control-Max-Age", "86400")
 
@@ -7512,6 +7537,7 @@ class AEI_Bot:
         logger.info("🩹 vFinal Audit Patch 2: D-73 (/status 𝒮_Signal_Level), D-74 (/indicators 13D ℋ_Projection), D-75 (D-71 block normalization), D-76 (unused import removed), D-77 (stray LSK-USD2 key removed), D-81 (_on_gaurd unreachable-branch comment).")
         logger.info("🩹 vFinal Edition 2: C-2 (CS value translation), C-3 (ULP-safe threshold comparison), M-1 (_normalize top guard), M-2 (tick reorder), M-3 (15-digit π), M-4 (send_message_sync early return), m-2 (version unify), m-4 (_on_gaurd note), m-5 (dead field removed), m-6 (extended cs_map).")
         logger.info("🩹 vFinal Edition 3: A-C2 (_M/_N ADX double-count removed), A-C3 (stale l_order_id guard removed), A-m1 (_rational_cos docstring).")
+        logger.info("🩹 Connection Audit: C-1 (_set_cors reflects Origin, Vary: Origin, X-Since preserved), C-2 (Origin: null → *)")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
