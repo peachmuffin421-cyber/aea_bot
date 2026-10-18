@@ -2100,7 +2100,8 @@ class AEEA_Engine:
         self._last_relay_warn: Optional[datetime] = None
         self._consecutive_zero_prices: int = 0
         self._indicator_populate_count: int = 0
-        self._imbalance_fire_count: int = 0        self._active_trailing_stop: Decimal = Decimal('0.0')
+        self._imbalance_fire_count: int = 0
+        self._active_trailing_stop: Decimal = Decimal('0.0')
         self._active_trailing_tp: Decimal = Decimal('0.0')
         self._last_kronecker_bar: int = -1
         self._sSL: Decimal = Decimal('0.0')
