@@ -5813,7 +5813,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-        def _set_cors(self) -> None:
+        if origin != "*":
+            self.send_header("Vary", "Origin")
+    def _set_cors(self) -> None:
         origin = CORS_ORIGIN
         request_origin = self.headers.get("Origin", "").strip()
         if origin == "*":
