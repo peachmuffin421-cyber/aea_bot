@@ -5813,14 +5813,28 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-    def _set_cors(self) -> None:
+        def _set_cors(self) -> None:
         origin = CORS_ORIGIN
-        self.send_header("Access-Control-Allow-Origin", origin)
+        request_origin = self.headers.get("Origin", "").strip()
+        if origin == "*":
+            # Reflect the actual Origin when it is present and not the
+            # sandboxed-iframe sentinel "null". The Telegram WebView
+            # sometimes sends Origin: null; echoing "*" for a null-origin
+            # cross-origin fetch is rejected by Chromium. Reflecting the
+            # literal "null" is accepted for the TWA's same-origin
+            # sub-resources, and reflecting the real GitHub Pages origin
+            # is accepted for everything else.
+            if request_origin and request_origin != "null":
+                self.send_header("Access-Control-Allow-Origin", request_origin)
+                self.send_header("Vary", "Origin")
+            else:
+                self.send_header("Access-Control-Allow-Origin", "*")
+        else:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data, X-Relay-Key, X-Limit, X-Since")
         self.send_header("Access-Control-Max-Age", "86400")
-        if origin != "*":
-            self.send_header("Vary", "Origin")
 
     def _send_json(self, code: int, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, default=str).encode("utf-8")
