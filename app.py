@@ -6,12 +6,13 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: vFinal (Audit-Patched Edition 3 — Connection-Patched)
+Version: vFinal (Audit-Patched Edition 3 — Connection-Patched + OHLC-Contract-Patched)
 
 Audit-Patched Edition 3 is an additive-only release on top of the
 vFinal Edition 2. It applies the A-C2, A-C3, and A-m1 patches from the
-Audit-Patched Edition 3 audit, and the C-1 through C-4 patches from the
-Connection Audit. The patches are:
+Audit-Patched Edition 3 audit, the C-1 through C-4 patches from the
+Connection Audit, and the C-5, C-6, and C-7 patches from the Cursor
+OHLC Zero Readout audit. The patches are:
 
 A-C2 (critical). _M() and _N() no longer double-count the ADX row.
 In Edition 2, the `for i in range(13)` loop already counts iA[0]
@@ -52,6 +53,23 @@ C-3 and C-4 are frontend-side patches in index.html (apiFetch
 default timeout, boot() first /health probe budget, fetchAll()
 allSettled placement for fetchMiniAppState, and fetchMiniAppState
 explicit 20 s budget). They are not in this file.
+
+C-5 (critical, Cursor OHLC Zero Readout audit). The /ohlcv handler
+now emits JSON null for absent OHLC fields and preserves genuine
+zeros; it also admits only bars whose close is a real positive
+Decimal. FeedClient.get_historical_klines now rejects any row with
+a zero/null open/high/low/close. AEEA_Engine.update_price now
+rejects any bid/ask that is not a finite positive Decimal and
+guards the same-minute bar-update branch against a null/zero
+last-bar close. AEI_Bot.start_feed now logs the usable-bar count
+so a sparse relay response is visible in the log. This is the
+single gate that keeps every bar in ohlcv_history a real
+observation and every client-side readout honest: a null field
+renders as "—", a genuine zero renders as "0.00000".
+
+C-6 and C-7 are frontend-side patches in index.html (crosshair
+readout null guard, lastUpdate null guard). They are not in this
+file.
 
 Every FF-invariant line, every Print() string, every Alert() emoji,
 every state transition, every send-path retry, every projection/
@@ -1940,10 +1958,25 @@ class FeedClient:
         out = []
         for row in d:
             try:
-                if row.get("close") is None:
+                if not isinstance(row, dict):
                     continue
-                c = Decimal(str(row["close"]))
-                if c <= Decimal('0.0'):
+                o = row.get("open")
+                h = row.get("high")
+                l = row.get("low")
+                c = row.get("close")
+                # C-5: every OHLC field must be a real positive price.
+                # A bar with any zero/null OHLC field is not a bar.
+                if o is None or h is None or l is None or c is None:
+                    continue
+                o_d = Decimal(str(o))
+                h_d = Decimal(str(h))
+                l_d = Decimal(str(l))
+                c_d = Decimal(str(c))
+                if o_d <= Decimal('0.0') or h_d <= Decimal('0.0') or l_d <= Decimal('0.0') or c_d <= Decimal('0.0'):
+                    continue
+                if h_d < l_d:
+                    continue
+                if not (o_d.is_finite() and h_d.is_finite() and l_d.is_finite() and c_d.is_finite()):
                     continue
                 ts_raw = row.get("timestamp")
                 ts = datetime.now()
@@ -1953,11 +1986,13 @@ class FeedClient:
                     except Exception:
                         pass
                 vol = Decimal(str(row.get("volume") or 0))
+                if vol < Decimal('0.0'):
+                    vol = Decimal('0.0')
                 out.append({
-                    "open": Decimal(str(row["open"])),
-                    "high": Decimal(str(row["high"])),
-                    "low": Decimal(str(row["low"])),
-                    "close": c,
+                    "open": o_d,
+                    "high": h_d,
+                    "low": l_d,
+                    "close": c_d,
                     "volume": vol,
                     "timestamp": ts,
                     "provider": str(row.get("provider", "")),
@@ -2065,8 +2100,7 @@ class AEEA_Engine:
         self._last_relay_warn: Optional[datetime] = None
         self._consecutive_zero_prices: int = 0
         self._indicator_populate_count: int = 0
-        self._imbalance_fire_count: int = 0
-        self._active_trailing_stop: Decimal = Decimal('0.0')
+        self._imbalance_fire_count: int = 0        self._active_trailing_stop: Decimal = Decimal('0.0')
         self._active_trailing_tp: Decimal = Decimal('0.0')
         self._last_kronecker_bar: int = -1
         self._sSL: Decimal = Decimal('0.0')
@@ -4832,9 +4866,20 @@ class AEEA_Engine:
     def update_price(self, bid: Decimal, ask: Decimal, volume: Decimal = Decimal('0.0'), timestamp: Optional[datetime] = None, provider: str = "") -> None:
         if timestamp is None:
             timestamp = datetime.now()
-        if bid <= Decimal('0.0'):
+        # C-5: reject zero/negative/invalid bid at the boundary. No bar may
+        # enter ohlcv_history with a placeholder price. This is the single
+        # gate that keeps every bar in ohlcv_history a real observation.
+        if not isinstance(bid, Decimal) or bid <= Decimal('0.0'):
             logger.warning(f"update_price rejected non-positive bid: {bid}")
             return
+        if not isinstance(ask, Decimal) or ask <= Decimal('0.0'):
+            logger.warning(f"update_price rejected non-positive ask: {ask}; repairing ask to bid.")
+            ask = bid
+        if ask < bid:
+            logger.warning(f"update_price inverted spread (bid={bid}, ask={ask}); repairing ask to bid.")
+            ask = bid
+        if not isinstance(volume, Decimal) or volume < Decimal('0.0'):
+            volume = Decimal('0.0')
         self.state.price = bid
         self.state.Price = (bid + ask) / Decimal('2.0')
         if volume > Decimal('0.0'):
@@ -4877,12 +4922,15 @@ class AEEA_Engine:
         else:
             self._bar_open = False
             if self.ohlcv_history:
-                self.ohlcv_history[-1]["high"] = max(self.ohlcv_history[-1]["high"], price_data.high)
-                self.ohlcv_history[-1]["low"] = min(self.ohlcv_history[-1]["low"], price_data.low)
-                self.ohlcv_history[-1]["close"] = price_data.close
-                self.ohlcv_history[-1]["volume"] += price_data.volume
-                if provider:
-                    self.ohlcv_history[-1]["provider"] = provider
+                last = self.ohlcv_history[-1]
+                # C-5: only update if the existing bar has a real price.
+                if isinstance(last.get("close"), Decimal) and last["close"] > Decimal('0.0'):
+                    last["high"] = max(last["high"], price_data.high)
+                    last["low"] = min(last["low"], price_data.low)
+                    last["close"] = price_data.close
+                    last["volume"] = last.get("volume", Decimal('0.0')) + price_data.volume
+                    if provider:
+                        last["provider"] = provider
 
         self._on_tick(price_data)
 
@@ -6192,8 +6240,42 @@ class BridgeHandler(BaseHTTPRequestHandler):
             bars = engine.ohlcv_history[-limit:]
             ohlcv_data = []
             last_ts = None
+            # C-5: emit null for absent fields, keep genuine zeros. A bar is
+            # only admitted if its close is a real positive Decimal. This is
+            # the single gate that keeps the TWA cursor readout honest: a
+            # null field renders as "—", a genuine zero renders as "0.00000".
+            def _emit_decimal(v, allow_zero):
+                if v is None:
+                    return None
+                if isinstance(v, Decimal):
+                    if not v.is_finite():
+                        return None
+                    if v == Decimal('0.0') and not allow_zero:
+                        return None
+                    return float(v)
+                try:
+                    f = float(v)
+                except Exception:
+                    return None
+                if not math.isfinite(f):
+                    return None
+                if f == 0.0 and not allow_zero:
+                    return None
+                return f
             for bar in bars:
-                ts = bar["timestamp"]
+                close_v = bar.get("close")
+                if close_v is None:
+                    continue
+                if isinstance(close_v, Decimal):
+                    if not close_v.is_finite() or close_v <= Decimal('0.0'):
+                        continue
+                else:
+                    try:
+                        if float(close_v) <= 0.0:
+                            continue
+                    except Exception:
+                        continue
+                ts = bar.get("timestamp")
                 if isinstance(ts, datetime):
                     ts_str = ts.isoformat()
                 else:
@@ -6201,11 +6283,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 last_ts = ts_str
                 ohlcv_data.append({
                     "timestamp": ts_str,
-                    "open": float(bar["open"]),
-                    "high": float(bar["high"]),
-                    "low": float(bar["low"]),
-                    "close": float(bar["close"]),
-                    "volume": float(bar.get("volume", 0)),
+                    "open": _emit_decimal(bar.get("open"), allow_zero=False),
+                    "high": _emit_decimal(bar.get("high"), allow_zero=False),
+                    "low": _emit_decimal(bar.get("low"), allow_zero=False),
+                    "close": _emit_decimal(close_v, allow_zero=False),
+                    "volume": _emit_decimal(bar.get("volume"), allow_zero=True),
                     "provider": str(bar.get("provider", "")),
                 })
             self._send_json(200, {
@@ -7236,7 +7318,7 @@ class AEI_Bot:
                 logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()} (provider={self.engine.feed.last_provider()})")
                 self.engine._populate_indicator_matrix()
             else:
-                logger.info("⏳ No historical data from relay. Engine will initialize organically.")
+                logger.info(f"⏳ Relay returned {len(historical)} usable historical bars (need >= {MIN_HISTORY_WINDOW}). Engine will initialize organically.")
         except Exception as e:
             logger.warning(f"⚠️ Historical data fetch failed: {e}")
         try:
@@ -7538,6 +7620,7 @@ class AEI_Bot:
         logger.info("🩹 vFinal Edition 2: C-2 (CS value translation), C-3 (ULP-safe threshold comparison), M-1 (_normalize top guard), M-2 (tick reorder), M-3 (15-digit π), M-4 (send_message_sync early return), m-2 (version unify), m-4 (_on_gaurd note), m-5 (dead field removed), m-6 (extended cs_map).")
         logger.info("🩹 vFinal Edition 3: A-C2 (_M/_N ADX double-count removed), A-C3 (stale l_order_id guard removed), A-m1 (_rational_cos docstring).")
         logger.info("🩹 Connection Audit: C-1 (_set_cors reflects Origin, Vary: Origin, X-Since preserved), C-2 (Origin: null → *)")
+        logger.info("🩹 Cursor OHLC Zero Readout Audit: C-5 (update_price/FeedClient.get_historical_klines//ohlcv handler/start_feed all reject zero/null OHLC; /ohlcv emits JSON null for absent fields), C-6 (crosshair null guard in index.html), C-7 (lastUpdate null guard in index.html).")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
