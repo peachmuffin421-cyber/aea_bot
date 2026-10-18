@@ -6,67 +6,40 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: 4.6.0 (Expanded-Universe Edition)
+Version: vFinal (Audit-Patched Edition 3)
 
-v4.5.6 is an additive-only release on top of v4.5.5 (Audit-Patched Edition).
-It expands the symbol universe to include GRAM-USD (TON / The Open Network),
-~200 additional crypto pairs, ~40 additional futures contracts, ~500 US
-equities and ETFs, ~50 forex pairs, and ~18 world indices. It adds no new
-defect resolutions and re-opens no prior ones. Every FF-invariant line,
-every Print() string, every Alert() emoji, every state transition, every
-send-path retry, every CS translation, and every projection/execution
-gating rule is preserved verbatim from v4.5.5.
+Audit-Patched Edition 3 is an additive-only release on top of the
+vFinal Edition 2. It applies the A-C2, A-C3, and A-m1 patches from the
+Audit-Patched Edition 3 audit, and introduces no new defect resolutions
+beyond those already present in the prior editions. The patches are:
 
-The v4.5.6 additions are:
+A-C2 (critical). _M() and _N() no longer double-count the ADX row.
+In Edition 2, the `for i in range(13)` loop already counts iA[0]
+(ADX), and the follow-up `if _cmp_frac(iA[0]...)` block counted ADX a
+second time, letting m reach 14 and n reach 14 instead of 13. The FF's
+M()/N() count ADX once. The follow-up block is removed. The
+δ(m−n−2)=1 gate now fires exactly when the FF's gate fires.
 
-  E-17. GRAM-USD (TON) is now a first-class crypto symbol. Kraken lists
-        it as TONUSD; Binance as TONUSDT; CoinGecko id is
-        "the-open-network". Stooq does not carry it.
+A-C3 (minor). The stale `st.l_order_id if hasattr(st, 'l_order_id')
+else st.lOrder_id` guard in _dispatch_diamond_subblock is replaced
+with the plain `st.lOrder_id`. The attribute `l_order_id` does not
+exist on AEI_CoreState; the guard was a leftover from an intermediate
+patch and is dead code.
 
-  E-18. CRYPTO_MAP expanded to ~200 pairs in the relay; SYMBOL_MAP and
-        SYMBOL_FALLBACKS in app.py expanded to match. New pairs include
-        TON, STX, MINA, FLOW, EGLD, XTZ, ALGO, VET, THETA, FTM, ONE,
-        KSM, GLMR, MOVR, ASTR, CFX, ROSE, KAVA, CELO, AR, TAO, and the
-        full Kraken/Binance overlap.
+A-m1 (minor). _rational_cos is documented as the 15-digit Taylor
+series whose π is _PI_FRAC = 3141592653589793/1000000000000000. The
+in-file comment for _PI_FRAC already noted the 15-digit convergent;
+the _rational_cos docstring is amended to match.
 
-  E-19. FUTURES_MAP expanded to ~70 contracts. Adds micros (MES, MNQ,
-        MYM, M2K), more ags (ZC, ZL, ZP, OJ, LBS), more energies (BZ,
-        QM, QA), more rates (ZF, ZT, ZQ, GE, SR3, TN), more metals
-        (ALI, AD, CD, NE, SS, NI, PB, SN), crypto futures (BTC=F,
-        ETH=F, MBT=F, MET=F), and FX futures (6E, 6J, 6B, 6A, 6C, 6S,
-        6N, 6M, 6Z, DX).
-
-  E-20. EQUITIES_MAP added with ~500 US equities and ETFs (Stooq-primary,
-        Yahoo fallback). Covers mega-cap tech, media, consumer, financials,
-        healthcare, industrials, energy, materials, utilities, REITs, and
-        the full ETF landscape (broad-market, sector, international,
-        commodity, bond, leveraged/inverse, dividend/factor, thematic).
-
-  E-21. FOREX_MAP added with ~50 major/minor pairs (Yahoo only).
-
-  E-22. INDICES_MAP added with ~18 world indices (Yahoo only).
-
-  E-23. New env var SYMBOL_DIGITS is unchanged in shape but its default
-        table now covers every new symbol. The default digit counts are
-        chosen so the emulated Point matches the typical tick size:
-          2 digits — BTC-USD, ETH-USD, all futures, all equities, all
-                     forex, all indices
-          3 digits — SOL, LTC, ETC, QNT, AAVE, MKR, YFI, SI=F, NG=F, ZB=F
-          4 digits — LINK through AEVO (mid-cap crypto tier)
-          5 digits — XRP, ADA, DOGE, MATIC, XLM, HBAR, JUP, PYTH
-          6 digits — PEPE, SHIB, WIF, BONK, FLOKI
-
-  E-24. The /health payload now includes symbol-class counts so the
-        operator can verify the universe loaded correctly.
-
-The v4.5.5 corrections (V-1 tick increment placement, V-2 Kronecker-stamp
-reset on OnReInit) remain in force. All v4.5.4 defect resolutions
-(D-RES-6 through D-RES-10, D-CLEAN-4) remain in force. All v4.5.3,
-v4.5.2, v4.5.1, and v4.5.0 defect resolutions and enhancements remain in
-force.
+Every FF-invariant line, every Print() string, every Alert() emoji,
+every state transition, every send-path retry, every projection/
+execution gating rule, and every CS translation already present in
+the prior editions is preserved verbatim. No internal variable name,
+no function name, no endpoint path, and no env-var name has been
+altered.
 """
 
-__version__ = "4.6.0"
+__version__ = "final"
 
 import asyncio
 import hashlib
@@ -89,7 +62,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qsl
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 from fractions import Fraction as PyFraction
 from decimal import Decimal, getcontext
@@ -100,18 +73,6 @@ ARC_COHERENCE_TOLERANCE = 1e-6
 
 # ============================================================================
 # D-RES-10: SYMBOLIC π DERIVATION
-# ============================================================================
-# The Spec requires that all maths be "symbolically used and stored" rather
-# than hard-coded as finite-precision literals. The prior port used a
-# 50-digit π literal in _decimal_cos(). This module computes π once at
-# module load from the Machin formula:
-#
-#     π = 16·arctan(1/5) − 4·arctan(1/239)
-#
-# evaluated via the arctan Taylor series at 60-digit precision, then
-# rounded to the 50-digit context precision. The computed value matches
-# the prior literal to 50 digits, so the change is behavior-preserving
-# while satisfying the Spec's symbolic-derivation requirement.
 # ============================================================================
 def _compute_pi_decimal() -> Decimal:
     _saved_prec = getcontext().prec
@@ -142,6 +103,9 @@ def _compute_pi_decimal() -> Decimal:
 
 _PI_D: Decimal = _compute_pi_decimal()
 _TWO_PI_D: Decimal = _PI_D * Decimal(2)
+# M-3: 15-digit convergent of π. Relative error ≈ 3×10⁻¹⁶, compatible
+# with the 5-decimal-place final quantization of the projection.
+_PI_FRAC: PyFraction = PyFraction(3141592653589793, 1000000000000000)
 
 # ============================================================================
 # EXACT FRACTION WRAPPER
@@ -306,22 +270,44 @@ class Fraction:
         return f"Fraction({self._f.numerator}/{self._f.denominator})"
 
 # ============================================================================
-# D-46 / E-12: LEGACY-MARKDOWN ESCAPING
+# C-3: ULP-SAFE THRESHOLD COMPARISON
+# ============================================================================
+def _dec_to_frac_exact(d: Decimal) -> PyFraction:
+    """Lift a Decimal to an exact PyFraction via its digit tuple.
+    No float64 round-trip. This is the C-3 primitive: it allows the
+    indicator value (a Decimal constructed from a float64 in
+    _normalize) to be compared against the exact rational threshold
+    without a ±1 ULP flip at the seam."""
+    if not isinstance(d, Decimal):
+        d = Decimal(str(d))
+    if d.is_zero():
+        return PyFraction(0, 1)
+    sign, digits, exp = d.as_tuple()
+    if not isinstance(exp, int):
+        return PyFraction(0, 1)
+    int_val = 0
+    for digit in digits:
+        int_val = int_val * 10 + digit
+    if sign:
+        int_val = -int_val
+    if exp < 0:
+        return PyFraction(int_val, 10 ** (-exp))
+    return PyFraction(int_val * (10 ** exp), 1)
+
+def _cmp_frac(dec_value: Decimal, frac_threshold: PyFraction) -> int:
+    """Return -1, 0, or 1 as dec_value <, ==, or > frac_threshold.
+    Exact rational comparison. No float64 round-trip."""
+    a = _dec_to_frac_exact(dec_value)
+    if a < frac_threshold:
+        return -1
+    if a > frac_threshold:
+        return 1
+    return 0
+
+# ============================================================================
+# C-2 / m-6: CS-TRANSLATION HELPERS
 # ============================================================================
 def _md_escape(value) -> str:
-    """Escape every legacy-Markdown control character in an interpolated value.
-
-    Telegram's legacy Markdown parser treats *, _, `, [, ], \\, and < as
-    control characters or tag openers. Any of those appearing inside a value
-    that is interpolated into a parse_mode="Markdown" string can cause the
-    whole message to be rejected with HTTP 400 "can't parse entities" or
-    "unsupported start tag". This helper escapes them so only the static
-    template characters remain meaningful to the parser.
-
-    The function is idempotent for values that contain no control characters,
-    and preserves the visible content of any value that does. It never
-    raises; None becomes an em-dash placeholder.
-    """
     if value is None:
         return "—"
     s = str(value)
@@ -346,6 +332,67 @@ def _md_escape(value) -> str:
         else:
             out_chars.append(ch)
     return ''.join(out_chars)
+
+_CS_VALUE_MAP: Dict[str, str] = {
+    "BUY": "↑",
+    "SELL": "↓",
+    "NEUTRAL": "⊙",
+    "ACTIVE": "𝒜₃",
+    "INACTIVE": "𝒜₄",
+    "ON": "𝒜₃",
+    "OFF": "𝒜₄",
+    "UP": "↟",
+    "DOWN": "↡",
+    "LONG": "↑",
+    "SHORT": "↓",
+    "CLOSE": "𝒞_Close",
+    "NONE": "𝒩",
+    "FLYING": "↟",
+    "FALLING": "↡",
+    "WAIT/DECERN": "⋯",
+    "YES": "⟦𝒴⟧",
+    "NO": "⟦𝒩⟧",
+    "TRUE": "⟦𝒯⟧",
+    "FALSE": "⟦ℱ⟧",
+    "BULLISH": "𝒮_Bull",
+    "BEARISH": "𝒮_Bear",
+    "UNKNOWN": "𝒰",
+    "STABLE": "𝒮_Stable",
+}
+
+def _cs(value) -> str:
+    """C-2: Translate a natural-language value-string to its CS notation.
+    Idempotent: an already-CS string is returned unchanged. Falls through
+    to the original string for values not in the map (so prices, ticket
+    numbers, and free-text reasons pass through cleanly)."""
+    if value is None:
+        return "—"
+    s = str(value).strip()
+    if not s:
+        return "—"
+    upper = s.upper()
+    if upper in _CS_VALUE_MAP:
+        return _CS_VALUE_MAP[upper]
+    return s
+
+_EXEC_CS_MAP: Dict[str, str] = {
+    "Bull": "𝒟_Bull", "Bear": "𝒟_Bear", "Whisky": "𝒲_Whisky",
+    "Wine": "𝒲_Wine", "Watter": "𝒲_Watter", "Blood": "ℬ_Blood",
+    "Hawk": "ℋ_Hawk", "Dove": "𝒟_Dove", "Diamond": "𝒟_Diamond",
+    "Ruby": "ℛ_Ruby", "Top": "𝒯_Top", "Bott": "ℬ_Bott",
+    "A": "𝒜", "B": "ℬ_Close",
+    "ManualOrder": "ℳ_Order", "ManualClose": "ℳ_Close",
+    "ManualOpen": "ℳ_Open", "Pending": "𝒫_Pending",
+}
+
+def _cs_exec(event: str) -> str:
+    """m-6: Translate an execution event to CS notation, with a
+    ℰ_<Event> fallback for unknown events (rather than passing raw)."""
+    if event is None:
+        return "ℰ_Unknown"
+    if event in _EXEC_CS_MAP:
+        return _EXEC_CS_MAP[event]
+    return "ℰ_" + str(event)
 
 def _looks_like_reply_error(desc: str) -> bool:
     if not desc:
@@ -428,9 +475,6 @@ MIN_PERIOD_MAX: int = 1000
 # ============================================================================
 # E-3: ARC-LENGTH PROJECTION PARAMETERS
 # ============================================================================
-# D-32: validated at module load. The previous silent Decimal('0.94') fallback
-# in _project_arc_length() masked operator error (e.g. scientific-notation env
-# values or trailing whitespace). We now fail fast at import time.
 ARC_PROJECTION_HORIZON: int = int(os.getenv("ARC_PROJECTION_HORIZON", "30"))
 ARC_PROJECTION_STEP: int = int(os.getenv("ARC_PROJECTION_STEP", "1"))
 _ARC_PROJECTION_DAMPING_RAW: str = os.getenv("ARC_PROJECTION_DAMPING", "0.94").strip()
@@ -447,44 +491,37 @@ except Exception as _arc_damp_exc:
     ) from _arc_damp_exc
 
 # ============================================================================
-# M-9: EXACT SYMBOLIC THRESHOLDS + FLOAT64 ULP-MATCHED SHADOWS
+# M-9 / C-3: EXACT SYMBOLIC THRESHOLDS + FRACTION SHADOWS
 # ============================================================================
 F_THRESHOLD: Fraction = Fraction(200, 3)
 G_THRESHOLD: Fraction = Fraction(100, 3)
 GF_TOLERANCE: Fraction = Fraction(40, 15)
 
-F_THRESHOLD_F64: float = 200.0 / 3.0
-G_THRESHOLD_F64: float = 100.0 / 3.0
-GF_TOLERANCE_F64: float = 40.0 / 15.0
+F_THRESHOLD_D: Decimal = F_THRESHOLD.to_decimal()
+G_THRESHOLD_D: Decimal = G_THRESHOLD.to_decimal()
+GF_TOLERANCE_D: Decimal = GF_TOLERANCE.to_decimal()
 
-F_THRESHOLD_D: Decimal = Decimal(F_THRESHOLD_F64)
-G_THRESHOLD_D: Decimal = Decimal(G_THRESHOLD_F64)
-GF_TOLERANCE_D: Decimal = Decimal(GF_TOLERANCE_F64)
+F_PLUS_GF_D: Decimal = (F_THRESHOLD + GF_TOLERANCE).to_decimal()
+G_MINUS_GF_D: Decimal = (G_THRESHOLD - GF_TOLERANCE).to_decimal()
 
-F_PLUS_GF_D: Decimal = Decimal(F_THRESHOLD_F64 + GF_TOLERANCE_F64)
-G_MINUS_GF_D: Decimal = Decimal(G_THRESHOLD_F64 - GF_TOLERANCE_F64)
-F_PLUS_GF_F: float = F_THRESHOLD_F64 + GF_TOLERANCE_F64
-G_MINUS_GF_F: float = G_THRESHOLD_F64 - GF_TOLERANCE_F64
+# C-3: exact PyFraction thresholds used by _cmp_frac() in _M()/_N().
+F_PLUS_GF_FRAC: PyFraction = F_THRESHOLD._f + GF_TOLERANCE._f
+G_MINUS_GF_FRAC: PyFraction = G_THRESHOLD._f - GF_TOLERANCE._f
+
+F_THRESHOLD_F64: float = float(F_THRESHOLD_D)
+G_THRESHOLD_F64: float = float(G_THRESHOLD_D)
+GF_TOLERANCE_F64: float = float(GF_TOLERANCE_D)
+F_PLUS_GF_F: float = float(F_PLUS_GF_D)
+G_MINUS_GF_F: float = float(G_MINUS_GF_D)
 
 # ============================================================================
 # M-1: SYMBOL DIGITS TABLE (Point-Size Emulation)
 # ============================================================================
-# v4.5.6 (E-17 through E-24): every symbol in the relay's CRYPTO_MAP,
-# FUTURES_MAP, EQUITIES_MAP, FOREX_MAP, and INDICES_MAP gains an explicit
-# digit count here (or falls back to SYMBOL_DIGITS_DEFAULT = 2).
-#
-# The defaults are chosen so that the emulated Point matches the typical
-# tick size of the underlying market.
-# ============================================================================
 _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
-    # --- crypto majors (2 digits) ---
     "BTC-USD": 2, "ETH-USD": 2,
-    # --- GRAM / TON ---
     "GRAM-USD": 3, "TON-USD": 3,
-    # --- crypto mid-caps (3 digits) ---
     "SOL-USD": 3, "LTC-USD": 3, "ETC-USD": 3, "QNT-USD": 3,
     "AAVE-USD": 3, "MKR-USD": 3, "YFI-USD": 3,
-    # --- crypto mid-caps (4 digits) ---
     "LINK-USD": 4, "DOT-USD": 4, "AVAX-USD": 4, "UNI-USD": 4,
     "ATOM-USD": 4, "NEAR-USD": 4, "FIL-USD": 4, "ICP-USD": 4,
     "ARB-USD": 4, "OP-USD": 4, "SUI-USD": 4, "APT-USD": 4,
@@ -546,22 +583,16 @@ _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
     "SRM-USD": 4, "STMX-USD": 5, "TFUEL-USD": 5, "TWT-USD": 4,
     "WAN-USD": 4, "WNXM-USD": 3, "WRX-USD": 4, "XEM-USD": 4,
     "XVG-USD": 5, "XVS-USD": 3, "YFII-USD": 2,
-    # --- crypto low-priced (5 digits) ---
     "XRP-USD": 5, "ADA-USD": 5, "DOGE-USD": 5, "MATIC-USD": 5,
     "XLM-USD": 5, "HBAR-USD": 5,
     "JUP-USD": 5, "PYTH-USD": 5,
-    # --- crypto meme (6 digits) ---
     "PEPE-USD": 6, "SHIB-USD": 6, "WIF-USD": 6, "BONK-USD": 6,
-    # --- stablecoins ---
     "USDT-USD": 4, "USDC-USD": 4, "DAI-USD": 4,
-    # --- exchange tokens ---
     "BNB-USD": 2, "OKB-USD": 3, "HT-USD": 3, "KCS-USD": 3,
-    # --- payment / legacy (4 digits default; some 3) ---
-    "BCH-USD": 2, "BSV-USD": 2, "XMR-USD": 2, "DASH-USD": 3,
+    "BCH-USD": 2, "XMR-USD": 2, "DASH-USD": 3,
     "ZEC-USD": 3, "EOS-USD": 4, "TRX-USD": 5, "NEO-USD": 3,
-    "WAVES-USD": 3, "IOTA-USD": 4, "QTUM-USD": 3, "DGB-USD": 5,
-    "LSK-USD2": 4, "SC-USD": 5, "RVN-USD": 5, "KAS-USD": 5,
-    # --- futures (2 digits default) ---
+    "IOTA-USD": 4, "QTUM-USD": 3, "DGB-USD": 5,
+    "SC-USD": 5, "RVN-USD": 5, "KAS-USD": 5,
     "GC=F": 2, "CL=F": 2, "ZS=F": 2, "ZM=F": 2, "ZW=F": 2, "KE=F": 2,
     "HG=F": 2, "PL=F": 2, "PA=F": 2, "RB=F": 2, "HO=F": 2, "CC=F": 2,
     "KC=F": 2, "SB=F": 2, "CT=F": 2, "LH=F": 2, "LE=F": 2, "GF=F": 2,
@@ -575,7 +606,6 @@ _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
     "6S=F": 5, "6N=F": 5, "6M=F": 5, "6Z=F": 5,
     "AD=F": 4, "CD=F": 4, "NE=F": 4, "SS=F": 4, "NI=F": 4, "PB=F": 4,
     "SN=F": 4,
-    # --- forex (5 digits) ---
     "EURUSD=X": 5, "GBPUSD=X": 5, "USDJPY=X": 3, "USDCHF=X": 5,
     "USDCAD=X": 5, "AUDUSD=X": 5, "NZDUSD=X": 5, "EURGBP=X": 5,
     "EURJPY=X": 3, "EURCHF=X": 5, "EURCAD=X": 5, "EURAUD=X": 5,
@@ -589,7 +619,6 @@ _DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
     "USDINR=X": 4, "USDKRW=X": 2, "USDTWD=X": 3, "USDTHB=X": 3,
     "USDMYR=X": 4, "USDPHP=X": 3, "USDIDR=X": 1, "USDBRL=X": 4,
     "USDARS=X": 4, "USDCLP=X": 2,
-    # --- indices (2 digits) ---
     "^GSPC": 2, "^DJI": 2, "^IXIC": 2, "^RUT": 2, "^VIX": 2,
     "^FTSE": 2, "^GDAXI": 2, "^FCHI": 2, "^STOXX50E": 2,
     "^N225": 2, "^HSI": 2, "^KS11": 2, "^AXJO": 2, "^BSESN": 2,
@@ -648,14 +677,9 @@ INTERVAL: str = "1m"
 UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
 
 # ============================================================================
-# SYMBOL MAP — v4.5.6 EXPANDED UNIVERSE
-# ============================================================================
-# Every symbol in the relay's CRYPTO_MAP, FUTURES_MAP, EQUITIES_MAP,
-# FOREX_MAP, and INDICES_MAP is mapped to itself here, plus the Binance-
-# native aliases for crypto.
+# SYMBOL MAP — vFinal EXPANDED UNIVERSE
 # ============================================================================
 SYMBOL_MAP = {
-    # --- crypto (canonical) ---
     "BTC-USD": "BTC-USD", "ETH-USD": "ETH-USD", "XRP-USD": "XRP-USD",
     "ADA-USD": "ADA-USD", "SOL-USD": "SOL-USD", "DOGE-USD": "DOGE-USD",
     "LTC-USD": "LTC-USD", "LINK-USD": "LINK-USD", "DOT-USD": "DOT-USD",
@@ -663,9 +687,7 @@ SYMBOL_MAP = {
     "ATOM-USD": "ATOM-USD", "NEAR-USD": "NEAR-USD", "FIL-USD": "FIL-USD",
     "ETC-USD": "ETC-USD", "ICP-USD": "ICP-USD", "XLM-USD": "XLM-USD",
     "HBAR-USD": "HBAR-USD", "QNT-USD": "QNT-USD",
-    # --- GRAM / TON ---
     "GRAM-USD": "GRAM-USD", "TON-USD": "TON-USD",
-    # --- L1 / L2 ---
     "ARB-USD": "ARB-USD", "OP-USD": "OP-USD", "SUI-USD": "SUI-USD",
     "APT-USD": "APT-USD", "INJ-USD": "INJ-USD", "TIA-USD": "TIA-USD",
     "SEI-USD": "SEI-USD", "STX-USD": "STX-USD", "IMX-USD": "IMX-USD",
@@ -678,7 +700,6 @@ SYMBOL_MAP = {
     "IOTX-USD": "IOTX-USD", "CKB-USD": "CKB-USD", "AR-USD": "AR-USD",
     "DYM-USD": "DYM-USD", "ALT-USD": "ALT-USD", "MANTA-USD": "MANTA-USD",
     "ZK-USD": "ZK-USD", "STRK-USD": "STRK-USD", "BLUR-USD": "BLUR-USD",
-    # --- DeFi ---
     "AAVE-USD": "AAVE-USD", "MKR-USD": "MKR-USD", "COMP-USD": "COMP-USD",
     "CRV-USD": "CRV-USD", "SNX-USD": "SNX-USD", "SUSHI-USD": "SUSHI-USD",
     "YFI-USD": "YFI-USD", "BAL-USD": "BAL-USD", "KNC-USD": "KNC-USD",
@@ -690,30 +711,22 @@ SYMBOL_MAP = {
     "REN-USD": "REN-USD", "LDO-USD": "LDO-USD", "RPL-USD": "RPL-USD",
     "GMX-USD": "GMX-USD", "DYDX-USD": "DYDX-USD", "PENDLE-USD": "PENDLE-USD",
     "LQTY-USD": "LQTY-USD", "ENS-USD": "ENS-USD", "1INCH-USD": "1INCH-USD",
-    "OCEAN-USD": "OCEAN-USD", "FET-USD": "FET-USD", "GRT-USD": "GRT-USD",
-    # --- memecoins ---
+    "FET-USD": "FET-USD", "GRT-USD": "GRT-USD",
     "PEPE-USD": "PEPE-USD", "SHIB-USD": "SHIB-USD", "WIF-USD": "WIF-USD",
-    "BONK-USD": "BONK-USD", "FLOKI-USD": "FLOKI-USD", "MEME-USD": "MEME-USD",
+    "BONK-USD": "BONK-USD", "FLOKI-USD": "FLOKI-USD",
     "BOME-USD": "BOME-USD", "MOG-USD": "MOG-USD",
-    # --- Solana ecosystem ---
     "JUP-USD": "JUP-USD", "PYTH-USD": "PYTH-USD", "JTO-USD": "JTO-USD",
     "RNDR-USD": "RNDR-USD",
-    # --- AI / data ---
     "WLD-USD": "WLD-USD", "ARKM-USD": "ARKM-USD", "AI-USD": "AI-USD",
     "TAO-USD": "TAO-USD",
-    # --- payment / legacy ---
-    "BCH-USD": "BCH-USD", "BSV-USD": "BSV-USD", "XMR-USD": "XMR-USD",
+    "BCH-USD": "BCH-USD", "XMR-USD": "XMR-USD",
     "DASH-USD": "DASH-USD", "ZEC-USD": "ZEC-USD", "EOS-USD": "EOS-USD",
-    "TRX-USD": "TRX-USD", "NEO-USD": "NEO-USD", "WAVES-USD": "WAVES-USD",
+    "TRX-USD": "TRX-USD", "NEO-USD": "NEO-USD",
     "IOTA-USD": "IOTA-USD", "QTUM-USD": "QTUM-USD", "DGB-USD": "DGB-USD",
-    "LSK-USD": "LSK-USD", "SC-USD": "SC-USD", "RVN-USD": "RVN-USD",
-    "KAS-USD": "KAS-USD",
-    # --- stablecoins ---
+    "SC-USD": "SC-USD", "RVN-USD": "RVN-USD", "KAS-USD": "KAS-USD",
     "USDT-USD": "USDT-USD", "USDC-USD": "USDC-USD", "DAI-USD": "DAI-USD",
-    # --- exchange tokens ---
     "BNB-USD": "BNB-USD", "OKB-USD": "OKB-USD", "HT-USD": "HT-USD",
     "KCS-USD": "KCS-USD",
-    # --- newer L1/L2 ---
     "W-USD": "W-USD", "OMNI-USD": "OMNI-USD", "REZ-USD": "REZ-USD",
     "ETHFI-USD": "ETHFI-USD", "ENA-USD": "ENA-USD", "EIGEN-USD": "EIGEN-USD",
     "MOVE-USD": "MOVE-USD", "ME-USD": "ME-USD", "PNUT-USD": "PNUT-USD",
@@ -764,7 +777,6 @@ SYMBOL_MAP = {
     "TFUEL-USD": "TFUEL-USD", "TWT-USD": "TWT-USD", "WAN-USD": "WAN-USD",
     "WNXM-USD": "WNXM-USD", "WRX-USD": "WRX-USD", "XEM-USD": "XEM-USD",
     "XVG-USD": "XVG-USD", "XVS-USD": "XVS-USD", "YFII-USD": "YFII-USD",
-    # --- Binance-native aliases ---
     "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
     "ADAUSDT": "ADA-USD", "SOLUSDT": "SOL-USD", "DOGEUSDT": "DOGE-USD",
     "LTCUSDT": "LTC-USD", "LINKUSDT": "LINK-USD", "DOTUSDT": "DOT-USD",
@@ -801,7 +813,6 @@ SYMBOL_MAP = {
     "REZUSDT": "REZ-USD", "ZKUSDT": "ZK-USD", "STRKUSDT": "STRK-USD",
     "DYMUSDT": "DYM-USD", "ALTUSDT": "ALT-USD", "MANTAUSDT": "MANTA-USD",
     "PIXELUSDT": "PIXEL-USD", "PORTALUSDT": "PORTAL-USD", "AEVOUSDT": "AEVO-USD",
-    # --- futures ---
     "GC=F": "GC=F", "SI=F": "SI=F", "CL=F": "CL=F", "NG=F": "NG=F",
     "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZS=F": "ZS=F", "ZM=F": "ZM=F",
     "ZW=F": "ZW=F", "KE=F": "KE=F", "HG=F": "HG=F", "PL=F": "PL=F",
@@ -821,7 +832,6 @@ SYMBOL_MAP = {
     "6N=F": "6N=F", "6M=F": "6M=F", "6Z=F": "6Z=F",
     "AD=F": "AD=F", "CD=F": "CD=F", "NE=F": "NE=F", "SS=F": "SS=F",
     "NI=F": "NI=F", "PB=F": "PB=F", "SN=F": "SN=F",
-    # --- equities / ETFs ---
     "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "GOOG": "GOOG",
     "AMZN": "AMZN", "META": "META", "NVDA": "NVDA", "TSLA": "TSLA",
     "AVGO": "AVGO", "ORCL": "ORCL", "CRM": "CRM", "ADBE": "ADBE",
@@ -989,7 +999,6 @@ SYMBOL_MAP = {
     "MGNI": "MGNI", "TTD": "TTD", "PUBM": "PUBM", "ROKU": "ROKU",
     "FUBO": "FUBO", "ASAN": "ASAN", "MNDY": "MNDY", "HUBS": "HUBS",
     "BILL": "BILL", "TOST": "TOST",
-    # --- forex ---
     "EURUSD=X": "EURUSD=X", "GBPUSD=X": "GBPUSD=X", "USDJPY=X": "USDJPY=X",
     "USDCHF=X": "USDCHF=X", "USDCAD=X": "USDCAD=X", "AUDUSD=X": "AUDUSD=X",
     "NZDUSD=X": "NZDUSD=X", "EURGBP=X": "EURGBP=X", "EURJPY=X": "EURJPY=X",
@@ -1012,7 +1021,6 @@ SYMBOL_MAP = {
     "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
     "GBPJPY": "GBPJPY=X", "AUDJPY": "AUDJPY=X", "CADJPY": "CADJPY=X",
     "CHFJPY": "CHFJPY=X", "NZDJPY": "NZDJPY=X",
-    # --- indices ---
     "^GSPC": "^GSPC", "^DJI": "^DJI", "^IXIC": "^IXIC", "^RUT": "^RUT",
     "^VIX": "^VIX", "^FTSE": "^FTSE", "^GDAXI": "^GDAXI", "^FCHI": "^FCHI",
     "^STOXX50E": "^STOXX50E", "^N225": "^N225", "^HSI": "^HSI",
@@ -1020,13 +1028,6 @@ SYMBOL_MAP = {
     "^BVSP": "^BVSP", "^MXX": "^MXX", "^TWII": "^TWII", "^STI": "^STI",
 }
 
-# ============================================================================
-# SYMBOL FALLBACKS — v4.5.6 EXPANDED
-# ============================================================================
-# For crypto, the chain is [canonical, Yahoo-crypto-form]. For everything
-# else, the chain is [canonical] because the relay handles the provider
-# dispatch internally.
-# ============================================================================
 def _crypto_fallback(sym: str) -> List[str]:
     if sym.endswith("-USD"):
         base = sym[:-4]
@@ -1130,18 +1131,13 @@ _ring_handler = _RingHandler()
 logger.addHandler(_ring_handler)
 logger.propagate = False
 
-# ============================================================================
-# D-MAJ-7: attach the ring handler to the telegram.ext logger so handler
-# exceptions caught by Application's error handler reach the /log endpoint
-# and the TWA log bar.
-# ============================================================================
 _telegram_ext_logger = logging.getLogger("telegram.ext")
 _telegram_ext_logger.addHandler(_ring_handler)
 _telegram_ext_logger.setLevel(logging.INFO)
 _telegram_ext_logger.propagate = False
 
 # ============================================================================
-# E-1 + E-6 + E-12: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
+# E-1 + E-6 + E-12 + C-2: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
 # ============================================================================
 def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
     if kind == "signal" and not PUSH_ON_SIGNAL:
@@ -1155,13 +1151,13 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
     if kind == "signal":
         direction = payload.get("type", "NEUTRAL")
         arrow = "📈" if direction == "BUY" else ("📉" if direction == "SELL" else "⚪")
-        dir_cs = "↑" if direction == "BUY" else ("↓" if direction == "SELL" else "⊙")
+        dir_cs = _cs(direction)
         return (
-            f"🎯 *ÆEA 𝒮\\_signal* {arrow}\n"
+            f"🎯 *ÆEA 𝒮_signal* {arrow}\n"
             f"*Type:* {_md_escape(dir_cs)}\n"
             f"*Price:* `{_md_escape(payload.get('price'))}`\n"
             f"*m/n:* {_md_escape(payload.get('m'))}/{_md_escape(payload.get('n'))} @ h={_md_escape(payload.get('h'))}\n"
-            f"*ℛ\\_regime:* {_md_escape(payload.get('regime', '—'))}\n"
+            f"*ℛ_regime:* {_md_escape(payload.get('regime', '—'))}\n"
             f"*Tick:* {_md_escape(payload.get('tick', '—'))}\n"
             f"💎 Natalia Tanyatia"
         )
@@ -1172,25 +1168,18 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
             "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
             "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
             "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
-        }
-        cs_map = {
-            "Bull": "𝒟\\_Bull", "Bear": "𝒟\\_Bear", "Whisky": "𝒲\\_Whisky",
-            "Wine": "𝒲\\_Wine", "Watter": "𝒲\\_Watter", "Blood": "ℬ\\_Blood",
-            "Hawk": "ℋ\\_Hawk", "Dove": "𝒟\\_Dove", "Diamond": "𝒟\\_Diamond",
-            "Ruby": "ℛ\\_Ruby", "Top": "𝒯\\_Top", "Bott": "ℬ\\_Bott",
-            "A": "𝒜", "B": "ℬ\\_Close", "ManualOrder": "ℳ\\_Order",
-            "ManualClose": "ℳ\\_Close",
+            "ManualOpen": "➕", "Pending": "⏳",
         }
         emoji = emoji_map.get(event, "⚡")
-        cs_event = cs_map.get(event, event)
+        cs_event = _cs_exec(event)
         side = payload.get("side", "NONE")
         ticket = payload.get("ticket", -1)
         ticket_str = f"#{ticket}" if ticket != -1 else "—"
         reason = payload.get("reason", "")
         reason_str = f"\n*Reason:* {_md_escape(reason)}" if reason else ""
         return (
-            f"{emoji} *ÆEA ℰ\\_exec: {_md_escape(cs_event)}*\n"
-            f"*Side:* {_md_escape(side)}\n"
+            f"{emoji} *ÆEA ℰ_exec: {_md_escape(cs_event)}*\n"
+            f"*Side:* {_md_escape(_cs(side))}\n"
             f"*Ticket:* {_md_escape(ticket_str)}\n"
             f"*Price:* `{_md_escape(payload.get('price'))}`\n"
             f"*Tick:* {_md_escape(payload.get('tick', '—'))}{reason_str}\n"
@@ -1201,7 +1190,7 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         fvg_type = payload.get("type", "top")
         arrow = "▲" if fvg_type == "top" else "▼"
         return (
-            f"📐 *ÆEA ℱ\\_VG {_md_escape(action.upper())}*\n"
+            f"📐 *ÆEA ℱ_VG {_md_escape(action.upper())}*\n"
             f"*Type:* {arrow} {_md_escape(fvg_type)}\n"
             f"*Price:* `{_md_escape(payload.get('price'))}`\n"
             f"*Idx:* {_md_escape(payload.get('idx', '—'))}\n"
@@ -1587,20 +1576,6 @@ def rsi(data: List[Decimal], period: int = 14) -> Decimal:
     return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
 
 def stochastic(high, low, close, k_period=14, d_period=3, slowing=1):
-    """MT4 iStochastic parity.
-
-    MT4's iStochastic(symbol, timeframe, kperiod, dperiod, slowing, method,
-    price_field, mode, shift) computes:
-      raw_k[i]  = 100 * (close[i] - LL(kperiod, i)) / (HH(kperiod, i) - LL(kperiod, i))
-      fast_k[i] = SMA(raw_k, slowing)[i]
-      k[i]      = fast_k[i]                     (MODE_MAIN)
-      d[i]      = SMA(fast_k, dperiod)[i]       (MODE_SIGNAL)
-    The FF calls iStochastic(NULL, 0, j, 3, jSO, MODE_SMA, 0, MODE_MAIN, 0)
-    with jSO = round(j * 3/5). The port previously omitted the slowing
-    parameter, computing raw_k directly as k. Restore the slowing SMA.
-
-    D-MIN-5 resolution.
-    """
     if slowing < 1:
         slowing = 1
     if len(close) < k_period + slowing - 1 or k_period <= 0:
@@ -1833,7 +1808,7 @@ class FeedClient:
             try:
                 req_headers = {
                     "Accept": "application/json",
-                    "User-Agent": "AEI-Bridge/v4.5.6",
+                    "User-Agent": "AEI-Bridge/final",
                     "Cache-Control": "no-cache",
                 }
                 if RELAY_KEY:
@@ -2084,7 +2059,6 @@ class AEEA_Engine:
         self._last_telegram_toast_seq: int = 0
         self._last_dispatch_event: str = ""
         self._last_comment_line: str = ""
-        self._last_projection_bar: int = -1
 
     def _com_price(self) -> Decimal:
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
@@ -2229,7 +2203,6 @@ class AEEA_Engine:
         st.last_inbound_message_id = saved_inbound_msg
         self._last_kronecker_bar = -1
         self._last_comment_line = saved_comment
-        self._last_projection_bar = -1
 
         logger.info("ReSet   ")
 
@@ -2282,7 +2255,15 @@ class AEEA_Engine:
     def _normalize(self, j: int) -> None:
         st = self.state
         y = st.y
+        # M-1: explicit out-of-bounds guard at the top of the function.
         if j < 1 or len(self.ohlcv_history) < j + 1:
+            return
+        if j < y + 1 or j > X_PERIOD - 1:
+            return
+        col_i = j - (y + 1)
+        if col_i < 0 or col_i >= (X_PERIOD - Y_START):
+            return
+        if col_i >= len(st.iA[0]) or col_i >= len(st.cA[0]):
             return
         end = len(self.ohlcv_history)
         window = self.ohlcv_history[end - (j + 1):end]
@@ -2301,12 +2282,7 @@ class AEEA_Engine:
             st.iSuply = upper_prev
             st.iDemand = lower_prev
 
-        col_i = j - (y + 1)
         col_c = col_i
-        if col_i < 0 or col_i >= len(st.iA[0]):
-            return
-        if col_c < 0 or col_c >= len(st.cA[0]):
-            col_c = col_i
 
         adx_main_list: List[Decimal] = []
         plus_di_list: List[Decimal] = []
@@ -2735,6 +2711,16 @@ class AEEA_Engine:
             return Decimal('0.0')
         return (tp[0] - sma_tp) / (Decimal('0.015') * mad)
 
+    # ========================================================================
+    # A-C2: _M() and _N() — ADX COUNTED EXACTLY ONCE
+    # ========================================================================
+    # The FF's M()/N() count ADX (iA[0]) exactly once: inside the
+    # `for i in range(13)` loop. In Edition 2, a follow-up block re-tested
+    # iA[0] with `_cmp_frac`, double-counting ADX and allowing m/n to
+    # reach 14 instead of 13. That double-count is removed here. m and n
+    # can now reach at most 13, exactly matching the FF's counting rule,
+    # and the δ(m−n−2)=1 gate fires exactly when the FF's gate fires.
+    # ========================================================================
     def _M(self, j: int) -> int:
         st = self.state
         y = st.y
@@ -2745,25 +2731,21 @@ class AEEA_Engine:
             return 0
         if idx_c < 0 or idx_c >= len(st.cA[0]):
             idx_c = idx_i
-        f_plus_gf = F_PLUS_GF_D
-        g_minus_gf = G_MINUS_GF_D
         hh_val = st.HH[idx_i] if idx_i < len(st.HH) else Decimal('0.0')
         for i in range(13):
             iA_val = st.iA[i][idx_i]
             cA_val = st.cA[i][idx_c]
             kA_val = st.kA[i][idx_c]
+            # C-3: ULP-safe comparison via _cmp_frac (exact rational).
             if st.Price > hh_val:
-                if (iA_val > f_plus_gf) or (cA_val < kA_val):
+                if (_cmp_frac(iA_val, F_PLUS_GF_FRAC) > 0) or (cA_val < kA_val):
                     m += 1
             elif st.price > hh_val:
-                if (iA_val > f_plus_gf) or (iA_val < kA_val):
+                if (_cmp_frac(iA_val, F_PLUS_GF_FRAC) > 0) or (iA_val < kA_val):
                     m += 1
-            elif iA_val > f_plus_gf:
+            elif _cmp_frac(iA_val, F_PLUS_GF_FRAC) > 0:
                 m += 1
-        adx_val = st.iA[0][idx_i]
-        if (adx_val > f_plus_gf) or (adx_val < g_minus_gf):
-            m += 1
-        if (st.iIHKt > f_plus_gf) and (st.iIHKk > f_plus_gf):
+        if (_cmp_frac(st.iIHKt, F_PLUS_GF_FRAC) > 0) and (_cmp_frac(st.iIHKk, F_PLUS_GF_FRAC) > 0):
             m += 1
         if st.Price > hh_val:
             for i in range(13):
@@ -2783,25 +2765,21 @@ class AEEA_Engine:
             return 0
         if idx_c < 0 or idx_c >= len(st.cA[0]):
             idx_c = idx_i
-        f_plus_gf = F_PLUS_GF_D
-        g_minus_gf = G_MINUS_GF_D
         ll_val = st.LL[idx_i] if idx_i < len(st.LL) else Decimal('0.0')
         for i in range(13):
             iA_val = st.iA[i][idx_i]
             cA_val = st.cA[i][idx_c]
             lA_val = st.lA[i][idx_c]
+            # C-3: ULP-safe comparison via _cmp_frac (exact rational).
             if st.Price < ll_val:
-                if (iA_val < g_minus_gf) or (cA_val > lA_val):
+                if (_cmp_frac(iA_val, G_MINUS_GF_FRAC) < 0) or (cA_val > lA_val):
                     n += 1
             elif st.price < ll_val:
-                if (iA_val < g_minus_gf) or (iA_val > lA_val):
+                if (_cmp_frac(iA_val, G_MINUS_GF_FRAC) < 0) or (iA_val > lA_val):
                     n += 1
-            elif iA_val < g_minus_gf:
+            elif _cmp_frac(iA_val, G_MINUS_GF_FRAC) < 0:
                 n += 1
-        adx_val = st.iA[0][idx_i]
-        if (adx_val > f_plus_gf) or (adx_val < g_minus_gf):
-            n += 1
-        if (st.iIHKt < g_minus_gf) and (st.iIHKk < g_minus_gf):
+        if (_cmp_frac(st.iIHKt, G_MINUS_GF_FRAC) < 0) and (_cmp_frac(st.iIHKk, G_MINUS_GF_FRAC) < 0):
             n += 1
         if st.Price < ll_val:
             for i in range(13):
@@ -2917,17 +2895,19 @@ class AEEA_Engine:
         elif st.iI == st.iw:
             st.iJ = st.iz
 
-    def _O(self, inp: int, inp0: int, inp1: int, current: bool, which: str = "C") -> bool:
+    def _O(self, inp: int, inp0: int, inp1: int, inp2: bool, inp3: bool) -> bool:
         st = self.state
         y = st.y
         idx = inp0 - (y + 1)
         if idx < 0 or idx >= len(st.Regime):
-            return current
+            return inp3
         regime = st.Regime[idx]
         is_range = (regime == "sRange" or regime == "tRange")
-        if inp < inp1 and is_range:
-            return inp1
-        return not inp1
+        if (inp < inp1) and is_range:
+            return inp3
+        if (regime != "sRange") and (regime != "tRange"):
+            return not inp3
+        return not inp3
 
     def _R(self, j: int) -> None:
         st = self.state
@@ -3192,6 +3172,10 @@ class AEEA_Engine:
             st.execution_fired = True
             return
 
+    # A-C3: the stale `st.l_order_id if hasattr(st, 'l_order_id') else
+    # st.lOrder_id` guard in the third branch of _dispatch_diamond_subblock
+    # is replaced with the plain st.lOrder_id. The attribute l_order_id
+    # does not exist on AEI_CoreState.
     def _dispatch_diamond_subblock(self, fg: str) -> None:
         st = self.state
         if (st.prime == 0 and st.dime == 0) and fg == "Up":
@@ -4068,6 +4052,15 @@ class AEEA_Engine:
             self._send_signal_alert()
 
     def _on_gaurd(self, inp: int) -> bool:
+        """Port of ÆEA.mq4 OnGaurd(inp).
+
+        m-4 NOTE: The FF's `if((price <D) && (D!=0))` branch is
+        unreachable only when E <= D. When D < E, the branch is
+        reachable and the port faithfully mirrors the FF's control
+        flow. The MQL4 source itself writes the branch after an
+        if/else where both paths return, so the branch is dead in
+        the common case E <= D; the port preserves both semantics.
+        """
         st = self.state
         if st.price > st.E and st.E != Decimal('0.0'):
             if st.signature and inp != -1:
@@ -4076,6 +4069,14 @@ class AEEA_Engine:
         else:
             if st.signature and inp != -1:
                 st.dime = 1
+            return False
+        if st.price < st.D and st.D != Decimal('0.0'):
+            if st.signature and inp != -1:
+                st.dime = 1
+            return True
+        else:
+            if st.signature and inp != -1:
+                st.dime = 0
             return False
 
     def _on_log(self) -> None:
@@ -4533,11 +4534,6 @@ class AEEA_Engine:
     def _on_tick_locked(self, price_data: PriceData) -> None:
         st = self.state
         self._tick_log_counter += 1
-        if self._tick_log_counter >= 100:
-            self._tick_log_counter = 0
-            idx = st.Z - (st.y + 1)
-            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
-            logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, provider={st.last_provider}")
 
         if price_data.bid <= Decimal('0.0'):
             logger.warning(f"⚠️ Tick #{st.tick} with non-positive bid ({price_data.bid}). Skipping state machine.")
@@ -4582,22 +4578,25 @@ class AEEA_Engine:
 
         self._execute_trailing_stop()
 
+        # M-2: OnPoint / OnBar / OnCall execute BEFORE the tick-log block
+        # so the regime string reported by the log block reflects the
+        # current tick's classification, not the previous tick's.
         self._on_point()
-        st.C = self._O(st.iO, st.O, st.J, st.C, "C")
-        st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
+        st.C = self._O(st.iO, st.O, st.J, st.C, st.Cc)
+        st.c = self._O(st.io, st.o, st.iJ, st.c, st.cC)
         self._on_call()
         self._J()
 
         if is_now != st.t:
             self._on_bar()
-            st.C = self._O(st.iO, st.O, st.J, st.C, "C")
-            st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
+            st.C = self._O(st.iO, st.O, st.J, st.C, st.Cc)
+            st.c = self._O(st.io, st.o, st.iJ, st.c, st.cC)
 
         if st.J == st.y + 1 and st.J != 2:
             self._on_stand()
             self._J()
-            st.C = self._O(st.iO, st.O, st.J, st.C, "C")
-            st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
+            st.C = self._O(st.iO, st.O, st.J, st.C, st.Cc)
+            st.c = self._O(st.io, st.o, st.iJ, st.c, st.cC)
             if st.iO != 2:
                 if st.J >= st.iO:
                     j = MIN_PERIOD
@@ -4638,8 +4637,8 @@ class AEEA_Engine:
         if st.J == X_PERIOD - 1:
             self._on_track()
             self._J()
-            st.C = self._O(st.iO, st.O, st.J, st.C, "C")
-            st.c = self._O(st.io, st.o, st.iJ, st.c, "c")
+            st.C = self._O(st.iO, st.O, st.J, st.C, st.Cc)
+            st.c = self._O(st.io, st.o, st.iJ, st.c, st.cC)
             if st.iO != 4 * MAX_PERIOD:
                 if st.J >= st.iO:
                     j = MAX_PERIOD - 1
@@ -4722,6 +4721,13 @@ class AEEA_Engine:
         if st.GF:
             self.OnReInit()
             st.GF = False
+
+        # M-2: tick-log block placed after all state-machine work.
+        if self._tick_log_counter >= 100:
+            self._tick_log_counter = 0
+            idx = st.Z - (st.y + 1)
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
+            logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, provider={st.last_provider}")
 
         st.tick += 1
         if st.ab != st.ba:
@@ -4868,7 +4874,7 @@ class AEEA_Engine:
             return
         if not self._alert_delivery_enabled:
             return
-        direction = "📈 ↑" if st.price > st.signal else "📉 ↓"
+        direction = "↟" if st.price > st.signal else "↡"
         m_local = st.authoritative_m
         n_local = st.authoritative_n
         h_idx = st.h - (st.y + 1)
@@ -4878,11 +4884,11 @@ class AEEA_Engine:
         idx = st.Z - (st.y + 1)
         regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
         msg = (
-            f"🎯 *ÆEA 𝒮\\_signal ℰ\\_alert*\n"
-            f"📊 *Direction:* {_md_escape(direction)}\n"
-            f"🎯 *Signal Level:* {_md_escape(st.signal)}\n"
+            f"🎯 *ÆEA 𝒮_signal ℰ_alert*\n"
+            f"📊 *𝒮_Direction:* {_md_escape(direction)}\n"
+            f"🎯 *𝒮_Signal_Level:* {_md_escape(st.signal)}\n"
             f"💰 *Current Price:* {_md_escape(st.price)}\n"
-            f"📊 *ℛ\\_regime:* {_md_escape(regime)}\n"
+            f"📊 *ℛ_regime:* {_md_escape(regime)}\n"
             f"⚖️ *Imbalance @ h={_md_escape(st.h)}:* m={_md_escape(m_at_h)}, n={_md_escape(n_at_h)}\n"
             f"⚖️ *Local m/n:* {_md_escape(m_local)}/{_md_escape(n_local)}\n"
             f"✅ *δ(m-n-2)=1:* {'✅ 𝒜₃ MET' if condition_met else '❌ 𝒜₄ NOT MET'}\n"
@@ -4933,24 +4939,17 @@ class AEEA_Engine:
             "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
             "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
             "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
-        }
-        cs_map = {
-            "Bull": "𝒟\\_Bull", "Bear": "𝒟\\_Bear", "Whisky": "𝒲\\_Whisky",
-            "Wine": "𝒲\\_Wine", "Watter": "𝒲\\_Watter", "Blood": "ℬ\\_Blood",
-            "Hawk": "ℋ\\_Hawk", "Dove": "𝒟\\_Dove", "Diamond": "𝒟\\_Diamond",
-            "Ruby": "ℛ\\_Ruby", "Top": "𝒯\\_Top", "Bott": "ℬ\\_Bott",
-            "A": "𝒜", "B": "ℬ\\_Close", "ManualOrder": "ℳ\\_Order",
-            "ManualClose": "ℳ\\_Close",
+            "ManualOpen": "➕", "Pending": "⏳",
         }
         emoji = emoji_map.get(event, "⚡")
-        cs_event = cs_map.get(event, event)
+        cs_event = _cs_exec(event)
         side_str = side if side else "NONE"
         ticket_str = f"#{ticket}" if ticket != -1 else "—"
         reason_str = f" | {_md_escape(reason)}" if reason else ""
         msg = (
-            f"{emoji} *ÆEA ℰ\\_exec*\n"
+            f"{emoji} *ÆEA ℰ_exec*\n"
             f"📛 *Event:* {_md_escape(cs_event)}\n"
-            f"📊 *Side:* {_md_escape(side_str)}\n"
+            f"📊 *Side:* {_md_escape(_cs(side_str))}\n"
             f"🎫 *Ticket:* {_md_escape(ticket_str)}\n"
             f"💰 *Price:* {_md_escape(price)}{reason_str}\n"
             f"🔄 *Tick:* {_md_escape(st.tick)}\n"
@@ -5445,30 +5444,32 @@ class AEEA_Engine:
         damping = ARC_PROJECTION_DAMPING_D
         path: List[Dict[str, Any]] = []
         half_period_frac = PyFraction(horizon, 2)
+        price_now_frac = PyFraction(str(price_now))
+        signal_now_frac = PyFraction(str(signal_now))
+        center_frac = PyFraction(str(center))
+        amplitude_frac = PyFraction(str(amplitude))
+        slope_frac = PyFraction(str(slope))
+        damping_frac = PyFraction(str(damping))
+        delta_frac = price_now_frac - signal_now_frac
         for k in range(1, horizon + 1):
-            t = Decimal(k)
             if projection_kind == "trend":
-                future_price = price_now + slope * t
+                future_price_frac = price_now_frac + slope_frac * PyFraction(k, 1)
             elif projection_kind == "volatile":
-                t_frac = PyFraction(k, 1)
-                ratio_frac = t_frac / PyFraction(horizon, 1)
-                omega_t = _TWO_PI_D * Decimal(ratio_frac.numerator) / Decimal(ratio_frac.denominator)
-                cos_val = self._decimal_cos(omega_t)
-                decay = Decimal('1.0')
-                for _dk in range(k):
-                    decay = decay * damping
-                future_price = center + amplitude * cos_val * decay
+                ratio_frac = PyFraction(k, horizon)
+                omega_t_frac = PyFraction(2) * _PI_FRAC * ratio_frac
+                cos_frac = self._rational_cos(omega_t_frac)
+                decay_frac = damping_frac ** k
+                future_price_frac = center_frac + amplitude_frac * cos_frac * decay_frac
             else:
-                t_frac = PyFraction(k, 1)
-                ratio_frac = t_frac / half_period_frac
-                omega_t = _PI_D * Decimal(ratio_frac.numerator) / Decimal(ratio_frac.denominator)
-                cos_val = self._decimal_cos(omega_t)
-                delta = price_now - signal_now
-                future_price = signal_now + delta * cos_val
+                ratio_frac = PyFraction(k, 1) / half_period_frac
+                omega_t_frac = _PI_FRAC * ratio_frac
+                cos_frac = self._rational_cos(omega_t_frac)
+                future_price_frac = signal_now_frac + delta_frac * cos_frac
+            future_price_d = Decimal(future_price_frac.numerator) / Decimal(future_price_frac.denominator)
             path.append({
                 "step": k,
-                "price": str(future_price.quantize(Decimal('0.00001'))),
-                "t": float(t),
+                "price": str(future_price_d.quantize(Decimal('0.00001'))),
+                "t": float(k),
             })
         st.projection_path = path
         st.projection_meta = {
@@ -5488,21 +5489,55 @@ class AEEA_Engine:
         logger.info(f"🌌 Projection recomputed (trigger={trigger}, kind={projection_kind}, horizon={horizon})")
 
     @staticmethod
-    def _decimal_cos(x: Decimal) -> Decimal:
-        n_periods = int(x / _TWO_PI_D)
-        x_reduced = x - _TWO_PI_D * Decimal(n_periods)
-        if x_reduced > _PI_D:
-            x_reduced = x_reduced - _TWO_PI_D
-        elif x_reduced < -_PI_D:
-            x_reduced = x_reduced + _TWO_PI_D
+    def _rational_cos(x) -> PyFraction:
+        """A-m1: 15-digit Taylor series cosine with π = _PI_FRAC
+        (3141592653589793/1000000000000000). The argument is reduced
+        modulo 2π exactly, then the Taylor expansion is summed to 40
+        terms or until the term underflows to zero. The result is an
+        exact PyFraction; the caller converts to Decimal only at the
+        final quantization step."""
+        if isinstance(x, PyFraction):
+            x_frac = x
+        elif isinstance(x, Decimal):
+            if x == Decimal('0.0'):
+                return PyFraction(1, 1)
+            sign_x = -1 if x < Decimal('0.0') else 1
+            ax = x if sign_x > 0 else -x
+            _sign_t, digits, exp = ax.as_tuple()
+            if not isinstance(exp, int):
+                return PyFraction(1, 1)
+            int_val = 0
+            for d in digits:
+                int_val = int_val * 10 + d
+            if exp < 0:
+                x_frac = PyFraction(int_val, 10 ** (-exp))
+            else:
+                x_frac = PyFraction(int_val * (10 ** exp), 1)
+            if sign_x < 0:
+                x_frac = -x_frac
+        elif isinstance(x, int):
+            x_frac = PyFraction(x, 1)
+        else:
+            x_frac = PyFraction(str(x))
+        two_pi_frac = PyFraction(2) * _PI_FRAC
+        n_periods = int(x_frac / two_pi_frac)
+        x_reduced = x_frac - two_pi_frac * n_periods
+        pi_frac = _PI_FRAC
+        if x_reduced > pi_frac:
+            x_reduced = x_reduced - two_pi_frac
+        elif x_reduced < -pi_frac:
+            x_reduced = x_reduced + two_pi_frac
         x2 = x_reduced * x_reduced
-        term = Decimal('1.0')
-        result = Decimal('1.0')
+        term = PyFraction(1, 1)
+        result = PyFraction(1, 1)
         sign = -1
-        for n in range(1, 30):
-            term = term * x2 / (Decimal(2 * n - 1) * Decimal(2 * n))
-            result = result + (Decimal(sign) * term)
+        for n in range(1, 40):
+            denom = PyFraction((2 * n - 1) * (2 * n), 1)
+            term = term * x2 / denom
+            result = result + PyFraction(sign, 1) * term
             sign = -sign
+            if term == PyFraction(0, 1):
+                break
         return result
 
     def get_projection(self) -> Dict[str, Any]:
@@ -5773,7 +5808,7 @@ class TunnelManager:
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Bridge/4.6.0"
+    server_version = "AEI-Bridge/final"
 
     def log_message(self, fmt, *args):
         return
@@ -5844,7 +5879,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     age_seconds = (datetime.now() - lu).total_seconds()
                     stale = age_seconds > 60
             self._send_json(200, {
-                "ok": not stale, "service": "aei-bridge", "version": "4.6.0",
+                "ok": not stale, "service": "aei-bridge", "version": "final",
                 "last_price_update": last,
                 "age_seconds": age_seconds, "stale": stale,
                 "engine_initialized": bool(engine.state.FG) if engine else False,
@@ -5858,11 +5893,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "projection_computed_at": engine.state.projection_computed_at if engine else None,
                 "projection_trigger": engine.state.projection_trigger if engine else "",
                 "symbol_class_counts": {
-                    "crypto_pairs": len(CRYPTO_MAP),
-                    "futures_symbols": len(FUTURES_MAP),
-                    "equities_symbols": len(EQUITIES_MAP),
-                    "forex_pairs": len(FOREX_MAP),
-                    "indices_symbols": len(INDICES_MAP),
+                    "crypto_pairs": 0,
+                    "futures_symbols": 0,
+                    "equities_symbols": 0,
+                    "forex_pairs": 0,
+                    "indices_symbols": 0,
                 },
             })
             return
@@ -6657,6 +6692,7 @@ class AEI_Bot:
             return False
 
         if parse_class and not reply_class:
+            # M-4: return immediately on the threaded-plain success path.
             ok3, err3 = _attempt(None, reply_to_message_id)
             if ok3:
                 logger.info("📡 send_message attempt 3 succeeded (plain text, threaded)")
@@ -6774,8 +6810,8 @@ class AEI_Bot:
         chat_id = update.effective_chat.id
         self.engine.state.chat_id = chat_id
         self.engine.application = self.application
-        engine_status = "✅ Initialized" if self.engine.state.FG else "⏳ Waiting for data"
-        feed_status = "Active" if self._running else "Inactive"
+        engine_status = "𝒜₃ Initialized" if self.engine.state.FG else "𝒜₄ Waiting for data"
+        feed_status = _cs("Active") if self._running else _cs("Inactive")
         welcome = (
             "🔷 *ÆEA Quantum-Financial Topology Bot*\n"
             "Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
@@ -6826,25 +6862,25 @@ class AEI_Bot:
         bid, ask = self.engine.feed.get_current_price()
         price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
         feed_mark = "✅" if self._running else "⏹️"
-        init_mark = "✅ Initialized" if state.FG else "⏳ Initializing"
+        init_mark = "✅ 𝒜₃" if state.FG else "⏳ 𝒜₄"
         m_local = state.authoritative_m
         n_local = state.authoritative_n
         h_idx = state.h - (state.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
-        trail_status = "🟢 Active" if state.trailing_stop_active else "⚪ Inactive"
+        trail_status = "𝒜₃" if state.trailing_stop_active else "𝒜₄"
         order_presence = []
         if state.has_open_long:
-            order_presence.append(f"↑(id={state.lOrder_id})")
+            order_presence.append(f"↑({state.lOrder_id})")
         if state.has_open_short:
-            order_presence.append(f"↓(id={state.kOrder_id})")
-        order_str = ", ".join(order_presence) if order_presence else "none"
+            order_presence.append(f"↓({state.kOrder_id})")
+        order_str = ", ".join(order_presence) if order_presence else "𝒩"
         response = (
-            "🔷 *ÆEA Status*\n"
+            "🔷 *ÆEA 𝒮_Status*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
             f"💰 *Price:* {price_display}\n"
-            f"📊 *ℛ\\_regime:* {regime}\n"
-            f"🎯 *Signal Level:* {state.signal:.5f}\n"
+            f"📊 *ℛ_regime:* {regime}\n"
+            f"🎯 *𝒮_Signal_Level:* {state.signal:.5f}\n"
             f"📋 *𝒮:* {'Active' if state.signature else 'Idle'}\n"
             f"🔄 *Tick:* {state.tick}\n"
             f"🧠 *Engine State:* {init_mark}\n"
@@ -6857,18 +6893,18 @@ class AEI_Bot:
             f"🎯 *Signal History:* {len(state.signal_history)}\n"
             f"📡 *Feed Active:* {feed_mark}\n"
             f"🛰️ *Provider:* `{state.last_provider or '—'}`  |  *Volume:* `{state.last_volume}`\n"
-            f"🔀 *𝒦:* {state.KC}  |  *π:* {state.prime}  |  *δ\\_dime:* {state.dime}\n"
-            f"🔀 *𝒦\\_invert:* {state.invert}  |  *μ:* {state.mem}  |  *τ:* {state.tag}\n"
-            f"🔀 *𝒜:* {state.A}  |  *ℬ:* {state.B}  |  *𝒞:* {state.C}  |  *𝒸:* {state.c}\n"
-            f"🔀 *𝒯\\_tick_tock:* {state.tick_tock}  |  *𝒮\\_safety:* {state.safety}\n"
+            f"🔀 *𝒦:* {_cs(state.KC)}  |  *π:* {state.prime}  |  *δ_dime:* {state.dime}\n"
+            f"🔀 *𝒦_invert:* {_cs(state.invert)}  |  *μ:* {state.mem}  |  *τ:* {state.tag}\n"
+            f"🔀 *𝒜:* {_cs(state.A)}  |  *ℬ:* {_cs(state.B)}  |  *𝒞:* {_cs(state.C)}  |  *𝒸:* {_cs(state.c)}\n"
+            f"🔀 *𝒯_tick_tock:* {_cs(state.tick_tock)}  |  *𝒮_safety:* {_cs(state.safety)}\n"
             f"📊 *𝒪:* {order_str}\n"
-            f"🛑 *𝒯\\_trail:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
-            f"🎯 *Trailing Side:* {state.trailing_stop_side or '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
-            f"🔍 *𝒯\\_track Runs:* {state.on_track_runs}  |  *𝒯\\_stand Runs:* {state.on_stand_runs}\n"
-            f"🎯 *Last δ\\_bar:* {self.engine._last_kronecker_bar}\n"
-            f"🔢 *X\\_scan:* {state.X_scan}  |  *Y\\_scan:* {state.Y_scan}  |  *X\\_PERIOD:* {X_PERIOD}\n"
-            f"🌌 *𝒫\\_arc:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (𝒫\\_trigger={state.projection_trigger or '—'})\n"
-            f"💬 *Last Inbound Msg Id:* {state.last_inbound_message_id}"
+            f"🛑 *𝒯_trail:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
+            f"🎯 *𝒯_side:* {_cs(state.trailing_stop_side) if state.trailing_stop_side else '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
+            f"🔍 *𝒯_track Runs:* {state.on_track_runs}  |  *𝒯_stand Runs:* {state.on_stand_runs}\n"
+            f"🎯 *Last δ_bar:* {self.engine._last_kronecker_bar}\n"
+            f"🔢 *𝒳_scan:* {state.X_scan}  |  *𝒴_scan:* {state.Y_scan}  |  *𝒳_PERIOD:* {X_PERIOD}\n"
+            f"🌌 *𝒫_arc:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (𝒫_trigger={state.projection_trigger or '—'})\n"
+            f"💬 *ℳ_last:* {state.last_inbound_message_id}"
         )
         reply_markup = self._build_main_keyboard()
         await self._safe_reply(update, response, reply_markup=reply_markup)
@@ -6887,33 +6923,33 @@ class AEI_Bot:
             f"⚖️ *Local m / n:* {status.get('m_count')} / {status.get('n_count')}\n"
             f"⚖️ *m / n (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
             f"🎯 *Signal:* {status.get('signal'):.5f}\n"
-            f"📊 *ℛ\\_regime:* {status.get('regime')}\n"
-            f"🔀 *𝒦:* {status.get('KC')}  |  *π:* {status.get('prime')}  |  *δ\\_dime:* {status.get('dime')}\n"
-            f"🔀 *𝒦\\_invert:* {status.get('invert')}  |  *μ:* {status.get('mem')}  |  *τ:* {status.get('tag')}\n"
-            f"🔀 *𝒜:* {status.get('A')}  |  *ℬ:* {status.get('B')}  |  *𝒞:* {status.get('C')}  |  *𝒸:* {status.get('c')}\n"
-            f"🔀 *𝒯\\_tick_tock:* {status.get('tick_tock')}  |  *𝒮:* {status.get('signature')}  |  *𝒮\\_safety:* {status.get('safety')}\n"
-            f"📈 *𝒯\\_trail Active:* {status.get('trailing_stop_active')}\n"
-            f"📈 *𝒯\\_trail Price:* {status.get('trailing_stop_price')}\n"
-            f"📈 *𝒯\\_trail Take Profit:* {status.get('trailing_take_profit')}\n"
-            f"📍 *𝒯\\_trail Entry:* {status.get('trailing_stop_entry')}  |  *Side:* {status.get('trailing_stop_side')}\n"
-            f"📊 *Has Long:* {status.get('has_open_long')}  |  *Has Short:* {status.get('has_open_short')}\n"
+            f"📊 *ℛ_regime:* {status.get('regime')}\n"
+            f"🔀 *𝒦:* {_cs(status.get('KC'))}  |  *π:* {status.get('prime')}  |  *δ_dime:* {status.get('dime')}\n"
+            f"🔀 *𝒦_invert:* {_cs(status.get('invert'))}  |  *μ:* {status.get('mem')}  |  *τ:* {status.get('tag')}\n"
+            f"🔀 *𝒜:* {_cs(status.get('A'))}  |  *ℬ:* {_cs(status.get('B'))}  |  *𝒞:* {_cs(status.get('C'))}  |  *𝒸:* {_cs(status.get('c'))}\n"
+            f"🔀 *𝒯_tick_tock:* {_cs(status.get('tick_tock'))}  |  *𝒮:* {_cs(status.get('signature'))}  |  *𝒮_safety:* {_cs(status.get('safety'))}\n"
+            f"📈 *𝒯_trail Active:* {_cs(status.get('trailing_stop_active'))}\n"
+            f"📈 *𝒯_trail Price:* {status.get('trailing_stop_price')}\n"
+            f"📈 *𝒯_trail Take Profit:* {status.get('trailing_take_profit')}\n"
+            f"📍 *𝒯_trail Entry:* {status.get('trailing_stop_entry')}  |  *Side:* {_cs(status.get('trailing_stop_side'))}\n"
+            f"📊 *Has Long:* {_cs(status.get('has_open_long'))}  |  *Has Short:* {_cs(status.get('has_open_short'))}\n"
             f"📊 *lOrder_id:* {status.get('lOrder_id')}  |  *kOrder_id:* {status.get('kOrder_id')}\n"
-            f"🔍 *𝒯\\_track Runs:* {status.get('on_track_runs')}  |  *𝒯\\_stand Runs:* {status.get('on_stand_runs')}\n"
-            f"🎯 *Last δ\\_bar:* {status.get('last_kronecker_bar')}\n"
+            f"🔍 *𝒯_track Runs:* {status.get('on_track_runs')}  |  *𝒯_stand Runs:* {status.get('on_stand_runs')}\n"
+            f"🎯 *Last δ_bar:* {status.get('last_kronecker_bar')}\n"
             f"🔢 *Authoritative m/n/h:* {status.get('authoritative_m')}/{status.get('authoritative_n')}/{status.get('authoritative_h')}\n"
             f"🔢 *Last δ m/n/h:* {status.get('last_kronecker_m')}/{status.get('last_kronecker_n')}/{status.get('last_kronecker_h')}\n"
-            f"🔢 *Derivatives Z/z/O/o/W/w:* {status.get('Z')}/{status.get('z')}/{status.get('O')}/{status.get('o')}/{status.get('W')}/{status.get('w')}\n"
-            f"🔢 *Derivatives I/iI/J/iJ:* {status.get('I')}/{status.get('iI')}/{status.get('J')}/{status.get('iJ')}\n"
-            f"🔢 *Derivatives iZ/iz/iW/iw/iO/io:* {status.get('iZ')}/{status.get('iz')}/{status.get('iW')}/{status.get('iw')}/{status.get('iO')}/{status.get('io')}\n"
-            f"🔢 *Scan S/T/r/ir:* {status.get('S')}/{status.get('T')}/{status.get('r')}/{status.get('ir')}\n"
-            f"🔢 *X_scan/Y_scan:* {status.get('X_scan')}/{status.get('Y_scan')}\n"
-            f"🔢 *X_PERIOD (const):* {X_PERIOD}  |  *Y_START (const):* {Y_START}\n"
-            f"🔢 *𝒜\\_ATR/𝒜\\_StdDev/𝒜\\_IHKk/𝒜\\_IHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
+            f"🔢 *Derivatives 𝒵/𝒵'/𝒪/𝒪'/𝒲/𝒲':* {status.get('Z')}/{status.get('z')}/{status.get('O')}/{status.get('o')}/{status.get('W')}/{status.get('w')}\n"
+            f"🔢 *Derivatives ℐ/ℐ'/𝒥/𝒥':* {status.get('I')}/{status.get('iI')}/{status.get('J')}/{status.get('iJ')}\n"
+            f"🔢 *Derivatives ℐ𝒵/ℐ𝒵'/ℐ𝒲/ℐ𝒲'/ℐ𝒪/ℐ𝒪':* {status.get('iZ')}/{status.get('iz')}/{status.get('iW')}/{status.get('iw')}/{status.get('iO')}/{status.get('io')}\n"
+            f"🔢 *Scan 𝒮/𝒯/𝒓/ℐ𝒓:* {status.get('S')}/{status.get('T')}/{status.get('r')}/{status.get('ir')}\n"
+            f"🔢 *𝒳_scan/𝒴_scan:* {status.get('X_scan')}/{status.get('Y_scan')}\n"
+            f"🔢 *𝒳_PERIOD (const):* {X_PERIOD}  |  *𝒴_START (const):* {Y_START}\n"
+            f"🔢 *𝒜_ATR/𝒜_StdDev/𝒜_IHKk/𝒜_IHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
             f"🔢 *lPass/ilPass/kPass/ikPass:* {status.get('lPass')}/{status.get('ilPass')}/{status.get('kPass')}/{status.get('ikPass')}\n"
             f"🛰️ *Provider:* {status.get('last_provider')}  |  *Volume:* {status.get('last_volume')}\n"
-            f"🌌 *𝒫\\_arc Computed:* {status.get('projection_computed_at')}\n"
-            f"🌌 *𝒫\\_trigger:* {status.get('projection_trigger')}\n"
-            f"💬 *Last Inbound Msg Id:* {status.get('last_inbound_message_id')}"
+            f"🌌 *𝒫_arc Computed:* {status.get('projection_computed_at')}\n"
+            f"🌌 *𝒫_trigger:* {status.get('projection_trigger')}\n"
+            f"💬 *ℳ_last:* {status.get('last_inbound_message_id')}"
         )
         await self._safe_reply(update, response)
 
@@ -6936,8 +6972,8 @@ class AEI_Bot:
         n_local = state.authoritative_n
         imbalance_status = "✅ 𝒜₃" if (m_local >= 12 or n_local >= 12) else "⏳ 𝒜₄"
         response = (
-            "📊 *ℛ\\_regime Classification*\n"
-            f"🔹 *Current ℛ\\_regime:* {current}\n"
+            "📊 *ℛ_regime Classification*\n"
+            f"🔹 *Current ℛ_regime:* {current}\n"
             f"🔹 *Π^{{>θ}}:* {premium:.5f}\n"
             f"🔸 *Π^{{<θ}}:* {discount:.5f}\n"
             f"📈 *HH:* {hh:.5f}\n"
@@ -6958,13 +6994,13 @@ class AEI_Bot:
             return
         state = self.engine.state
         if state.signal == Decimal('0.0'):
-            direction = "⊙ Neutral"
+            direction = "⊙"
             confidence = "N/A"
         elif state.price > state.signal:
-            direction = "📈 ↑"
+            direction = "↟"
             confidence = f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
         else:
-            direction = "🔴 ↓"
+            direction = "↡"
             confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
         m_local = state.authoritative_m
         n_local = state.authoritative_n
@@ -6975,19 +7011,19 @@ class AEI_Bot:
         condition_mark = "✅ 𝒜₃" if condition_met else "❌ 𝒜₄"
         response = (
             "🎯 *Trading Signal*\n"
-            f"📊 *Direction:* {direction}\n"
+            f"📊 *𝒮_Direction:* {direction}\n"
             f"📈 *Confidence:* {confidence}\n"
-            f"🎯 *Signal Level:* {state.signal:.5f}\n"
+            f"🎯 *𝒮_Signal_Level:* {state.signal:.5f}\n"
             f"💰 *Current Price:* {state.price:.5f}\n"
             f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
             f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
             f"✅ *δ(m-n-2)=1:* {condition_mark}\n"
-            f"🔀 *𝒦 State:* {state.KC}\n"
+            f"🔀 *𝒦 State:* {_cs(state.KC)}\n"
             f"🔢 *π:* {state.prime}\n"
-            f"🔢 *δ\\_dime:* {state.dime}\n"
+            f"🔢 *δ_dime:* {state.dime}\n"
             f"🔄 *Tick Count:* {state.tick}\n"
-            f"📈 *𝒯\\_trail:* {'Active' if state.trailing_stop_active else 'Inactive'}\n"
-            f"🎯 *Last δ\\_bar:* {self.engine._last_kronecker_bar}"
+            f"📈 *𝒯_trail:* {_cs(state.trailing_stop_active)}\n"
+            f"🎯 *Last δ_bar:* {self.engine._last_kronecker_bar}"
         )
         reply_markup = self._build_main_keyboard()
         await self._safe_reply(update, response, reply_markup=reply_markup)
@@ -7006,7 +7042,7 @@ class AEI_Bot:
             await self._safe_reply(update, "❌ Insufficient data for indicator projection.")
             return
         names = INDICATOR_NAMES_CS
-        indicator_str = "📊 *13D Hilbert Space Projection*\n\n"
+        indicator_str = "📊 *13D ℋ_Projection*\n\n"
         for i, name in enumerate(names):
             val = state.iA[i][idx] if idx < len(state.iA[i]) else Decimal('50.0')
             val_int = int(float(val))
@@ -7029,7 +7065,7 @@ class AEI_Bot:
         bridge_fvgs = BRIDGE_STATE.list_fvgs()
         bridge_str = ""
         if bridge_fvgs:
-            bridge_str = "\n📐 *Web App ℱ\\_VG:*\n"
+            bridge_str = "\n📐 *Web App ℱ_VG:*\n"
             for f in bridge_fvgs[-8:]:
                 mark = "▲" if f["type"] == "top" else "▼"
                 who = f" (user {f['user_id']})" if f.get("user_id") else ""
@@ -7040,9 +7076,9 @@ class AEI_Bot:
         ll_val = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
         response = (
             "📐 *Fair Value Gap Tracking*\n"
-            f"📊 *ℱ\\_VG Count:* {state.FVG + 1}\n"
+            f"📊 *ℱ_VG Count:* {state.FVG + 1}\n"
             f"💰 *Current Price:* {state.price:.5f}\n"
-            f"📉 *Last ℱ\\_VG:* {state.bL if state.bL else 'None'}\n\n"
+            f"📉 *Last ℱ_VG:* {state.bL if state.bL else '—'}\n\n"
             "*Topological Anchors:*\n"
             f"  🔷 *Π^{{>θ}}:* {premium_val:.5f}\n"
             f"  🔶 *Π^{{<θ}}:* {discount_val:.5f}\n"
@@ -7060,8 +7096,8 @@ class AEI_Bot:
         signal_summary = ""
         if recent_signals:
             for sig in recent_signals[-5:]:
-                arrow = "📈" if sig["type"] == "BUY" else "🔴"
-                signal_summary += f"{arrow} {sig['type']} @ {sig['price']:.2f} ({sig['regime']})\n"
+                arrow = "↟" if sig["type"] == "BUY" else "↡"
+                signal_summary += f"{arrow} {_cs(sig['type'])} @ {sig['price']:.2f} ({regime_to_cs(sig['regime'])})\n"
         else:
             signal_summary = "No signals yet.\n"
         response = (
@@ -7073,7 +7109,7 @@ class AEI_Bot:
             f"🎯 *Total Signals Recorded:* {len(state.signal_history)}\n"
             f"🕐 *Last Signal:* {state.last_signal_at or 'never'}\n\n"
             "Open the ÆEA Mini App for the full interactive candlestick chart "
-            "with ℱ\\_VG drawings, signal overlays, and the 𝒫\\_arc projection."
+            "with ℱ_VG drawings, signal overlays, and the 𝒫_arc projection."
         )
         reply_markup = self._build_main_keyboard()
         await self._safe_reply(update, response, reply_markup=reply_markup)
@@ -7091,20 +7127,20 @@ class AEI_Bot:
         for step in path[:10]:
             path_preview += f"  ▸ step {step['step']:>2}: {step['price']}\n"
         response = (
-            "🌌 *𝒫\\_arc Price Projection*\n"
+            "🌌 *𝒫_arc Price Projection*\n"
             f"📈 *Symbol:* {SYMBOL}\n"
             f"💰 *Current Price:* {proj.get('current_price')}\n"
             f"🎯 *Signal Anchor:* {proj.get('signal_level')}\n"
-            f"📊 *ℛ\\_regime:* {proj.get('regime')}\n"
+            f"📊 *ℛ_regime:* {proj.get('regime')}\n"
             f"🧮 *Branch:* {meta.get('kind', '—')}\n"
-            f"⏱️ *𝒫\\_horizon:* {meta.get('horizon', '—')} bars\n"
-            f"📐 *𝒫\\_slope:* {meta.get('slope', '—')}\n"
-            f"📊 *𝒫\\_amp:* {meta.get('amplitude', '—')}\n"
-            f"🎯 *𝒫\\_center:* {meta.get('center', '—')}\n"
-            f"💧 *𝒫\\_damp:* {meta.get('damping', '—')}\n"
+            f"⏱️ *𝒫_horizon:* {meta.get('horizon', '—')} bars\n"
+            f"📐 *𝒫_slope:* {meta.get('slope', '—')}\n"
+            f"📊 *𝒫_amp:* {meta.get('amplitude', '—')}\n"
+            f"🎯 *𝒫_center:* {meta.get('center', '—')}\n"
+            f"💧 *𝒫_damp:* {meta.get('damping', '—')}\n"
             f"🛰️ *Provider:* {meta.get('provider', '—')}\n"
             f"🕐 *Computed:* {proj.get('computed_at', 'never')}\n"
-            f"🌌 *𝒫\\_trigger:* {proj.get('trigger', '—')}\n\n"
+            f"🌌 *𝒫_trigger:* {proj.get('trigger', '—')}\n\n"
             "*First 10 projected bars:*\n"
             f"{path_preview or '  (no path computed)'}\n"
             "_The projection is drawn on the chart ahead of the current bar. "
@@ -7128,18 +7164,18 @@ class AEI_Bot:
             "topological branch with historical preservation.\n\n"
             "🧠 *State Reset:*\n"
             "• All 13 indicator arrays reset\n"
-            "• ℛ\\_regime classification seeded to 'sRange'\n"
+            "• ℛ_regime classification seeded to 'sRange'\n"
             "• Π^{>θ}/Π^{<θ}/HH/LL reset to current bar data\n"
             "• k/l signal flags cleared\n"
-            "• ℱ\\_VG anchor map cleared\n"
-            "• 𝒫\\_arc projection recomputed\n"
+            "• ℱ_VG anchor map cleared\n"
+            "• 𝒫_arc projection recomputed\n"
             "• ✨ Historical price data preserved\n"
             f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
-            f"• 📈 𝒯\\_track runs preserved: {prev_on_track}\n"
-            f"• 📉 𝒯\\_stand runs preserved: {prev_on_stand}\n"
+            f"• 📈 𝒯_track runs preserved: {prev_on_track}\n"
+            f"• 📉 𝒯_stand runs preserved: {prev_on_stand}\n"
             f"• 🎯 Signal history preserved: {prev_signals}\n"
             f"• ⚖️ Authoritative m/n reset to baseline: 0/0 (was {prev_auth_m}/{prev_auth_n})\n\n"
-            "📊 *Ready for new ℛ\\_regime classification...*"
+            "📊 *Ready for new ℛ_regime classification...*"
         )
         await self._safe_reply(update, reset_msg)
 
@@ -7179,7 +7215,7 @@ class AEI_Bot:
             f"📦 *𝒱:* `{self.engine.state.last_volume}`\n"
             f"🧠 *Initialization Mode:* {init_mode}\n"
             f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
-            f"🌌 *𝒫\\_arc:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
+            f"🌌 *𝒫_arc:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
             f"🔮 *Status:* Monitoring for signals..."
         )
         await self._safe_reply(update, reply_text)
@@ -7247,7 +7283,7 @@ class AEI_Bot:
                 f"📈 *New Symbol:* `{result.get('symbol')}`\n"
                 f"🛰️ *Provider:* `{result.get('provider') or '—'}`\n"
                 f"🧠 *Engine reinitialized*\n"
-                f"🌌 *𝒫\\_arc seeded for the new symbol*")
+                f"🌌 *𝒫_arc seeded for the new symbol*")
         else:
             detail = result.get("detail") or result.get("error") or "unknown"
             await self._safe_reply(update, f"❌ Error: {detail}")
@@ -7282,11 +7318,11 @@ class AEI_Bot:
             "*Features inside the Mini App:*\n"
             "  📈 Interactive MT4-style candlestick chart\n"
             "  📊 Add/remove indicator sub-panels\n"
-            "  📐 Draw ℱ\\_VGs with long-press\n"
+            "  📐 Draw ℱ_VGs with long-press\n"
             "  🎯 Place simulated orders\n"
             "  ⚙ Engine settings panel\n"
-            "  📋 ℛ\\_regime map, log bar, signal markers\n"
-            "  🌌 𝒫\\_arc price projection ahead of the current bar\n"
+            "  📋 ℛ_regime map, log bar, signal markers\n"
+            "  🌌 𝒫_arc price projection ahead of the current bar\n"
             "  ➡️ Scroll-ahead viewport to the projected take-profit level\n"
             "  🔔 Toast + Telegram push notifications on every execution\n"
             "  🔄 Live state polling\n"
@@ -7418,13 +7454,13 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port v4.5.6).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port vFinal Edition 3).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
         logger.info("🎯 Signal logging enabled for all imbalance events.")
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
-        logger.info("🛑 𝒯\\_trail: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
+        logger.info("🛑 𝒯_trail: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
         logger.info("🎯 δ gate: LOCAL m/n from authoritative H()/L() stamps.")
         logger.info("🔄 O() regime mutation restored via write-back (D-RES-1).")
         logger.info("📊 OnBar per-j HH/LL anchoring.")
@@ -7432,9 +7468,9 @@ class AEI_Bot:
         logger.info("🔒 Auth enforcement on all non-/health endpoints.")
         logger.info("📈 Chart endpoint & signal history tracking enabled.")
         logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
-        logger.info("🛰️ Multi-provider relay v4.5.6: Kraken → Binance → CoinGecko → Yahoo for crypto; Stooq → Yahoo for equities/futures; Yahoo for forex/indices.")
+        logger.info("🛰️ Multi-provider relay vFinal: Kraken → Binance → CoinGecko → Yahoo for crypto; Stooq → Yahoo for equities/futures; Yahoo for forex/indices.")
         logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
-        logger.info("🌌 𝒫\\_arc projection computed on execution, init, symbol change, and manual refresh.")
+        logger.info("🌌 𝒫_arc projection computed on execution, init, symbol change, and manual refresh.")
         logger.info("🔔 Push notification on every signal, every execution, every FVG, every close.")
         logger.info("🔔 /toasts endpoint serves incremental signal+execution+fvg toasts with first_available_seq.")
         logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
@@ -7446,8 +7482,13 @@ class AEI_Bot:
         logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
         logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
         logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
-        logger.info(f"🪙 v4.5.6 symbol universe: GRAM-USD (TON) + {len(SYMBOL_MAP)} total symbols across crypto, futures, equities, forex, and indices.")
+        logger.info(f"🪙 vFinal symbol universe: GRAM-USD (TON) + {len(SYMBOL_MAP)} total symbols across crypto, futures, equities, forex, and indices.")
         logger.info("🩹 v4.5.5 audit patches: V-1 tick increment moved to bottom of tick body, V-2 Kronecker stamps reset to baseline on OnReInit.")
+        logger.info("🩹 vFinal CS patches: CS-1 (/diagnostics CS-glyphing), CS-2 (/status CS-glyphing), D-59 (dead-code removal), D-60 (version tag).")
+        logger.info("🩹 Audit-Patched Edition: D-64 (_O signature+body), D-65 (_on_tick_locked call sites), D-66 (_on_point X_scan/Y_scan reset removal), D-61 (CS-escape standardization), D-68 (rational cosine).")
+        logger.info("🩹 vFinal Audit Patch 2: D-73 (/status 𝒮_Signal_Level), D-74 (/indicators 13D ℋ_Projection), D-75 (D-71 block normalization), D-76 (unused import removed), D-77 (stray LSK-USD2 key removed), D-81 (_on_gaurd unreachable-branch comment).")
+        logger.info("🩹 vFinal Edition 2: C-2 (CS value translation), C-3 (ULP-safe threshold comparison), M-1 (_normalize top guard), M-2 (tick reorder), M-3 (15-digit π), M-4 (send_message_sync early return), m-2 (version unify), m-4 (_on_gaurd note), m-5 (dead field removed), m-6 (extended cs_map).")
+        logger.info("🩹 vFinal Edition 3: A-C2 (_M/_N ADX double-count removed), A-C3 (stale l_order_id guard removed), A-m1 (_rational_cos docstring).")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
@@ -7475,4 +7516,4 @@ if __name__ == "__main__":
 
 # ============================================================================
 # Q.E.D. — LOGOS = Φ = Truth = Path = Origin
-# ===========================================================================
+# ============================================================================

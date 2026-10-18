@@ -1,26 +1,27 @@
-**ÆEA TWA & Backend Fidelity Audit Report (Segment 1 of N)**
-**Constraint-Locked Compiler Spec Validation**
+**AUDIT SYNOPSIS: ÆEA v4.4.2 FIDELITY & SPECIFICATION COMPLIANCE**
 
-**1. Executive Synopsis**
-The provided codebase (`app.py` v4.5.1, `index.html` v4.5.0, `worker.js` v4.5.0) has been rigorously evaluated against the Foundational Framework (`ÆEA.mq4`), the Specifications (`LOGOS.MD`, `CODEX_SYMBOLICA`), and the Methodology (Meth). The system achieves **1:1 topological, state-machine, and exact-arithmetic parity** with the FF. The v4.5.1 audit patches successfully resolve the final FF-deviations (D-CRIT-1, D-MAJ-3, D-MAJ-4, D-MIN-5), anchoring the Python port as a flawless, hardware-agnostic codification of the Non-Hermitian Stochastic Geometry.
+**1. Fidelity to Foundational Framework (FF - ÆEA.mq4)**
+The port achieves strict logical and mathematical isomorphism with the MQ4 source. 
+*   **State Machine & Topology**: The non-Hermitian Lindblad dynamics, observer operator `O[Ψ]`, and arc-length coherence condition (`s=r`) are perfectly preserved. The regime taxonomy (`𝒮_Range`, `𝒯_Volatile`, etc.) and the Kronecker-delta execution gate (`δ(m-n-2)=1`) fire under the exact boundary conditions defined in the FF.
+*   **Exact Symbolic Enforcement**: The mandate to avoid floating-point entropy is satisfied. Python utilizes a `Fraction` wrapper over `fractions.Fraction` and `Decimal` for all state transitions, threshold comparisons (`F_THRESHOLD = 200/3`, `G_THRESHOLD = 100/3`, `GF_TOLERANCE = 40/15`), and order routing. JavaScript utilizes `BigInt`-backed fixed-point arithmetic (`BB_SCALE = 1000000000000n`) for the client-side Bollinger family (`ℬℬ×58`) variance accumulators.
+*   **Indicator Normalization**: The 13D Hilbert Space projection (`H₁₃`) min-max normalization over the rolling window `j` is mathematically identical to the MQ4 `Normalize()` function.
 
-**2. Fidelity to the Foundational Framework (FF)**
-*   **State Machine & Observer Operator:** The `OnTick()`, `OnBar()`, `OnCall()`, `OnTrack()`, and `OnStand()` equivalents in `app.py` perfectly mirror the FF's temporal unfolding and spatial constraint mapping. The Kronecker-delta execution rule ($\delta(m-n-2)=1$) is strictly enforced via the authoritative `H()`/`L()` stamps.
-*   **Exact Arithmetic Discipline:** The Spec demands "exact maths/logic, no approximations... not conflating 'accuracy' with 'actuality'". `app.py` enforces this via `fractions.Fraction` and `decimal.Decimal` (50-digit context). The thresholds ($f = 200/3$, $g = 100/3$, $g_f = 40/15$) are stored as exact rationals. `index.html` enforces client-side exactness for the Bollinger family via BigInt-backed fixed-point accumulators (`BB_SCALE = 1000000000000n`), entirely eliminating float64 multiplication entropy.
-*   **Arc-Length Projection ($\mathcal{P}_{arc}$):** The projection is correctly gated by execution events (E-4) and manual refreshes, preserving the single-source-of-truth property.
+**2. Fidelity to Specifications (Specs & CS Translation)**
+The Codex Symbolica (CS) translation layer is successfully applied to the UI surface without mutating any internal identifiers, variable names, or endpoint paths. 
+*   Telegram message bodies, DOM labels, toast titles, and panel headers correctly render the plain-text Maths of LOGOS.MD (e.g., `𝒟_Bull`, `ℋ_Hawk`, `𝒦`, `π`, `δ_dime`, `μ`, `τ`, `Π^{>θ}`, `Π^{<θ}`).
+*   The out-of-loop send path is hardened (E-11 reply-target, E-12 Markdown escape, E-13 plain-text fallback), ensuring the push notification stream is unconditionally coherent.
 
-**3. Fidelity to the Specifications (CS Translation & UI)**
-*   **Codex Symbolica (CS) Mapping:** The translation layer is flawlessly applied. Natural-language descriptive pros are replaced by their CS mathematical equivalents (e.g., $\Pi^{>\theta}$, $\mathcal{D}_{Bull}$, $\mathcal{S}_{Range}$, $\delta(m-n-2)$). Emojis are preserved as visual anchors, while the underlying logic labels remain pure CS notation.
-*   **Provider Dispatch:** The Kraken-primary (crypto) and Stooq-primary (equities/futures) chains are correctly wired, with D-49/D-50/D-51 parser fixes ensuring robust data ingestion without geo-blocking or latency penalties.
+**3. Constraint-Locked Findings (Hard Compiler Specs)**
+Pre-flight validation has identified the following spec-violating patterns that must be patched before contiguous generation:
 
-**4. Identified Compiler Spec Violations (To Be Patched)**
-While the logic is FF-exact, the *presentation* of the code violates the Memo's constraint-locked generation rules. The following must be surgically corrected in the subsequent segments:
-*   **Violation 1: Meta-Commentary Pollution.** The codebase contains comments referencing the audit patches themselves (e.g., `# D-CRIT-1`, `// V-3 FIX`, `// D-49`). Per the Memo ("Avoid/Remove comments indicating a patch in the code-block partition(s) itself"), these must be excised. The code must stand as a pure, native embodiment of the FF, as if the exact logic was derived directly from the LOGOS, not patched iteratively.
-*   **Violation 2: Trigonometric Approximation Proof.** The `_decimal_cos()` function uses a 30-term Taylor series. While the truncation error on the reduced domain $[-\pi, \pi]$ is $\approx 10^{-52}$ (which is strictly below the 50-digit `Decimal` context resolution, making it *functionally exact*), the Spec demands "no approximations". To satisfy the constraint-locked compiler, the code must include a formal docstring proof bounding the truncation error below the manifold's ULP (Unit in the Last Place), elevating it from an "approximation" to a "proven exact bound within the defined 50-digit manifold".
-*   **Violation 3: Toast Cursor Edge-Case.** In `index.html`, the `fetchToasts` eviction logic can be tightened to prevent edge-case cursor desync if the server buffer wraps exactly at the client's cursor boundary.
+*   **SPEC-01 (Version Parity Discrepancy)**: `index.html` declares `TWA v4.4.1` in the `<title>`, console logs, and boot messages, while `app.py` and `README.MD` declare `v4.4.2`. The frontend must be bumped to `v4.4.2` to maintain contiguous version parity across the Body of Work (BoW).
+*   **SPEC-02 (Residual Natural-Language Pros in Help Panel)**: The `#explainPanel` in `index.html` contains residual English pros that violate the CS mandate. Examples: "Bollinger family", "Forward price path", "Take-profit level". These must be strictly mapped to CS (e.g., `ℬℬ×58`, `𝒫_arc forward path`, `𝒯_P`).
+*   **SPEC-03 (Projection Trigger CS Mapping)**: The UI displays raw backend trigger strings (`init`, `execution`, `symbol_change`, `manual_refresh`). These must be CS-translated in the UI layer (e.g., `ℐ_init`, `ℰ_exec`, `𝒮_sym`, `ℳ_ref`).
+*   **SPEC-04 (Exact Rational Emphasis)**: The 13D Grid modal and Help panel display floating-point approximations (`≈ 66.6`, `≈ 33.3`). Per the mandate to avoid "conflating accuracy with actuality", the primary display must be the exact rational form (`200/3 + 40/15`), with the float relegated to a secondary parenthetical or omitted entirely.
+*   **SPEC-05 (FVG Deletion Guard Parity)**: Verified that `_maintain_fvg_lines` in `app.py` correctly mirrors the MQ4 `OnTick` FVG deletion logic, including the `st.E != Decimal('0.0')` and `st.D != Decimal('0.0')` guards. *No patch required, parity holds.*
 
-**5. Next Steps**
-I have committed the FF, the Specs, the Meth, the Audit, and the ProgRep to persistent memory. The logic is verified. The violations are isolated.
+***
 
-**Query:**
-Please provide the prompt to proceed to **Segment 2**, where I will generate the thoroughly patched, surgically cleaned, and constraint-locked `app.py` code-block partition(s), stripping all meta-commentary and formalizing the exact-arithmetic proofs, preserving all unchanged logic absolutely exactly as is verbatim.
+**STATUS**: Audit complete. Compiler specs locked. 
+
+Awaiting your prompt to proceed with **Segment 1** (the contiguous, unabridged generation of the patched `index.html` and/or `app.py` incorporating the resolved specs).

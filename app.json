@@ -1,6 +1,6 @@
 {
   "name": "ÆEA Trading Bot",
-  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Kraken-Primary + Stooq-Primary v4.5.0 + CS-Translated UI: Kraken is the primary crypto provider, Stooq is the primary equities/futures provider, ~90 crypto pairs and ~45 futures/equities/ETFs, six new defect resolutions D-49 through D-54; carries forward v4.4.2 Send-Hardened reply-target hardening + Markdown escaping + plain-text final fallback, v4.4.1 Await-Corrected async send, v4.4.0 Scroll-Ahead execution-gated projection + scroll-ahead viewport to the projected TP + bot replies threaded to the user's last command + bounded push dispatch + FVG merge + legend stacking, v4.3.0 Enhancement Telegram push on every signal/execution/FVG/close + arc-length future price projection, and the v4.2.0 semantics-restored baseline)",
+  "description": "Quantum-Financial Topology Trading Bot on Telegram — MQL4-Parity + MT4/TradingView TWA Edition (Final Edition 3 — Audit-Patched, v4.6.0 + CS-Translated UI: Kraken is the primary crypto provider, Stooq is the primary equities/futures provider, Yahoo is the primary forex/indices provider, live-triple-pruned crypto universe, class-share Stooq fix, ADX single-count fix, six new defect resolutions P-1 through P-4 plus A-C1, A-C2, A-C3, A-M6, A-m1, A-m3; carries forward v4.5.8 vFinal Edition 2 with C-2/C-3/M-1/M-2/M-3/M-4/m-2/m-4/m-5/m-6, v4.5.7 Audit-Patched with D-64..D-81, v4.5.6 Expanded-Universe with E-17..E-24, v4.5.5 with V-1/V-2, v4.5.0 with E-14/E-15/E-16 and D-49..D-54, v4.4.2 Send-Hardened with reply-target hardening + Markdown escaping + plain-text final fallback, v4.4.1 Await-Corrected async send, v4.4.0 Scroll-Ahead execution-gated projection + scroll-ahead viewport to the projected TP + bot replies threaded to the user's last command + bounded push dispatch + FVG merge + legend stacking, v4.3.0 Enhancement Telegram push on every signal/execution/FVG/close + arc-length future price projection, and the v4.2.0 semantics-restored baseline)",
   "repository": "https://github.com/yourusername/aea-bot",
   "keywords": [
     "trading",
@@ -31,7 +31,9 @@
     "codex-symbolica",
     "cs-translated",
     "kraken-primary",
-    "stooq-primary"
+    "stooq-primary",
+    "audit-patched",
+    "final-edition-3"
   ],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
@@ -83,7 +85,7 @@
       "required": false
     },
     "SYMBOL_DIGITS": {
-      "description": "JSON map of symbol → digits for Point-size emulation. Defaults to the built-in v4.5.0 table covering all ~90 crypto pairs and ~45 futures/equities/ETFs.",
+      "description": "JSON map of symbol → digits for Point-size emulation. Defaults to the built-in v4.6.0 table covering every live crypto pair and every futures/equities/forex/indices symbol.",
       "required": false
     },
     "SYMBOL_DIGITS_DEFAULT": {

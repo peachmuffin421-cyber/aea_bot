@@ -1,6 +1,6 @@
 # ============================================================================
 # ÆEA TELEGRAM BOT — PYTHON DEPENDENCIES
-# Version: 4.5.0 (Kraken-Primary + Stooq-Primary Edition) — CS-Translated UI
+# Version: 4.6.0 (Final Edition 3 — Audit-Patched) — CS-Translated UI
 # Platform: Heroku / Termux / any POSIX-compatible Python 3.10+ environment
 # Author: Natalia Tanyatia
 # ============================================================================
@@ -55,10 +55,10 @@ httpx>=0.27,<0.28
 # FeedClient uses stdlib `urllib.request`. No pip package required for the
 # Cloudflare Worker Relay integration.
 #
-# v4.5.0: the relay dispatches crypto through Kraken → Binance → CoinGecko
-# → Yahoo, and equities/futures through Stooq → Yahoo. All five upstreams
-# are consumed through the relay's shaped JSON. No client-side change was
-# required for the new provider order.
+# v4.6.0: the relay dispatches crypto through Kraken → Binance → CoinGecko
+# → Yahoo, and equities/futures through Stooq → Yahoo, and forex/indices
+# through Yahoo only. All upstreams are consumed through the relay's shaped
+# JSON. No client-side change was required for the new provider order.
 #
 # Direct-upstream fallback (NOT required for the Worker deployment):
 #
