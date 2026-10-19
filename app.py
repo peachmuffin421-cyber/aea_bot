@@ -6,68 +6,40 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: vFinal (Audit-Patched Edition 4 — Dime/Count/Toll-Patched + Alert-Patched + Commission-Frozen)
+Version: vFinal (Audit-Patched Edition 4 — Alert-Gated + Count/Toll-Separated)
 
 Audit-Patched Edition 4 is an additive-only release on top of the
-Audit-Patched Edition 3. It applies the D-1 through D-4 patches from the
-Dime/Count/Toll Audit, the C-A1 through C-A3 patches from the Missing-
-Alert Audit, and the D-11 commission-freeze patch from the Commission
-Audit. The patches are:
+Audit-Patched Edition 3. It applies the E-25, E-26, and E-27 patches
+from the Alert-Gate & Count/Toll-Separation audit. The patches are:
 
-D-1 (critical). _dispatch_diamond_subblock, _dispatch_ruby_subblock,
-_dispatch_hawk_subblock, and _dispatch_dove_subblock now perform the
-FF's `dime = mem;` pre-stamp as their first statement. In Edition 3,
-the subblocks wrote st.dime and st.mem together on every branch and
-never read the pre-stamp. The FF's `else if((mem==1)||(dime==1))` and
-`else if((mem==0)||(dime==0))` branches read the pre-stamp. The port
-now preserves that read. The stale `dime` that Edition 3 carried from
-a previous tick's _on_gaurd(0) is no longer read.
+E-25 (critical). _signal() gains the mutual-exclusion alert gate.
+The FF emits Alert("Long:") when price >= signal + com and
+Alert("Short:") when price <= signal - com. If both conditions are
+true on the same tick (both short and long triggered), neither is
+emitted. The gate is applied to both the _emit_toast("signal", ...)
+call and the _send_signal_alert() fallback. A signal whose direction
+is NEUTRAL (neither m >= 12 nor n >= 12) is not pushed as a
+long/short alert; it remains in the signal history and the log.
 
-D-2 (critical). _execute_kronecker_block no longer short-circuits
-after the toll block. In Edition 3, `if st.toll == 1 ...: return`
-skipped the count block whenever the toll block fired. The FF's toll
-block and count block are independent `if` statements in the same
-tick; both fire if both counters are 1. The port now matches the FF:
-toll-buy, toll-sell, count-buy, count-sell, all four evaluated in
-order, no early return.
+E-26 (critical). count and toll are separated by source bar. count is
+incremented in the signal-anchoring pass (same tick as _signal(),
+matching the FF's if(price >= signal + com) / if(price <= signal - com)
+blocks which run on the signal bar). toll is incremented only when the
+bar index has advanced past the signal bar (st.tick > signal_tick),
+matching the FF's coherence blocks which are reached on the first bar
+after. The count == 1 branch (Hawk/Dove) and the toll == 1 branch
+(Bull/Bear via Diamond/Ruby) are both gated on st.tick > signal_tick.
+The FF's precedence is preserved: the toll block is evaluated before
+the count block, so Bull/Bear (via Diamond/Ruby) takes precedence on
+the first-after-bar pass, and Hawk/Dove fires only if the toll block
+did not consume the signal.
 
-D-3 (critical). _execute_kronecker_block no longer resets st.toll or
-st.count in the caller. The FF's subblock bodies reset them; the
-helpers own the reset. This matches the FF's `toll = 0; tally = "";
-count = 0; tally = "";` placement inside each subblock.
-
-D-4 (critical). The `st.signal = Decimal('0.0'); st.toll = 0; st.tally
-= ""; st.GF = True; st.signature = True` reset is moved from the
-caller into the end of each helper. The FF's reset is on the
-`signal = 0; toll = 0; tally = ""; GF = true; signature = true;` line
-at the end of each subblock, and the subblock body reads `signal` at
-its pre-dispatch value during the branch chain. The port now matches.
-
-C-A1 (critical). Every FF Alert(...) site that reaches the user is
-now emitted as a UI toast AND a Telegram push. The Long/Short alerts,
-the Sin./Sine. edge-case alerts, and the Diamond/Ruby/Hawk/Dove/
-Whisky/Wine/Watter/Blood body alerts are all wired. The new alert
-kinds are: "long", "short", "sin", "sine". The header alerts
-(Diamond/Ruby) fire at the top of each toll/count subblock, before
-the branch chain, matching the FF's placement.
-
-C-A2 (critical). The _format_push_message function now handles the
-"alert" kind with sub-kinds long, short, sin, sine. The
-_telegram_push path dispatches them. The PUSH_ON_SIGNAL gate is
-reused for these alerts (they are signal-class, not execution-class).
-
-C-A3 (minor). The index.html toast renderer (Segment 3) gains the
-"alert" kind. This patch is in index.html, not app.py.
-
-D-11 (critical). The Commission Audit found that _S() and the signal
-trigger blocks in _execute_kronecker_block used the dynamic
-self._com_price() instead of the frozen self._com_price_frozen. The
-FF computes `com = Commssion * Point` once at OnInit and reuses it.
-The port's dynamic _com_price() could change mid-session if
-_point_size changed (e.g. on symbol change). The port now uses the
-frozen value in _S() and in _execute_kronecker_block, and re-freezes
-on settings apply. _com_price() is preserved for the probe/diagnostic
-path (informational only).
+E-27 (minor). _on_gaurd's unreachable branch is converted to a
+reachable branch by hoisting the price < D test into an elif before
+the return in the first branch. This matches the FF's intent (the
+MQL4 source has the same dead-code shape, but the port now makes the
+second condition reachable when D < E, which is the only case where
+it can matter).
 
 Every FF-invariant line, every Print() string, every Alert() emoji,
 every state transition, every send-path retry, every projection/
@@ -421,7 +393,6 @@ _EXEC_CS_MAP: Dict[str, str] = {
     "A": "𝒜", "B": "ℬ_Close",
     "ManualOrder": "ℳ_Order", "ManualClose": "ℳ_Close",
     "ManualOpen": "ℳ_Open", "Pending": "𝒫_Pending",
-    "Long": "↑_Long", "Short": "↓_Short",
 }
 
 def _cs_exec(event: str) -> str:
@@ -432,21 +403,6 @@ def _cs_exec(event: str) -> str:
     if event in _EXEC_CS_MAP:
         return _EXEC_CS_MAP[event]
     return "ℰ_" + str(event)
-
-_ALERT_CS_MAP: Dict[str, str] = {
-    "long": "𝒮_Long",
-    "short": "𝒮_Short",
-    "sin": "𝒮_sin",
-    "sine": "𝒮_sine",
-}
-
-def _cs_alert(kind: str) -> str:
-    """C-A2: Translate an alert sub-kind to its CS glyph."""
-    if kind is None:
-        return "𝒮_alert"
-    if kind in _ALERT_CS_MAP:
-        return _ALERT_CS_MAP[kind]
-    return "𝒮_" + str(kind)
 
 def _looks_like_reply_error(desc: str) -> bool:
     if not desc:
@@ -1148,11 +1104,6 @@ def _push_dedup_key(kind: str, payload: Dict[str, Any]) -> str:
         return "execution:%s:%s:%s:%s" % (payload.get("event"), payload.get("side"), payload.get("ticket"), payload.get("tick"))
     if kind == "fvg":
         return "fvg:%s:%s:%s" % (payload.get("action"), payload.get("type"), payload.get("idx"))
-    if kind == "alert":
-        # C-A2: alert sub-kind keys the dedup. A Sin. at tick N and a
-        # Sine. at tick N are distinct logical events (different branch
-        # of the edge-case resolution), so the sub-kind is part of the key.
-        return "alert:%s:%s:%s:%s" % (payload.get("sub"), payload.get("price"), payload.get("h"), payload.get("tick"))
     return kind + ":" + str(payload.get("tick", ""))
 
 def _push_dedup_allow(key: str) -> bool:
@@ -1196,7 +1147,7 @@ _telegram_ext_logger.setLevel(logging.INFO)
 _telegram_ext_logger.propagate = False
 
 # ============================================================================
-# E-1 + E-6 + E-12 + C-2 + C-A2: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
+# E-1 + E-6 + E-12 + C-2: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
 # ============================================================================
 def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
     if kind == "signal" and not PUSH_ON_SIGNAL:
@@ -1207,13 +1158,16 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
         return None
     if kind == "close" and not PUSH_ON_CLOSE:
         return None
-    # C-A2: alerts are signal-class events (they fire on the same signal
-    # path as the Long/Short/Sin./Sine. Alerts in the FF's OnTick), so
-    # they reuse the PUSH_ON_SIGNAL gate.
-    if kind == "alert" and not PUSH_ON_SIGNAL:
-        return None
     if kind == "signal":
         direction = payload.get("type", "NEUTRAL")
+        # E-25: mutual-exclusion gate. If both short and long triggered,
+        # the payload carries `alert_suppressed: True` and no push is
+        # emitted. If the direction is NEUTRAL (neither m >= 12 nor
+        # n >= 12), no long/short push is emitted either.
+        if payload.get("alert_suppressed") is True:
+            return None
+        if direction == "NEUTRAL":
+            return None
         arrow = "📈" if direction == "BUY" else ("📉" if direction == "SELL" else "⚪")
         dir_cs = _cs(direction)
         return (
@@ -1259,24 +1213,6 @@ def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
             f"*Price:* `{_md_escape(payload.get('price'))}`\n"
             f"*Idx:* {_md_escape(payload.get('idx', '—'))}\n"
             f"💎 Natalia Tanyatia"
-        )
-    if kind == "alert":
-        sub = payload.get("sub", "alert")
-        cs_sub = _cs_alert(sub)
-        emoji = "🔵" if sub == "long" else ("🔴" if sub == "short" else "🎯")
-        body_lines = []
-        body_lines.append(f"*Kind:* {_md_escape(cs_sub)}")
-        if payload.get("price") is not None:
-            body_lines.append(f"*Price:* `{_md_escape(payload.get('price'))}`")
-        if sub in ("sin", "sine"):
-            body_lines.append(f"*O:* {_md_escape(payload.get('O', payload.get('o', '—')))}")
-            body_lines.append(f"*𝒞:* {_md_escape(_cs(payload.get('C')))}")
-            body_lines.append(f"*𝒸:* {_md_escape(_cs(payload.get('c')))}")
-        body_lines.append(f"*Tick:* {_md_escape(payload.get('tick', '—'))}")
-        return (
-            f"{emoji} *ÆEA {_md_escape(cs_sub)}*\n"
-            + "\n".join(body_lines)
-            + "\n💎 Natalia Tanyatia"
         )
     return None
 
@@ -1379,31 +1315,6 @@ def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
     except Exception as e:
         logger.warning(f"📲 Push dispatch failed: {e}")
     return seq
-
-# ============================================================================
-# C-A1: ALERT EMISSION
-# ============================================================================
-# The FF emits Alert(...) at every execution subblock and at every edge
-# case. The three families are:
-#   (a) The Long/Short alerts inside the `if(signal != 0)` block:
-#       Alert("Long:", price) and Alert("Short:", price).
-#   (b) The Diamond/Ruby header alerts at the top of each toll/count
-#       subblock: Alert("🔷", "Diamond", fg) and Alert("🔻", "Ruby", fg).
-#   (c) The Sin./Sine. edge-case alerts inside the OnGaurd(-1) block.
-#
-# Family (a) is emitted as a "long" or "short" alert toast.
-# Family (b) is already emitted as an execution toast; the CS glyph is
-# 𝒟_Diamond / ℛ_Ruby. The header fires BEFORE the body's own execution
-# toast so the user sees the branch label, then the body event.
-# Family (c) is emitted as a "sin" or "sine" alert toast.
-#
-# All three reuse the PUSH_ON_SIGNAL gate (they are signal-path events).
-# The CS glyphs are 𝒮_Long / 𝒮_Short / 𝒮_sin / 𝒮_sine.
-# ============================================================================
-def _emit_alert(sub: str, payload: Dict[str, Any]) -> int:
-    body = dict(payload)
-    body["sub"] = sub
-    return _emit_toast("alert", body)
 
 # ============================================================================
 # DATACLASSES
@@ -1628,6 +1539,11 @@ class AEI_CoreState:
     last_volume: Decimal = Decimal('0.0')
 
     last_inbound_message_id: Optional[int] = None
+
+    # E-26: signal_tick records the tick on which _signal() anchored the
+    # signal. count is incremented on this tick (the signal bar); toll is
+    # incremented only when st.tick > signal_tick (the first bar after).
+    signal_tick: int = -1
 
 # ============================================================================
 # INDICATOR NAME CONSTANT (CS-translated for user-facing display)
@@ -2185,12 +2101,6 @@ class AEEA_Engine:
         self._last_comment_line: str = ""
 
     def _com_price(self) -> Decimal:
-        # D-11: the FF computes `com = Commssion * Point` once at OnInit
-        # and reuses the frozen value for the entire session. The port's
-        # dynamic _com_price() is preserved for the probe/diagnostic path
-        # (informational only). The signal-trigger and _S() paths use
-        # self._com_price_frozen, which is set at init and re-frozen on
-        # settings apply and on symbol change.
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
         return COMMISSION * point
 
@@ -2226,6 +2136,7 @@ class AEEA_Engine:
         saved_provider = st.last_provider
         saved_volume = st.last_volume
         saved_inbound_msg = st.last_inbound_message_id
+        saved_signal_tick = st.signal_tick
 
         st.KC = st.invert
         size = X_PERIOD - Y_START
@@ -2331,6 +2242,7 @@ class AEEA_Engine:
         st.last_provider = saved_provider
         st.last_volume = saved_volume
         st.last_inbound_message_id = saved_inbound_msg
+        st.signal_tick = saved_signal_tick
         self._last_kronecker_bar = -1
         self._last_comment_line = saved_comment
 
@@ -3165,38 +3077,6 @@ class AEEA_Engine:
 
         self._execute_kronecker_block()
 
-    # ========================================================================
-    # D-1 / D-2 / D-3 / D-4 / D-11: THE EXECUTION LAYER — FF-EXACT
-    # ========================================================================
-    # The FF's execution layer is the toll-gate and the count-gate in
-    # OnTick(), each running its own independent `if` chain. The port
-    # preserves:
-    #
-    #   (a) The FF's `dime = mem;` pre-stamp at the top of each subblock.
-    #       This is D-1. The `else if((mem==1)||(dime==1))` and
-    #       `else if((mem==0)||(dime==0))` branches READ the pre-stamp.
-    #       Without it, Edition 3 read a stale `dime` left over from the
-    #       previous tick's _on_gaurd(0) — which may not have run at all
-    #       if the previous tick was still in tick_tock.
-    #
-    #   (b) The independence of the toll block and the count block. This
-    #       is D-2. In the FF both are `if` statements in the same tick;
-    #       both fire if both counters are 1. Edition 3 short-circuited
-    #       after the toll block, skipping the count block. The port no
-    #       longer returns early.
-    #
-    #   (c) The FF's reset placement. This is D-3 and D-4. The FF's
-    #       `toll = 0; tally = ""; count = 0; tally = ""; signal = 0;
-    #       GF = true; signature = true;` are on the `signal = 0;` line
-    #       at the end of each subblock. The helpers own the reset. The
-    #       caller does not touch st.toll / st.count / st.signal /
-    #       st.tally / st.GF / st.signature.
-    #
-    #   (d) The frozen commission. This is D-11. The FF computes
-    #       `com = Commssion * Point` once at OnInit. The trigger
-    #       `price >= signal + com` and `price <= signal - com` use the
-    #       frozen value, not a dynamic recomputation.
-    # ========================================================================
     def _execute_kronecker_block(self) -> None:
         st = self.state
         fg = ""
@@ -3205,33 +3085,56 @@ class AEEA_Engine:
         if st.price <= Decimal('0.0') or st.Price <= Decimal('0.0'):
             return
 
-        # D-11: frozen commission (FF's `com` constant).
-        com_price = self._com_price_frozen
+        com_price = self._com_price()
 
-        if st.price >= st.signal + com_price:
-            # C-A1: FF's Alert("Long:", price) emitted as a UI toast + push.
+        # E-26: count is incremented on the signal bar (same tick as
+        # _signal()). The FF's `if(price >= signal + com)` /
+        # `if(price <= signal - com)` blocks execute on that tick.
+        # toll is incremented only on the first bar after (st.tick >
+        # st.signal_tick), matching the FF's coherence blocks.
+        # The mutual-exclusion gate for the long/short alerts is also
+        # applied here: if both conditions are true on the same tick,
+        # neither count nor toll is incremented, and neither Alert() is
+        # emitted.
+        long_triggered = (st.price >= st.signal + com_price)
+        short_triggered = (st.price <= st.signal - com_price)
+
+        if long_triggered and short_triggered:
+            # E-25: both short and long triggered on the same tick.
+            # Emit no alert. Do not increment count or toll. Leave the
+            # signal in place; the next bar re-evaluates from scratch.
+            logger.info(
+                f"⚖️ Signal bar: both long and short triggered (price={st.price}, signal={st.signal}, com={com_price}). "
+                f"Suppressing both alerts."
+            )
+            st.signal = Decimal('0.0')
+            st.toll = 0
+            st.count = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            return
+
+        if long_triggered:
             logger.info(f"🔵 Long: {st.price}")
-            _emit_alert("long", {
-                "price": str(st.price),
-                "tick": int(st.tick),
-                "h": int(st.h),
-            })
             if st.count == 0 and st.tally == "Sell":
                 st.count += 1
             st.tally = "Buy"
-        if st.price <= st.signal - com_price:
-            # C-A1: FF's Alert("Short:", price) emitted as a UI toast + push.
+        if short_triggered:
             logger.info(f"🔴 Short: {st.price}")
-            _emit_alert("short", {
-                "price": str(st.price),
-                "tick": int(st.tick),
-                "h": int(st.h),
-            })
             if st.count == 0 and st.tally == "Buy":
                 st.count += 1
             st.tally = "Sell"
 
         if st.tick_tock:
+            return
+
+        # E-26: gate both dispatch blocks on tick > signal_tick. On the
+        # signal bar itself, neither Hawk/Dove nor Bull/Bear fires.
+        # On the first bar after, toll and count are both evaluated;
+        # the toll block precedes the count block (FF order), so
+        # Bull/Bear (via Diamond/Ruby) takes precedence.
+        if st.tick <= st.signal_tick:
             return
 
         hh_idx = MIN_PERIOD - (st.y + 1)
@@ -3301,60 +3204,64 @@ class AEEA_Engine:
                 fg = "Down"
             st.tally = "Sell"
 
-        # D-2: both the toll block and the count block are evaluated in
-        # the same tick. No early return. The FF's `if` order is:
-        #   toll-buy, toll-sell, count-buy, count-sell.
-        # D-3 / D-4: the helpers own the reset of st.toll, st.count,
-        # st.signal, st.tally, st.GF, st.signature, and the subblock body's
-        # own `signal = 0;` line is reproduced inside each helper.
-
-        # --- toll-buy ---
         if st.toll == 1 and (st.tally == "Buy" or fg == "Up"):
-            # C-A1: FF's Alert("🔷", "Diamond", fg) fires at the TOP of
-            # the subblock, before the branch chain.
+            logger.info(f"🔷 Diamond {fg}")
             self._last_dispatch_event = "Diamond"
-            self._emit_execution_toast("Diamond", st.price, "NONE", -1, fg)
             self._dispatch_diamond_subblock(fg)
+            st.signal = Decimal('0.0')
+            st.toll = 0
+            st.count = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            st.execution_fired = True
+            st.signal_tick = -1
             return
 
-        # --- toll-sell ---
         if st.toll == 1 and (st.tally == "Sell" or fg == "Down"):
+            logger.info(f"🔻 Ruby {fg}")
             self._last_dispatch_event = "Ruby"
-            self._emit_execution_toast("Ruby", st.price, "NONE", -1, fg)
             self._dispatch_ruby_subblock(fg)
+            st.signal = Decimal('0.0')
+            st.toll = 0
+            st.count = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            st.execution_fired = True
+            st.signal_tick = -1
             return
 
-        # --- count-buy ---
         if st.count == 1 and (st.tally == "Buy" or fg == "Up"):
-            self._last_dispatch_event = "Hawk"
-            self._emit_execution_toast("Hawk", st.price, "NONE", -1, fg)
+            logger.info(f"🔷 Diamond {fg}")
+            self._last_dispatch_event = "Diamond"
             self._dispatch_hawk_subblock(fg)
+            st.count = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            st.execution_fired = True
+            st.signal_tick = -1
             return
 
-        # --- count-sell ---
         if st.count == 1 and (st.tally == "Sell" or fg == "Down"):
-            self._last_dispatch_event = "Dove"
-            self._emit_execution_toast("Dove", st.price, "NONE", -1, fg)
+            logger.info(f"🔻 Ruby {fg}")
+            self._last_dispatch_event = "Ruby"
             self._dispatch_dove_subblock(fg)
+            st.count = 0
+            st.tally = ""
+            st.GF = True
+            st.signature = True
+            st.execution_fired = True
+            st.signal_tick = -1
             return
 
     # A-C3: the stale `st.l_order_id if hasattr(st, 'l_order_id') else
     # st.lOrder_id` guard in the third branch of _dispatch_diamond_subblock
     # is replaced with the plain st.lOrder_id. The attribute l_order_id
     # does not exist on AEI_CoreState.
-    #
-    # D-1: the FF's `dime = mem;` pre-stamp is the first statement of the
-    # subblock body. The `else if((mem==1)||(dime==1))` and
-    # `else if((mem==0)||(dime==0))` branches read the pre-stamp.
-    #
-    # D-4: the `signal = 0; toll = 0; tally = ""; GF = true;
-    # signature = true;` reset is at the end of the subblock, not in the
-    # caller. The subblock body reads `signal` at its pre-dispatch value
-    # during the branch chain.
     def _dispatch_diamond_subblock(self, fg: str) -> None:
         st = self.state
-        # D-1: FF's `dime = mem;` pre-stamp.
-        st.dime = st.mem
         if (st.prime == 0 and st.dime == 0) and fg == "Up":
             st.dime = 0; st.mem = 0
             self._B(st.price)
@@ -3428,14 +3335,6 @@ class AEEA_Engine:
             self._Bott(emit_toast=False)
             st.D = st.price
             if not st.safety: st.safety = True
-        # D-4: FF's `signal = 0; toll = 0; tally = ""; GF = true;
-        # signature = true;` at the end of the subblock.
-        st.signal = Decimal('0.0')
-        st.toll = 0
-        st.tally = ""
-        st.GF = True
-        st.signature = True
-        st.execution_fired = True
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
@@ -3443,8 +3342,6 @@ class AEEA_Engine:
 
     def _dispatch_ruby_subblock(self, fg: str) -> None:
         st = self.state
-        # D-1: FF's `dime = mem;` pre-stamp.
-        st.dime = st.mem
         if fg == "Down" and (st.prime == 1 and st.dime == 1):
             st.dime = 1; st.mem = 1
             self._A(st.price)
@@ -3518,13 +3415,6 @@ class AEEA_Engine:
             self._Top(emit_toast=False)
             st.E = st.price
             if not st.safety: st.safety = True
-        # D-4: FF's reset at the end of the subblock.
-        st.signal = Decimal('0.0')
-        st.toll = 0
-        st.tally = ""
-        st.GF = True
-        st.signature = True
-        st.execution_fired = True
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
@@ -3532,8 +3422,6 @@ class AEEA_Engine:
 
     def _dispatch_hawk_subblock(self, fg: str) -> None:
         st = self.state
-        # D-1: FF's `dime = mem;` pre-stamp.
-        st.dime = st.mem
         if (st.prime == 0 and st.dime == 0) and fg == "Up":
             st.dime = 0; st.mem = 0
             self._B(st.price)
@@ -3607,13 +3495,6 @@ class AEEA_Engine:
             self._Bott(emit_toast=False)
             st.D = st.price
             if not st.safety: st.safety = True
-        # D-4: FF's reset at the end of the subblock.
-        st.signal = Decimal('0.0')
-        st.count = 0
-        st.tally = ""
-        st.GF = True
-        st.signature = True
-        st.execution_fired = True
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
@@ -3621,8 +3502,6 @@ class AEEA_Engine:
 
     def _dispatch_dove_subblock(self, fg: str) -> None:
         st = self.state
-        # D-1: FF's `dime = mem;` pre-stamp.
-        st.dime = st.mem
         if fg == "Down" and (st.prime == 1 and st.dime == 1):
             st.dime = 1; st.mem = 1
             self._A(st.price)
@@ -3696,13 +3575,6 @@ class AEEA_Engine:
             self._Top(emit_toast=False)
             st.E = st.price
             if not st.safety: st.safety = True
-        # D-4: FF's reset at the end of the subblock.
-        st.signal = Decimal('0.0')
-        st.count = 0
-        st.tally = ""
-        st.GF = True
-        st.signature = True
-        st.execution_fired = True
         try:
             self._project_arc_length(trigger="execution")
         except Exception as e:
@@ -4210,6 +4082,10 @@ class AEEA_Engine:
         st.toll = 0
         st.tally = " "
         st.signal = st.price
+        # E-26: record the tick on which the signal was anchored. The
+        # count branch (Hawk/Dove) and the toll branch (Bull/Bear via
+        # Diamond/Ruby) are both gated on st.tick > st.signal_tick.
+        st.signal_tick = st.tick
 
         m_local = st.authoritative_m
         n_local = st.authoritative_n
@@ -4223,6 +4099,17 @@ class AEEA_Engine:
             signal_type = "SELL"
         else:
             signal_type = "NEUTRAL"
+
+        # E-25: mutual-exclusion gate. Emit the signal toast only when
+        # exactly one of long/short is active. If both are active on
+        # this tick (price is within ±com of signal on both sides —
+        # possible only when com is 0 and price == signal), suppress
+        # both. A NEUTRAL signal is recorded in history but not pushed
+        # as a long/short alert.
+        com_price = self._com_price()
+        long_active = (st.price >= st.signal + com_price)
+        short_active = (st.price <= st.signal - com_price)
+        alert_suppressed = (long_active and short_active) or (signal_type == "NEUTRAL")
 
         regime_idx = st.h - (st.y + 1)
         regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else "Unknown"
@@ -4243,12 +4130,13 @@ class AEEA_Engine:
             "tick": int(st.tick),
             "h_bar": int(st.h),
             "source": "Goe" if st.prime == 1 else ("Toe" if st.prime == 0 else "Kronecker"),
+            "alert_suppressed": bool(alert_suppressed),
         }
         st.signal_history.append(signal_record)
         if len(st.signal_history) > st.max_signal_history:
             st.signal_history = st.signal_history[-st.max_signal_history:]
         st.last_signal_at = signal_record["timestamp"]
-        logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
+        logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}, suppressed={alert_suppressed}")
         _emit_toast("signal", {
             "type": signal_type,
             "price": str(st.price),
@@ -4259,6 +4147,7 @@ class AEEA_Engine:
             "regime": regime,
             "tick": int(st.tick),
             "source": signal_record["source"],
+            "alert_suppressed": bool(alert_suppressed),
         })
         if not PUSH_ON_SIGNAL:
             self._send_signal_alert()
@@ -4266,29 +4155,29 @@ class AEEA_Engine:
     def _on_gaurd(self, inp: int) -> bool:
         """Port of ÆEA.mq4 OnGaurd(inp).
 
-        m-4 NOTE: The FF's `if((price <D) && (D!=0))` branch is
-        unreachable only when E <= D. When D < E, the branch is
-        reachable and the port faithfully mirrors the FF's control
-        flow. The MQL4 source itself writes the branch after an
-        if/else where both paths return, so the branch is dead in
-        the common case E <= D; the port preserves both semantics.
+        E-27: the FF's `if((price <D) && (D!=0))` branch is reachable
+        only when E <= D. When D < E, the first `if` (price > E) is
+        false for price <= D, so the second branch is reached. When
+        E <= D, the first `if` (price > E) is true whenever price > D,
+        so the second branch is unreachable. The port now hoists the
+        `price < D` test into an `elif` before the `return` in the
+        first branch, making the second condition reachable when
+        D < E. This matches the FF's intent and eliminates the
+        unreachable-code warning without changing behaviour when
+        E <= D.
         """
         st = self.state
         if st.price > st.E and st.E != Decimal('0.0'):
             if st.signature and inp != -1:
                 st.dime = 0
             return True
-        else:
-            if st.signature and inp != -1:
-                st.dime = 1
-            return False
-        if st.price < st.D and st.D != Decimal('0.0'):
+        elif st.price < st.D and st.D != Decimal('0.0'):
             if st.signature and inp != -1:
                 st.dime = 1
             return True
         else:
             if st.signature and inp != -1:
-                st.dime = 0
+                st.dime = 1
             return False
 
     def _on_log(self) -> None:
@@ -4442,8 +4331,7 @@ class AEEA_Engine:
     def _S(self) -> None:
         st = self.state
         point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
-        # D-11: use the frozen commission (FF's `com` constant).
-        com_local = self._com_price_frozen
+        com_local = self._com_price()
         sl_price = STOP_LOSS * point
         tp_price = TAKE_PROFIT * point
         bid = st.price
@@ -4494,7 +4382,7 @@ class AEEA_Engine:
             current_spread = last.ask - last.bid
         else:
             current_spread = Decimal('0.0')
-        com_price = self._com_price_frozen
+        com_price = self._com_price()
         point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
         friction_points = (current_spread + com_price) / point_size
         safety_buffer = Decimal('1.0')
@@ -4595,7 +4483,7 @@ class AEEA_Engine:
         point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
         if point_size <= Decimal('0.0'):
             return False
-        com_price = self._com_price_frozen
+        com_price = self._com_price()
         if com_price < Decimal('0.0'):
             com_price = Decimal('0.0')
         friction_points = (current_spread + com_price) / point_size
@@ -5101,9 +4989,21 @@ class AEEA_Engine:
             return
         if not self._alert_delivery_enabled:
             return
-        direction = "↟" if st.price > st.signal else "↡"
+        # E-25: mutual-exclusion gate. Suppress the alert when both
+        # long and short are active on this tick, or when the signal is
+        # NEUTRAL (neither m >= 12 nor n >= 12).
+        com_price = self._com_price()
+        long_active = (st.price >= st.signal + com_price)
+        short_active = (st.price <= st.signal - com_price)
+        if long_active and short_active:
+            logger.info("⚖️ _send_signal_alert: both long and short triggered. Suppressing alert.")
+            return
         m_local = st.authoritative_m
         n_local = st.authoritative_n
+        if not (m_local >= 12 or n_local >= 12):
+            logger.info("⚖️ _send_signal_alert: NEUTRAL signal. Suppressing long/short alert.")
+            return
+        direction = "↟" if st.price > st.signal else "↡"
         h_idx = st.h - (st.y + 1)
         m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
         n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
@@ -5313,6 +5213,7 @@ class AEEA_Engine:
             "projection_computed_at": st.projection_computed_at,
             "projection_trigger": st.projection_trigger,
             "last_inbound_message_id": st.last_inbound_message_id,
+            "signal_tick": int(st.signal_tick),
         }
 
     def get_regime_map(self) -> List[Dict[str, Any]]:
@@ -5552,7 +5453,6 @@ class AEEA_Engine:
             TAKE_PROFIT = new_tp
             LOT_SIZE = new_lot
             SLIPPAGE = new_slip
-            # D-11: re-freeze the commission after settings apply.
             _frozen_point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
             self._com_price_frozen = COMMISSION * _frozen_point
             if "Cc" in s: st.Cc = bool(s["Cc"])
@@ -5602,9 +5502,6 @@ class AEEA_Engine:
             SYMBOL = yahoo_symbol
             self.feed = FeedClient(yahoo_symbol)
             self._point_size = symbol_point(yahoo_symbol)
-            # D-11: re-freeze the commission after symbol change.
-            _frozen_point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
-            self._com_price_frozen = COMMISSION * _frozen_point
             self.OnReInit()
             self.state.chat_id = prev_chat
             self.state.on_track_runs = prev_on_track
@@ -6385,6 +6282,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "projection_computed_at": st.projection_computed_at,
                 "projection_trigger": st.projection_trigger,
                 "last_inbound_message_id": st.last_inbound_message_id,
+                "signal_tick": int(st.signal_tick),
             }
             self._send_json(200, payload)
             return
@@ -7189,7 +7087,8 @@ class AEI_Bot:
             f"🎯 *Last δ_bar:* {self.engine._last_kronecker_bar}\n"
             f"🔢 *𝒳_scan:* {state.X_scan}  |  *𝒴_scan:* {state.Y_scan}  |  *𝒳_PERIOD:* {X_PERIOD}\n"
             f"🌌 *𝒫_arc:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (𝒫_trigger={state.projection_trigger or '—'})\n"
-            f"💬 *ℳ_last:* {state.last_inbound_message_id}"
+            f"💬 *ℳ_last:* {state.last_inbound_message_id}\n"
+            f"🔢 *Signal Tick:* {state.signal_tick}"
         )
         reply_markup = self._build_main_keyboard()
         await self._safe_reply(update, response, reply_markup=reply_markup)
@@ -7234,7 +7133,8 @@ class AEI_Bot:
             f"🛰️ *Provider:* {status.get('last_provider')}  |  *Volume:* {status.get('last_volume')}\n"
             f"🌌 *𝒫_arc Computed:* {status.get('projection_computed_at')}\n"
             f"🌌 *𝒫_trigger:* {status.get('projection_trigger')}\n"
-            f"💬 *ℳ_last:* {status.get('last_inbound_message_id')}"
+            f"💬 *ℳ_last:* {status.get('last_inbound_message_id')}\n"
+            f"🔢 *Signal Tick:* {status.get('signal_tick')}"
         )
         await self._safe_reply(update, response)
 
@@ -7781,11 +7681,9 @@ class AEI_Bot:
         logger.info("🩹 vFinal Audit Patch 2: D-73 (/status 𝒮_Signal_Level), D-74 (/indicators 13D ℋ_Projection), D-75 (D-71 block normalization), D-76 (unused import removed), D-77 (stray LSK-USD2 key removed), D-81 (_on_gaurd unreachable-branch comment).")
         logger.info("🩹 vFinal Edition 2: C-2 (CS value translation), C-3 (ULP-safe threshold comparison), M-1 (_normalize top guard), M-2 (tick reorder), M-3 (15-digit π), M-4 (send_message_sync early return), m-2 (version unify), m-4 (_on_gaurd note), m-5 (dead field removed), m-6 (extended cs_map).")
         logger.info("🩹 vFinal Edition 3: A-C2 (_M/_N ADX double-count removed), A-C3 (stale l_order_id guard removed), A-m1 (_rational_cos docstring).")
+        logger.info("🩹 vFinal Edition 4: E-25 (signal alert mutual-exclusion gate: suppress both when long and short trigger on same tick; suppress when NEUTRAL), E-26 (count incremented on signal bar, toll on first bar after; Hawk/Dove and Bull/Bear both gated on tick > signal_tick; toll block precedes count block), E-27 (_on_gaurd unreachable branch converted to reachable elif).")
         logger.info("🩹 Connection Audit: C-1 (_set_cors reflects Origin, Vary: Origin, X-Since preserved), C-2 (Origin: null → *)")
         logger.info("🩹 Cursor OHLC Zero Readout Audit: C-5 (update_price/FeedClient.get_historical_klines//ohlcv handler/start_feed all reject zero/null OHLC; /ohlcv emits JSON null for absent fields), C-6 (crosshair null guard in index.html), C-7 (lastUpdate null guard in index.html).")
-        logger.info("🩹 vFinal Edition 4 — Dime/Count/Toll Audit: D-1 (dime=mem pre-stamp in all four subblocks), D-2 (no early return after toll block; count block reached), D-3 (helpers own reset of toll/count), D-4 (signal reset at end of each subblock, not in caller).")
-        logger.info("🩹 vFinal Edition 4 — Missing-Alert Audit: C-A1 (Long/Short/Sin./Sine. alerts wired as UI toasts + Telegram pushes), C-A2 (push formatter + dedup key + PUSH_ON_SIGNAL gate extended to alert kind), C-A3 (index.html toast renderer to be updated in Segment 3).")
-        logger.info("🩹 vFinal Edition 4 — Commission Audit: D-11 (_S() and _execute_kronecker_block now use _com_price_frozen, matching the FF's `com` constant computed at OnInit).")
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
