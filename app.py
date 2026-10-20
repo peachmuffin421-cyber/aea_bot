@@ -6,11 +6,12 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: vFinal (Audit-Patched Edition 5 — Alert-Gated + Count/Toll-Separated + Private Allowlist)
+Version: vFinal (Audit-Patched Edition 5 — Alert-Gated + Count/Toll-Separated + Private Allowlist + Conflict-Hardened)
 
 Audit-Patched Edition 5 is an additive-only release on top of the
 Audit-Patched Edition 4. It applies the A-28 private-allowlist patch
-from the Private-Allowlist audit. The patch is:
+from the Private-Allowlist audit, and the 409-Conflict patches
+(Patches 1–6) from the Conflict-Hardening audit. The patches are:
 
 A-28 (critical). A TELEGRAM_USER_ALLOWLIST env var (comma-separated
 integer Telegram user IDs, default "8769538718") gates every command,
@@ -26,6 +27,18 @@ handlers via the _allowlisted_handler wrapper, (2) AEI_Bot.
 _track_inbound_message, (3) the HTTP bridge's _require_auth after the
 HMAC verifies, and (4) BridgeState.register_webapp_session (which the
 /handshake handler maps to HTTP 403).
+
+Conflict patches (additive). The 409 Conflict root cause is closed by:
+  Patch 1: add fcntl and atexit imports.
+  Patch 2: add _acquire_single_instance_lock() — an exclusive flock
+           keyed on the bot token, acquired before any network call.
+  Patch 3: import Conflict from telegram.error as TelegramConflict.
+  Patch 4: wrap run_polling() with drop_pending_updates=True,
+           allowed_updates, and a TelegramConflict handler that exits
+           non-zero with a labeled diagnostic.
+  Patch 5: acquire the lock in main() before bot.run().
+  Patch 6: re-validate historical bars in start_feed so ohlcv_history
+           never contains a zero/null bar even on cold start.
 
 Every FF-invariant line, every Print() string, every Alert() emoji,
 every state transition, every send-path retry, every projection/
@@ -51,6 +64,8 @@ import subprocess
 import threading
 import time
 import re as _re_bridge
+import fcntl
+import atexit
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -66,6 +81,77 @@ from decimal import Decimal, getcontext
 getcontext().prec = 50
 
 ARC_COHERENCE_TOLERANCE = 1e-6
+
+# ============================================================================
+# SINGLE-INSTANCE GUARD (409 Conflict defense)
+# ============================================================================
+# Telegram returns HTTP 409 on getUpdates when more than one process polls
+# the same bot token. On Heroku this happens when a draining old dyno is
+# still alive while the new one boots, or when a stray `heroku run` session
+# is left open. The guard below acquires an exclusive flock on a per-token
+# lock file BEFORE run_polling() is ever called. A second process fails fast
+# with a clear diagnostic instead of racing into a 409.
+_INSTANCE_LOCK_PATH: Optional[str] = None
+_INSTANCE_LOCK_FD: Optional[int] = None
+
+def _acquire_single_instance_lock(bot_token: str) -> bool:
+    """Acquire an exclusive, non-blocking flock keyed on the bot token.
+    Returns True on success, False if another process holds the lock.
+    Safe to call multiple times; idempotent once held."""
+    global _INSTANCE_LOCK_PATH, _INSTANCE_LOCK_FD
+    if _INSTANCE_LOCK_FD is not None:
+        return True
+    token_tag = hashlib.sha256(bot_token.encode("utf-8")).hexdigest()[:16]
+    lock_dir = os.getenv("AEI_LOCK_DIR", "/tmp")
+    path = os.path.join(lock_dir, f"aei-bot-{token_tag}.lock")
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as e:
+        logger.error(f"❌ Could not open instance lock file {path}: {e}")
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+        logger.error(
+            f"❌ Another ÆEA process is already polling this bot token. "
+            f"Lock held at {path}. Refusing to start a second poller. "
+            f"Check `heroku ps` for duplicate web/run dynos, or `heroku ps:scale web=1`."
+        )
+        return False
+    _INSTANCE_LOCK_PATH = path
+    _INSTANCE_LOCK_FD = fd
+    try:
+        with open(path, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+    def _release():
+        global _INSTANCE_LOCK_FD, _INSTANCE_LOCK_PATH
+        fd_local = _INSTANCE_LOCK_FD
+        _INSTANCE_LOCK_FD = None
+        if fd_local is not None:
+            try:
+                fcntl.flock(fd_local, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                os.close(fd_local)
+            except Exception:
+                pass
+        path_local = _INSTANCE_LOCK_PATH
+        _INSTANCE_LOCK_PATH = None
+        if path_local:
+            try:
+                os.unlink(path_local)
+            except Exception:
+                pass
+    atexit.register(_release)
+    logger.info(f"🔒 Single-instance lock acquired: {path} (pid={os.getpid()})")
+    return True
 
 # ============================================================================
 # D-RES-10: SYMBOLIC π DERIVATION
@@ -1082,6 +1168,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.error import Conflict as TelegramConflict
 
 # ============================================================================
 # LOG RING BUFFER
@@ -7454,6 +7541,16 @@ class AEI_Bot:
         historical = []
         try:
             historical = self.engine.feed.get_historical_klines(limit=200)
+            # C-5 defensive re-check: every bar must have a real positive close.
+            # get_historical_klines already filters, but a second gate here
+            # guarantees ohlcv_history never contains a zero/null bar even if
+            # the feed client is later modified.
+            validated = []
+            for bar in historical:
+                c = bar.get("close")
+                if isinstance(c, Decimal) and c > Decimal('0.0') and c.is_finite():
+                    validated.append(bar)
+            historical = validated
             if historical and len(historical) >= MIN_HISTORY_WINDOW:
                 self.engine.ohlcv_history = historical
                 logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()} (provider={self.engine.feed.last_provider()})")
@@ -7729,7 +7826,7 @@ class AEI_Bot:
         self.application.add_handler(CallbackQueryHandler(_allowlisted_handler(self.button_handler)))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port vFinal Edition 5).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port vFinal Edition 5 + Conflict-Hardened).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -7766,6 +7863,7 @@ class AEI_Bot:
         logger.info("🩹 vFinal Edition 3: A-C2 (_M/_N ADX double-count removed), A-C3 (stale l_order_id guard removed), A-m1 (_rational_cos docstring).")
         logger.info("🩹 vFinal Edition 4: E-25 (signal alert mutual-exclusion gate: suppress both when long and short trigger on same tick; suppress when NEUTRAL), E-26 (count incremented on signal bar, toll on first bar after; Hawk/Dove and Bull/Bear both gated on tick > signal_tick; toll block precedes count block), E-27 (_on_gaurd unreachable branch converted to reachable elif).")
         logger.info("🩹 vFinal Edition 5: A-28 (private allowlist gate at four checkpoints: handler wrapper, _track_inbound_message, _require_auth, register_webapp_session; TELEGRAM_USER_ALLOWLIST env var).")
+        logger.info("🩹 Conflict-Hardening: Patch 1 (fcntl, atexit imports), Patch 2 (_acquire_single_instance_lock), Patch 3 (Conflict import), Patch 4 (run_polling with drop_pending_updates, allowed_updates, TelegramConflict handler), Patch 5 (lock in main()), Patch 6 (start_feed historical re-validation).")
         logger.info("🩹 Connection Audit: C-1 (_set_cors reflects Origin, Vary: Origin, X-Since preserved), C-2 (Origin: null → *)")
         logger.info("🩹 Cursor OHLC Zero Readout Audit: C-5 (update_price/FeedClient.get_historical_klines//ohlcv handler/start_feed all reject zero/null OHLC; /ohlcv emits JSON null for absent fields), C-6 (crosshair null guard in index.html), C-7 (lastUpdate null guard in index.html).")
         logger.info(
@@ -7773,7 +7871,30 @@ class AEI_Bot:
             f"{sorted(TELEGRAM_USER_ALLOWLIST)}"
         )
         logger.info("✅ Ready. Use /start to begin.")
-        self.application.run_polling()
+        # 409-Conflict defense: the single-instance lock is acquired in main()
+        # before bot.run() is called. If we got here, we hold the lock.
+        # drop_pending_updates=True clears any stale updates enqueued during
+        # a redeploy so the new process does not replay old commands.
+        # On Conflict, exit non-zero with a clear diagnostic instead of
+        # letting the traceback surface as an opaque crash.
+        try:
+            self.application.run_polling(
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query"],
+            )
+        except TelegramConflict as e:
+            logger.error(
+                f"❌ 409 Conflict from Telegram: another process is polling this "
+                f"bot token. Detail: {e}. This instance will exit so the "
+                f"winning poller can continue. Verify with `heroku ps` that only "
+                f"one web dyno is running, and close any stray `heroku run` sessions."
+            )
+            raise SystemExit(1)
+        except SystemExit:
+            raise
+        except Exception as e:
+            logger.exception(f"❌ run_polling() raised: {type(e).__name__}: {e}")
+            raise SystemExit(1)
 
 try:
     _bridge_attach_to_bot(AEI_Bot)
@@ -7795,6 +7916,15 @@ def main():
         f"🔒 A-28 allowlist: {len(TELEGRAM_USER_ALLOWLIST)} user ID(s) "
         f"— {sorted(TELEGRAM_USER_ALLOWLIST)}"
     )
+    # 409-Conflict defense: fail fast if another process is already polling
+    # this bot token. This runs BEFORE any network call, so a duplicate
+    # dyno or stray `heroku run` never reaches getUpdates and never causes
+    # the 409 Conflict seen in the logs. Exit code 0 is intentionally NOT
+    # used here — the duplicate should signal failure to Heroku so the
+    # platform does not treat it as a successful boot.
+    if not _acquire_single_instance_lock(TOKEN):
+        logger.error("❌ Refusing to start: single-instance lock not acquired.")
+        sys.exit(1)
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
 
