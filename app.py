@@ -6,47 +6,33 @@ Faithful Unabridged Port of ÆEA.mq4
 Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
 Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
 Author: Natalia Tanyatia
-Version: vFinal (Audit-Patched Edition 4 — Alert-Gated + Count/Toll-Separated)
+Version: vFinal (Audit-Patched Edition 5 — Alert-Gated + Count/Toll-Separated + Private Allowlist)
 
-Audit-Patched Edition 4 is an additive-only release on top of the
-Audit-Patched Edition 3. It applies the E-25, E-26, and E-27 patches
-from the Alert-Gate & Count/Toll-Separation audit. The patches are:
+Audit-Patched Edition 5 is an additive-only release on top of the
+Audit-Patched Edition 4. It applies the A-28 private-allowlist patch
+from the Private-Allowlist audit. The patch is:
 
-E-25 (critical). _signal() gains the mutual-exclusion alert gate.
-The FF emits Alert("Long:") when price >= signal + com and
-Alert("Short:") when price <= signal - com. If both conditions are
-true on the same tick (both short and long triggered), neither is
-emitted. The gate is applied to both the _emit_toast("signal", ...)
-call and the _send_signal_alert() fallback. A signal whose direction
-is NEUTRAL (neither m >= 12 nor n >= 12) is not pushed as a
-long/short alert; it remains in the signal history and the log.
-
-E-26 (critical). count and toll are separated by source bar. count is
-incremented in the signal-anchoring pass (same tick as _signal(),
-matching the FF's if(price >= signal + com) / if(price <= signal - com)
-blocks which run on the signal bar). toll is incremented only when the
-bar index has advanced past the signal bar (st.tick > signal_tick),
-matching the FF's coherence blocks which are reached on the first bar
-after. The count == 1 branch (Hawk/Dove) and the toll == 1 branch
-(Bull/Bear via Diamond/Ruby) are both gated on st.tick > signal_tick.
-The FF's precedence is preserved: the toll block is evaluated before
-the count block, so Bull/Bear (via Diamond/Ruby) takes precedence on
-the first-after-bar pass, and Hawk/Dove fires only if the toll block
-did not consume the signal.
-
-E-27 (minor). _on_gaurd's unreachable branch is converted to a
-reachable branch by hoisting the price < D test into an elif before
-the return in the first branch. This matches the FF's intent (the
-MQL4 source has the same dead-code shape, but the port now makes the
-second condition reachable when D < E, which is the only case where
-it can matter).
+A-28 (critical). A TELEGRAM_USER_ALLOWLIST env var (comma-separated
+integer Telegram user IDs, default "8769538718") gates every command,
+every callback query, every HTTP bridge request, and every WebApp
+handshake. A user not in the allowlist is dropped before any state
+transition. The default is the single operator ID; forks must set
+TELEGRAM_USER_ALLOWLIST explicitly or the process fails fast at module
+load (refusing to start with an open bot). The verifier
+verify_telegram_init_data() is unchanged — it remains a pure HMAC
+check. The allowlist is a separate, orthogonal gate layered on top.
+The allowlist is enforced at four checkpoints: (1) AEI_Bot command
+handlers via the _allowlisted_handler wrapper, (2) AEI_Bot.
+_track_inbound_message, (3) the HTTP bridge's _require_auth after the
+HMAC verifies, and (4) BridgeState.register_webapp_session (which the
+/handshake handler maps to HTTP 403).
 
 Every FF-invariant line, every Print() string, every Alert() emoji,
 every state transition, every send-path retry, every projection/
 execution gating rule, and every CS translation already present in
 the prior editions is preserved verbatim. No internal variable name,
 no function name, no endpoint path, and no env-var name has been
-altered.
+altered beyond the additive TELEGRAM_USER_ALLOWLIST introduction.
 """
 
 __version__ = "final"
@@ -669,6 +655,36 @@ TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 REQUIRE_AUTH: bool = os.getenv("REQUIRE_AUTH", "1").strip() in ("1", "true", "yes")
 LOG_BUFFER_SIZE: int = int(os.getenv("LOG_BUFFER_SIZE", "1000"))
 TOAST_BUFFER_SIZE: int = int(os.getenv("TOAST_BUFFER_SIZE", "500"))
+
+# ============================================================================
+# A-28: PRIVATE ALLOWLIST (Audit-Patched Edition 5)
+# ============================================================================
+# Comma-separated integer Telegram user IDs. Default is the single
+# operator ID. Forks MUST set TELEGRAM_USER_ALLOWLIST explicitly.
+# Fail-fast at module load if the env var parses to an empty list —
+# a misconfigured allowlist must never silently open the bot.
+def _parse_allowlist(raw: str) -> frozenset:
+    out = set()
+    for tok in str(raw).split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            out.add(int(tok))
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                f"TELEGRAM_USER_ALLOWLIST contains a non-integer token: {tok!r}"
+            )
+    return frozenset(out)
+
+_TELEGRAM_USER_ALLOWLIST_RAW: str = os.getenv("TELEGRAM_USER_ALLOWLIST", "8769538718").strip()
+TELEGRAM_USER_ALLOWLIST: frozenset = _parse_allowlist(_TELEGRAM_USER_ALLOWLIST_RAW)
+if not TELEGRAM_USER_ALLOWLIST:
+    raise RuntimeError(
+        "TELEGRAM_USER_ALLOWLIST is empty after parsing. Refusing to start "
+        "with an open bot. Set TELEGRAM_USER_ALLOWLIST to a comma-separated "
+        "list of integer Telegram user IDs."
+    )
 
 PUSH_ON_SIGNAL: bool = os.getenv("PUSH_ON_SIGNAL", "1").strip() in ("1", "true", "yes")
 PUSH_ON_EXECUTION: bool = os.getenv("PUSH_ON_EXECUTION", "1").strip() in ("1", "true", "yes")
@@ -1770,6 +1786,16 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
         return (None, None, False)
     u = verified["user"] or {}
     return (u.get("id"), u.get("username"), True)
+
+def _is_allowlisted(user_id: Optional[int]) -> bool:
+    """A-28: True iff user_id is in TELEGRAM_USER_ALLOWLIST.
+    None (no authenticated user) is never allowed."""
+    if user_id is None:
+        return False
+    try:
+        return int(user_id) in TELEGRAM_USER_ALLOWLIST
+    except (TypeError, ValueError):
+        return False
 
 # ============================================================================
 # FEED CLIENT — CLOUDFLARE WORKER RELAY
@@ -5695,6 +5721,11 @@ class BridgeState:
         self._handshake_lock = threading.Lock()
 
     def register_webapp_session(self, user_id: int, username: Optional[str], chat_id: Optional[int] = None) -> bool:
+        # A-28: refuse to register a stranger. The caller (handshake
+        # handler) maps a False return to HTTP 403.
+        if not _is_allowlisted(user_id):
+            logger.warning(f"⛔ register_webapp_session: refused non-allowlisted user_id={user_id}, username={username}")
+            return False
         with self._handshake_lock:
             self._webapp_sessions[user_id] = {
                 "user_id": user_id, "username": username, "chat_id": chat_id,
@@ -5792,7 +5823,12 @@ def _require_auth(handler: "BridgeHandler") -> bool:
     if not raw_init:
         return False
     verified = verify_telegram_init_data(raw_init, TELEGRAM_BOT_TOKEN_ENV)
-    return bool(verified and verified.get("user"))
+    if not (verified and verified.get("user")):
+        return False
+    # A-28: a valid HMAC only proves the initData was issued by this
+    # bot. It does NOT prove the caller is the intended operator. The
+    # allowlist is the second gate.
+    return _is_allowlisted(verified["user"].get("id"))
 
 # ============================================================================
 # TUNNEL MANAGER
@@ -6514,7 +6550,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 u = verified["user"] or {}
                 user_id = u.get("id")
                 username = u.get("username")
-                BRIDGE_STATE.register_webapp_session(user_id, username, chat_id=chat_id)
+                # A-28: a valid HMAC is not enough. The user must be
+                # allowlisted. register_webapp_session returns False
+                # for strangers.
+                if not BRIDGE_STATE.register_webapp_session(user_id, username, chat_id=chat_id):
+                    logger.warning(f"⛔ Handshake rejected (allowlist): user_id={user_id}, username={username}")
+                    self._send_json(403, {"error": "not_allowlisted", "detail": "This bot is private. Your Telegram user ID is not in TELEGRAM_USER_ALLOWLIST."})
+                    return
                 logger.info(f"🤝 Handshake OK: user_id={user_id}, username={username}, chat_id={chat_id}")
                 self._send_json(200, {
                     "ok": True, "user_id": user_id, "username": username,
@@ -6786,6 +6828,34 @@ def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
 # ============================================================================
 # TELEGRAM BOT
 # ============================================================================
+def _allowlisted_handler(method):
+    """A-28: wrap a command/callback handler so a non-allowlisted user
+    is dropped before the method body runs. The wrapped method is
+    still responsible for its own _track_inbound_message call — this
+    wrapper is a belt-and-suspenders gate, not a replacement."""
+    import functools
+    @functools.wraps(method)
+    async def wrapper(self, update, context):
+        try:
+            user = update.effective_user
+            user_id = int(user.id) if (user is not None and getattr(user, "id", None) is not None) else None
+        except Exception:
+            user_id = None
+        if not _is_allowlisted(user_id):
+            logger.warning(f"⛔ handler {method.__name__} dropped non-allowlisted user_id={user_id}")
+            try:
+                msg = update.effective_message
+                if msg is not None:
+                    await msg.reply_text(
+                        "⛔ This bot is private. Your Telegram user ID is not in the operator allowlist.",
+                        parse_mode=None,
+                    )
+            except Exception:
+                pass
+            return
+        return await method(self, update, context)
+    return wrapper
+
 class AEI_Bot:
     def __init__(self, token: str, bot_name: str = "UpscaleTradeBot"):
         self.token = token
@@ -6803,6 +6873,15 @@ class AEI_Bot:
 
     def _track_inbound_message(self, update: Update) -> None:
         try:
+            user = update.effective_user
+            user_id = int(user.id) if (user is not None and getattr(user, "id", None) is not None) else None
+            # A-28: a stranger's message must never bind chat_id or
+            # last_inbound_message_id. The bot must never thread a
+            # reply to a stranger, and the engine must never be
+            # commanded by a stranger.
+            if not _is_allowlisted(user_id):
+                logger.warning(f"⛔ _track_inbound_message: non-allowlisted user_id={user_id}")
+                return
             msg = update.effective_message
             chat = update.effective_chat
             chat_id = None
@@ -7623,30 +7702,34 @@ class AEI_Bot:
     def run(self):
         self.engine.OnInit()
         self.application = Application.builder().token(self.token).post_init(self._post_init).build()
-        self.application.add_handler(CommandHandler("start", self.start))
-        self.application.add_handler(CommandHandler("help", self.help))
-        self.application.add_handler(CommandHandler("status", self.status))
-        self.application.add_handler(CommandHandler("regime", self.regime))
-        self.application.add_handler(CommandHandler("signal", self.signal))
-        self.application.add_handler(CommandHandler("indicators", self.indicators))
-        self.application.add_handler(CommandHandler("chart", self.chart))
-        self.application.add_handler(CommandHandler("fvg", self.fvg))
-        self.application.add_handler(CommandHandler("projection", self.projection))
-        self.application.add_handler(CommandHandler("diagnostics", self.diagnostics))
-        self.application.add_handler(CommandHandler("reset", self.reset))
-        self.application.add_handler(CommandHandler("start_feed", self.start_feed))
-        self.application.add_handler(CommandHandler("stop_feed", self.stop_feed))
-        self.application.add_handler(CommandHandler("symbol", self.symbol))
-        self.application.add_handler(CommandHandler("info", self.info))
-        self.application.add_handler(CommandHandler("probe", self.probe))
-        self.application.add_handler(CommandHandler("rebuild_yf", self.rebuild_yf))
-        self.application.add_handler(CommandHandler("webapp", self.webapp))
-        self.application.add_handler(CommandHandler("webgui", self.webgui))
-        self.application.add_handler(CommandHandler("mini", self.webapp))
-        self.application.add_handler(CallbackQueryHandler(self.button_handler))
+        _commands = {
+            "start": self.start,
+            "help": self.help,
+            "status": self.status,
+            "regime": self.regime,
+            "signal": self.signal,
+            "indicators": self.indicators,
+            "chart": self.chart,
+            "fvg": self.fvg,
+            "projection": self.projection,
+            "diagnostics": self.diagnostics,
+            "reset": self.reset,
+            "start_feed": self.start_feed,
+            "stop_feed": self.stop_feed,
+            "symbol": self.symbol,
+            "info": self.info,
+            "probe": self.probe,
+            "rebuild_yf": self.rebuild_yf,
+            "webapp": self.webapp,
+            "webgui": self.webgui,
+            "mini": self.webapp,
+        }
+        for cmd, handler in _commands.items():
+            self.application.add_handler(CommandHandler(cmd, _allowlisted_handler(handler)))
+        self.application.add_handler(CallbackQueryHandler(_allowlisted_handler(self.button_handler)))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
-        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port vFinal Edition 4).")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port vFinal Edition 5).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
@@ -7682,8 +7765,13 @@ class AEI_Bot:
         logger.info("🩹 vFinal Edition 2: C-2 (CS value translation), C-3 (ULP-safe threshold comparison), M-1 (_normalize top guard), M-2 (tick reorder), M-3 (15-digit π), M-4 (send_message_sync early return), m-2 (version unify), m-4 (_on_gaurd note), m-5 (dead field removed), m-6 (extended cs_map).")
         logger.info("🩹 vFinal Edition 3: A-C2 (_M/_N ADX double-count removed), A-C3 (stale l_order_id guard removed), A-m1 (_rational_cos docstring).")
         logger.info("🩹 vFinal Edition 4: E-25 (signal alert mutual-exclusion gate: suppress both when long and short trigger on same tick; suppress when NEUTRAL), E-26 (count incremented on signal bar, toll on first bar after; Hawk/Dove and Bull/Bear both gated on tick > signal_tick; toll block precedes count block), E-27 (_on_gaurd unreachable branch converted to reachable elif).")
+        logger.info("🩹 vFinal Edition 5: A-28 (private allowlist gate at four checkpoints: handler wrapper, _track_inbound_message, _require_auth, register_webapp_session; TELEGRAM_USER_ALLOWLIST env var).")
         logger.info("🩹 Connection Audit: C-1 (_set_cors reflects Origin, Vary: Origin, X-Since preserved), C-2 (Origin: null → *)")
         logger.info("🩹 Cursor OHLC Zero Readout Audit: C-5 (update_price/FeedClient.get_historical_klines//ohlcv handler/start_feed all reject zero/null OHLC; /ohlcv emits JSON null for absent fields), C-6 (crosshair null guard in index.html), C-7 (lastUpdate null guard in index.html).")
+        logger.info(
+            f"🔒 Private allowlist armed: {len(TELEGRAM_USER_ALLOWLIST)} user ID(s) — "
+            f"{sorted(TELEGRAM_USER_ALLOWLIST)}"
+        )
         logger.info("✅ Ready. Use /start to begin.")
         self.application.run_polling()
 
@@ -7703,6 +7791,10 @@ def main():
         logger.error("❌ Error: TELEGRAM_BOT_TOKEN not set.")
         logger.error("   export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'")
         sys.exit(1)
+    logger.info(
+        f"🔒 A-28 allowlist: {len(TELEGRAM_USER_ALLOWLIST)} user ID(s) "
+        f"— {sorted(TELEGRAM_USER_ALLOWLIST)}"
+    )
     bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
     bot.run()
 
