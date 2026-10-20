@@ -729,6 +729,39 @@ CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
 SYMBOL: str = os.getenv("SYMBOL", "BTC-USD").strip() or "BTC-USD"
 INTERVAL: str = "1m"
 UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
+# ============================================================================
+# PRIVATE BOT GATE — HARD USER-ID ALLOWLIST
+# ============================================================================
+# Only the user IDs in this set may interact with the bot (Telegram
+# commands, callback buttons, Mini App initData, and every non-/health
+# bridge endpoint). Leave it as a hardcoded set for a single-owner
+# deployment. To add a second owner later, add another integer to the
+# set. An empty set means "open bot" (not recommended in production).
+#
+# This gate is enforced in three places:
+#   1. _track_inbound_message() — every Telegram update passes through
+#      here before any handler runs. A disallowed user is silently
+#      dropped (no reply, no log line visible to them).
+#   2. _require_auth() — every non-/health HTTP bridge endpoint. A
+#      disallowed initData user receives HTTP 401.
+#   3. _require_auth() on the /handshake path — a disallowed user
+#      receives HTTP 403 instead of a session binding.
+#
+# The gate is closed by default: if ALLOWED_USER_IDS is empty, the bot
+# is OPEN (matches the pre-patch behavior). To keep the bot private,
+# leave at least one ID in the set.
+# ============================================================================
+ALLOWED_USER_IDS: set = {8769538718}
+
+def _is_allowed_user(user_id) -> bool:
+    """Return True if user_id is allowed to interact with the bot.
+    Empty ALLOWED_USER_IDS means the gate is open (legacy behavior)."""
+    if not ALLOWED_USER_IDS:
+        return True
+    try:
+        return int(user_id) in ALLOWED_USER_IDS
+    except (TypeError, ValueError):
+        return False
 
 # ============================================================================
 # SYMBOL MAP — vFinal EXPANDED UNIVERSE
@@ -5895,7 +5928,14 @@ def _require_auth(handler: "BridgeHandler") -> bool:
     if not raw_init:
         return False
     verified = verify_telegram_init_data(raw_init, TELEGRAM_BOT_TOKEN_ENV)
-    return bool(verified and verified.get("user"))
+    if not verified or not verified.get("user"):
+        return False
+    user = verified.get("user") or {}
+    user_id = user.get("id")
+    if not _is_allowed_user(user_id):
+        logger.warning(f"🚫 Bridge auth rejected: unauthorized user_id={user_id}")
+        return False
+    return True
 
 # ============================================================================
 # TUNNEL MANAGER
@@ -6616,6 +6656,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 u = verified["user"] or {}
                 user_id = u.get("id")
                 username = u.get("username")
+                if not _is_allowed_user(user_id):
+                    logger.warning(f"🚫 Handshake rejected: unauthorized user_id={user_id}")
+                    self._send_json(403, {"error": "unauthorized_user", "detail": "This Mini App is private. Your Telegram user ID is not on the allowlist."})
+                    return
                 BRIDGE_STATE.register_webapp_session(user_id, username, chat_id=chat_id)
                 logger.info(f"🤝 Handshake OK: user_id={user_id}, username={username}, chat_id={chat_id}")
                 self._send_json(200, {
@@ -6907,6 +6951,13 @@ class AEI_Bot:
         try:
             msg = update.effective_message
             chat = update.effective_chat
+            user = update.effective_user
+            user_id = None
+            if user is not None and getattr(user, "id", None) is not None:
+                user_id = int(user.id)
+            if user_id is not None and not _is_allowed_user(user_id):
+                logger.info(f"🚫 Blocked Telegram update from unauthorized user_id={user_id}")
+                raise PermissionError("private_bot_unauthorized_user")
             chat_id = None
             if chat is not None and getattr(chat, "id", None) is not None:
                 chat_id = int(chat.id)
@@ -6916,6 +6967,8 @@ class AEI_Bot:
                 self.engine.state.chat_id = chat_id
             if msg is not None and getattr(msg, "message_id", None) is not None:
                 self.engine.state.last_inbound_message_id = int(msg.message_id)
+        except PermissionError:
+            raise
         except Exception as e:
             logger.debug(f"_track_inbound_message failed: {e}")
 
@@ -7023,6 +7076,14 @@ class AEI_Bot:
             try:
                 self.engine.update_price_from_feed()
                 st = self.engine.state
+                if st.chat_id is not None and not _is_allowed_user(st.chat_id):
+                    # The bound chat is not on the allowlist. This should
+                    # never happen if the gate is enforced everywhere, but
+                    # defend against a stale chat_id left over from a
+                    # pre-gate session.
+                    logger.warning(f"⚠️ Price feed bound to unauthorized chat_id={st.chat_id}; clearing binding.")
+                    st.chat_id = None
+                    st.last_inbound_message_id = None
                 idx = st.Z - (st.y + 1)
                 regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
                 logger.info(f"📊 itr#{iteration} price={st.price} vol={st.last_volume} provider={st.last_provider} tick={st.tick} FG={st.FG} regime={regime} bars={st.bar_close_count} signals={len(st.signal_history)} ohlcv={len(self.engine.ohlcv_history)}")
@@ -7119,6 +7180,7 @@ class AEI_Bot:
             "`/rebuild_yf` - Force relay reset\n"
             "`/webapp` - Launch Telegram Mini App\n"
             "`/webgui` - Show bridge URL\n"
+            "`/whoami` - Show your Telegram user ID\n"
             "`/help` - Show this message\n\n"
             f"*Current Symbol:* `{SYMBOL}`\n"
             f"🔄 *Feed Status:* {feed_status}\n"
@@ -7639,8 +7701,36 @@ class AEI_Bot:
             f"*Settings endpoint:* `{public_url.rstrip('/')}/settings`\n"
             f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`")
 
+    async def whoami(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        user = update.effective_user
+        chat = update.effective_chat
+        user_id = user.id if user else None
+        chat_id = chat.id if chat else None
+        allowed = _is_allowed_user(user_id)
+        await self._safe_reply(update,
+            f"🪪 *Identity*\n"
+            f"*user_id:* `{user_id}`\n"
+            f"*chat_id:* `{chat_id}`\n"
+            f"*username:* @{user.username if user and user.username else '—'}\n"
+            f"*first_name:* {user.first_name if user else '—'}\n"
+            f"*Allowlist:* {sorted(ALLOWED_USER_IDS)}\n"
+            f"*Gate:* {'✅ allowed' if allowed else '❌ blocked'}\n"
+            f"*Gate active:* {'yes' if ALLOWED_USER_IDS else 'no (open bot)'}")
+
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
+        user = update.effective_user
+        user_id = None
+        if user is not None and getattr(user, "id", None) is not None:
+            user_id = int(user.id)
+        if user_id is not None and not _is_allowed_user(user_id):
+            logger.info(f"🚫 Blocked callback from unauthorized user_id={user_id}")
+            try:
+                await query.answer("Unauthorized.", show_alert=True)
+            except Exception:
+                pass
+            return
         await query.answer()
         action = query.data
         if action == "status":
@@ -7680,6 +7770,10 @@ class AEI_Bot:
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         err = context.error
+        if isinstance(err, PermissionError) and str(err) == "private_bot_unauthorized_user":
+            # Private-bot gate already logged the block at info level.
+            # Do not append to the user-visible log ring buffer.
+            return
         err_str = f"{type(err).__name__}: {err}" if err is not None else "unknown error"
         try:
             with _LOG_LOCK:
@@ -7743,11 +7837,13 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("webapp", self.webapp))
         self.application.add_handler(CommandHandler("webgui", self.webgui))
         self.application.add_handler(CommandHandler("mini", self.webapp))
+        self.application.add_handler(CommandHandler("whoami", self.whoami))
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
         logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port vFinal Edition 4).")
         logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
+
         logger.info("⚡ 13D Hilbert-space projection populated per bar.")
         logger.info("📡 Bar-close detection uses relay timestamp.")
         logger.info("🎯 Signal logging enabled for all imbalance events.")
