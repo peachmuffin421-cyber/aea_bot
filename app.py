@@ -1690,18 +1690,22 @@ class CrawlerRelayClient:
         return self._failure_count
 
 # ============================================================================
-# TELEGRAM CHAT DATABASE — Ed34 + R16-queue: single serialized sender thread with Retry-After
+# TELEGRAM CHAT DATABASE — Ed34: Telegram as distributed/isolated DB at seed discretion
 # ============================================================================
 class TelegramChatDB:
     """Uses Telegram Bot API as durable storage.
 
     Two modes, both R12-compliant (outbound HTTPS only, no subprocess):
     1) Global distributed set: private channel TELEGRAM_DB_CHANNEL_ID where bot is admin.
-    2) Isolated per-user shards: if TELEGRAM_DB_USER_SHARDS=1
+       Seed persists snapshots (prime_count, lattice_points, logic_hash, I, deviation, psi_real, generation)
+       as chunked messages. Message_id map stored in SQLite for fast rebuild.
+    2) Isolated per-user shards: if TELEGRAM_DB_USER_SHARDS=1, bot stores per-user shards
+       in user's private chat with bot (requires user started bot). At SelfEvolutionCore discretion,
+       it shunts 𝒜₃ vs 𝒜₄ branches to different user sets, or shards lattice points across users.
 
-    R17-queue: ALL sends go through ONE daemon thread with a queue.
-    This eliminates burst 429s from SeedWorker + CrawlerWorker concurrency.
-    Per-chat 1.1s, global 0.35s, Retry-After parsing, circuit-breaker.
+    FG-exact: all Fractions stored as str(num/den). No float enters DB.
+    Hardware-agnostic: no local disk required for persistence beyond ephemeral cache.
+    Telegram limits: 4096 chars/message, so chunking; 30 msg/sec global.
     """
     def __init__(self, bot_token: str, channel_id: str = "", central_user_id: str = "", chunk_size: int = 3800):
         self.bot_token = (bot_token or "").strip()
@@ -1715,7 +1719,8 @@ class TelegramChatDB:
         self._consecutive_429: int = 0
         self._enabled = bool(self.bot_token and (self.channel_id or self.central_user_id))
         self._last_save_ts = 0.0
-        self._index: Dict[str, Dict[str, Any]] = {}
+        self._index: Dict[str, Dict[str, Any]] = {}  # key -> {msg_ids, ts, hash}
+        # In-memory index file for rebuild (mirrored in SQLite)
         self._index_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else ".", "aei_telegram_index.json")
         try:
             if os.path.isfile(self._index_db_path):
@@ -1724,12 +1729,8 @@ class TelegramChatDB:
         except Exception:
             self._index = {}
 
-        # R17 queue — single serialized sender
-        self._send_queue: queue.Queue = queue.Queue(maxsize=200)
-        self._sender_thread = threading.Thread(target=self._sender_loop, name="telegram-db-sender", daemon=True)
-        self._sender_thread.start()
-
     def is_enabled(self) -> bool:
+        # enabled if bot token + ENABLE flag + (channel OR central_user OR user shards)
         if not self.bot_token or not ENABLE_TELEGRAM_DB:
             return False
         has_channel = bool(self.channel_id)
@@ -1743,27 +1744,35 @@ class TelegramChatDB:
     def _api_url(self, method: str) -> str:
         return f"https://api.telegram.org/bot{self.bot_token}/{method}"
 
-    def _do_http_send(self, chat_id: str, text: str, disable_notification: bool) -> Optional[int]:
-        """Low-level HTTP with Retry-After — called ONLY from _sender_loop thread."""
+    def _send_message(self, chat_id: str, text: str, disable_notification: bool = True) -> Optional[int]:
+        if not self.bot_token or not chat_id:
+            return None
         if len(text) > 4096:
             text = text[:4096]
+
+        # --- R16 rate-limit fix: per-chat + global throttling + Retry-After handling ---
+        # Telegram limits: ~30 msg/sec global, ~1 msg/sec per chat, 20 msg/min per group.
+        # On 429, response body contains {"parameters":{"retry_after":X}}
         max_attempts = 4
         for attempt in range(max_attempts):
-            # global backoff
-            now = time.time()
-            if now < self._global_backoff_until:
-                time.sleep(self._global_backoff_until - now)
-
-            # per-chat throttle
+            # Global + per-chat throttle
             with self._lock:
-                last_chat = self._chat_last_send.get(str(chat_id), 0.0)
-                last_global = self._last_global_send
-            wait_chat = 1.1 - (time.time() - last_chat)
-            if wait_chat > 0:
-                time.sleep(wait_chat)
-            wait_global = 0.40 - (time.time() - last_global)
-            if wait_global > 0:
-                time.sleep(wait_global)
+                now = time.time()
+                # honor global backoff from previous 429
+                if hasattr(self, '_global_backoff_until') and now < self._global_backoff_until:
+                    sleep_for = self._global_backoff_until - now
+                    time.sleep(sleep_for)
+                    now = time.time()
+                # per-chat: at least 1.1s between messages to same chat
+                last_chat = self._chat_last_send.get(str(chat_id), 0)
+                if now - last_chat < 1.1:
+                    time.sleep(1.1 - (now - last_chat))
+                # global: at least 0.05s (20/sec) but we use 0.35s to be safe across workers
+                last_global = getattr(self, '_last_global_send', 0)
+                if now - last_global < 0.35:
+                    time.sleep(0.35 - (now - last_global))
+                self._chat_last_send[str(chat_id)] = time.time()
+                self._last_global_send = time.time()
 
             try:
                 payload = {
@@ -1777,100 +1786,51 @@ class TelegramChatDB:
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
                     if body.get("ok"):
-                        with self._lock:
-                            self._chat_last_send[str(chat_id)] = time.time()
-                            self._last_global_send = time.time()
-                            self._consecutive_429 = 0
+                        # success resets consecutive 429 counter
+                        self._consecutive_429 = 0
                         return body.get("result", {}).get("message_id")
-                    # ok:false with error_code
+                    # Telegram returned ok:false with 200 — could be 429 embedded
                     if body.get("error_code") == 429:
                         retry_after = int(body.get("parameters", {}).get("retry_after", 5))
                         logger.warning(f"TelegramChatDB 429 embedded for {chat_id}: retry_after={retry_after}s attempt={attempt+1}")
                         with self._lock:
                             self._global_backoff_until = time.time() + retry_after + 1
-                            self._consecutive_429 += 1
-                            if self._consecutive_429 >= 3:
-                                self._global_backoff_until = max(self._global_backoff_until, time.time() + 30)
-                        time.sleep(retry_after + 1 + attempt)
+                            self._consecutive_429 = getattr(self, '_consecutive_429', 0) + 1
+                        time.sleep(retry_after + 1 + attempt)  # backoff
                         continue
-                    logger.warning(f"TelegramChatDB send ok:false for {chat_id}: {body}")
-                    return None
             except urllib.error.HTTPError as e:
+                # read Retry-After from body
                 retry_after = 5
-                err_text = ""
                 try:
                     err_body = e.read().decode("utf-8")
-                    err_text = err_body[:300]
                     j = json.loads(err_body)
                     retry_after = int(j.get("parameters", {}).get("retry_after", retry_after))
+                    logger.warning(f"TelegramChatDB send failed to {chat_id}: HTTP Error {e.code} retry_after={retry_after} attempt={attempt+1} body={err_body[:200]}")
                 except Exception:
-                    pass
-                logger.warning(f"TelegramChatDB send failed to {chat_id}: HTTP {e.code} retry_after={retry_after} attempt={attempt+1} {err_text}")
+                    logger.warning(f"TelegramChatDB send failed to {chat_id}: HTTP Error {e.code} {e.reason} attempt={attempt+1}")
                 if e.code == 429:
                     with self._lock:
                         self._global_backoff_until = time.time() + retry_after + 1
-                        self._consecutive_429 += 1
+                        self._consecutive_429 = getattr(self, '_consecutive_429', 0) + 1
+                        # circuit breaker: if 3x 429 in row, 30s cooldown
                         if self._consecutive_429 >= 3:
                             self._global_backoff_until = max(self._global_backoff_until, time.time() + 30)
-                            logger.warning("TelegramChatDB circuit breaker: 3x 429 -> 30s cooldown")
+                            logger.warning(f"TelegramChatDB circuit breaker: 3x 429 -> 30s cooldown")
                     time.sleep(retry_after + 1 + attempt*2)
                     continue
                 else:
+                    # non-429 HTTP error — don't retry infinitely
                     if attempt >= 1:
                         break
                     time.sleep(1 + attempt)
                     continue
             except Exception as e:
-                logger.warning(f"TelegramChatDB send exception to {chat_id}: {e} attempt={attempt+1}")
+                logger.warning(f"TelegramChatDB send failed to {chat_id}: {e} attempt={attempt+1}")
                 if attempt >= 1:
                     break
                 time.sleep(1 + attempt)
                 continue
         return None
-
-    def _sender_loop(self):
-        """Single thread that serializes all Telegram sends."""
-        while True:
-            try:
-                job = self._send_queue.get()
-                if job is None:
-                    break
-                chat_id, text, disable_notification, resp_q = job
-                mid = self._do_http_send(chat_id, text, disable_notification)
-                try:
-                    if resp_q is not None:
-                        resp_q.put(mid, block=False)
-                except Exception:
-                    pass
-                self._send_queue.task_done()
-            except Exception as e:
-                try:
-                    logger.warning(f"TelegramChatDB sender_loop error: {e}")
-                except Exception:
-                    pass
-                time.sleep(0.5)
-
-    def _send_message(self, chat_id: str, text: str, disable_notification: bool = True) -> Optional[int]:
-        """Enqueue send and wait for result — thread-safe, no bursts."""
-        if not self.bot_token or not chat_id:
-            return None
-        # fast drop if in global backoff and queue is full (avoid memory bloat)
-        if time.time() < self._global_backoff_until and self._send_queue.qsize() > 50:
-            logger.warning(f"TelegramChatDB dropping send to {chat_id}: in backoff and queue full ({self._send_queue.qsize()})")
-            return None
-        resp_q: queue.Queue = queue.Queue(maxsize=1)
-        try:
-            self._send_queue.put((str(chat_id), text, disable_notification, resp_q), block=True, timeout=5)
-        except queue.Full:
-            logger.warning(f"TelegramChatDB queue full, dropping send to {chat_id}")
-            return None
-        try:
-            # wait up to retry_after max + attempts ~ 45s
-            mid = resp_q.get(block=True, timeout=50)
-            return mid
-        except queue.Empty:
-            logger.warning(f"TelegramChatDB send timeout to {chat_id} (queue={self._send_queue.qsize()})")
-            return None
 
     def _persist_index(self):
         try:
@@ -1880,27 +1840,35 @@ class TelegramChatDB:
             pass
 
     def save_snapshot(self, key: str, value: Dict[str, Any], force: bool = False) -> bool:
+        """Save a snapshot at bot discretion. Called from SeedWorker and CrawlerWorker.
+        Key examples: 𝒮_STATUS, 𝒜_PRIMES, Λ₂₄_PACK, 𝒯_EVOLUTION, ℋ_LOGIC_CORE, 𝒞_CRAWLER
+        Ed37: channel + central_user_id — central_user is backup mirror, so your chat can be channel ID
+        without mixing with real channel. Supports open + distributed where your chat is channel ID.
+        """
         if not self.channel_id and not self.central_user_id:
+            # No global targets -> global snapshots disabled, distributed mode uses user shards only
             return False
         if not self.bot_token or not ENABLE_TELEGRAM_DB:
             return False
-        # R17: respect global backoff, throttle 4s
+        # Throttle: at most 1 save per 4 seconds unless forced (R16 anti-429)
+        # also respect global backoff from 429
         now = time.time()
-        if time.time() < self._global_backoff_until:
+        if time.time() < getattr(self, '_global_backoff_until', 0):
             return False
         if not force and (now - self._last_save_ts) < 4.0:
             return False
         try:
+            # Ensure all Fractions are strings — exactness preserved
             safe_value = {}
             for k, v in value.items():
                 try:
                     if isinstance(v, (list, tuple)):
-                        safe_value[k] = [str(x)[:800] for x in v][:32]
+                        safe_value[k] = [str(x)[:800] for x in v][:32]  # R14 truncate
                     elif isinstance(v, dict):
                         safe_value[k] = {kk: str(vv)[:800] for kk, vv in list(v.items())[:32]}
                     else:
                         s = str(v)
-                        safe_value[k] = s[:2000]
+                        safe_value[k] = s[:2000]  # truncate huge Fractions for Telegram 4096 limit
                 except Exception:
                     safe_value[k] = str(v)[:500]
             envelope = {
@@ -1911,8 +1879,10 @@ class TelegramChatDB:
                 "logic_hash": safe_value.get("last_logic_hash") or safe_value.get("logic_hash") or "",
             }
             blob = json.dumps(envelope, ensure_ascii=False)
+            # Chunk if needed — Telegram limit 4096
             chunks = [blob[i:i+self.chunk_size] for i in range(0, len(blob), self.chunk_size)]
             msg_ids = []
+            # send to channel and/or central_user_id (your chat as backup channel ID)
             targets = []
             if self.channel_id:
                 targets.append(("channel", self.channel_id))
@@ -1921,15 +1891,17 @@ class TelegramChatDB:
 
             for idx, chunk in enumerate(chunks):
                 header = f"⟦AEI-DB {key} {idx+1}/{len(chunks)}⟧\n" if len(chunks) > 1 else f"⟦AEI-DB {key}⟧\n"
-                # fix unicode brackets (was escaped above)
-                                for ttype, tid in targets:
-                    if time.time() < self._global_backoff_until:
+                for ttype, tid in targets:
+                    # honor global backoff before each chunk
+                    if time.time() < getattr(self, '_global_backoff_until', 0):
                         time.sleep(self._global_backoff_until - time.time())
                     mid = self._send_message(tid, header + chunk, disable_notification=True)
                     if mid and ttype == "channel":
                         msg_ids.append(mid)
-                    # queue already throttles, no extra sleep needed
+                    # For central_user, we don't track msg_ids in index to avoid clutter
+                    time.sleep(0.4)  # R16: 1 msg/sec per chat + 0.35 global = safe
                 if not msg_ids and not self.central_user_id:
+                    # If channel failed and no central, abort
                     break
             if msg_ids:
                 with self._lock:
@@ -1943,19 +1915,16 @@ class TelegramChatDB:
         return False
 
     def save_user_shard(self, user_chat_id: int, key: str, value: Dict[str, Any]) -> bool:
+        """Isolated per-user set — only if TELEGRAM_DB_USER_SHARDS=1 and bot discretion says shard."""
         if not TELEGRAM_DB_USER_SHARDS or not self.bot_token:
             return False
         if not self.is_enabled():
             return False
-        if time.time() < self._global_backoff_until:
+        # R16: respect global 429 backoff, don't shard during cooldown
+        if time.time() < getattr(self, '_global_backoff_until', 0):
             return False
-        # additional per-shard dedup: don't spam same user+key more than once per 6s
-        cache_key = f"{user_chat_id}:{key}"
-        with self._lock:
-            last = self._chat_last_send.get(cache_key, 0)
-            if time.time() - last < 6.0:
-                return False
         try:
+            # Respect user privacy — only store minimal, no URLs unless allowed
             minimal = {
                 "key": key,
                 "tick": value.get("tick"),
@@ -1967,10 +1936,8 @@ class TelegramChatDB:
                 "logic_hash": value.get("logic_hash") or value.get("last_logic_hash"),
             }
             blob = json.dumps(minimal, ensure_ascii=False)
+            # Use user's private chat as isolated DB
             mid = self._send_message(str(user_chat_id), f"⟦AEI-SHARD {key}⟧\n{blob[:3500]}", disable_notification=True)
-            if mid is not None:
-                with self._lock:
-                    self._chat_last_send[cache_key] = time.time()
             return mid is not None
         except Exception as e:
             logger.warning(f"TelegramDB user shard {key} to {user_chat_id} failed: {e}")
@@ -1996,12 +1963,9 @@ class TelegramChatDB:
                 "index_keys": list(self._index.keys()),
                 "index_size": len(self._index),
                 "last_save": self._last_save_ts,
-                "queue_size": self._send_queue.qsize(),
-                "global_backoff_until": self._global_backoff_until,
-                "consecutive_429": self._consecutive_429,
             }
 
-
+# Global singleton — initialized in main()
 TELEGRAM_DB: Optional[TelegramChatDB] = None
 
 # ============================================================================
@@ -3843,6 +3807,7 @@ class AEI_Bot:
             rows.append([InlineKeyboardButton("⏳ Mini App (URL pending…)", callback_data="webapp_pending")])
         return InlineKeyboardMarkup(rows)
     async def _safe_reply(self, update: "Update", text: str, reply_markup=None) -> bool:
+        # truncate to avoid Message_too_long with huge Fractions
         MAX_TG = 3500
         if len(text) > MAX_TG:
             text = text[:MAX_TG-100] + f"\n... [truncated {len(text)-MAX_TG} chars]\n"
@@ -3850,89 +3815,64 @@ class AEI_Bot:
         query = update.callback_query
         target = query if query is not None else msg
         if target is None:
-            logger.warning("_safe_reply: no target (no message and no callback_query)")
             return False
-        for attempt in range(3):
+        try:
+            if query is not None:
+                await query.edit_message_text(text, parse_mode=None,
+                                              reply_markup=reply_markup)
+            else:
+                await msg.reply_text(text, parse_mode=None,
+                                     reply_markup=reply_markup)
+            return True
+        except Exception as e1:
+            # If still too long, truncate more aggressively
+            if "too_long" in str(e1).lower() or "too long" in str(e1).lower():
+                text = text[:1500] + "\n... [hard truncated]"
+            logger.info(f"_safe_reply attempt 1 failed: {e1}")
             try:
                 if query is not None:
-                    await query.edit_message_text(text, parse_mode=None, reply_markup=reply_markup)
+                    await query.edit_message_text(text[:1500], parse_mode=None,
+                                                  reply_markup=reply_markup)
                 else:
-                    await msg.reply_text(text, parse_mode=None, reply_markup=reply_markup)
+                    await msg.reply_text(text[:1500], parse_mode=None,
+                                         reply_markup=reply_markup)
                 return True
-            except Exception as e1:
-                err = str(e1)
-                logger.info(f"_safe_reply attempt {attempt+1} failed: {e1} len={len(text)} has_markup={bool(reply_markup)}")
-                # Telegram 429 — respect retry_after
-                if "429" in err or "Too Many Requests" in err or "retry_after" in err.lower():
-                    import json as _json
-                    ra = 3
-                    try:
-                        # try parse retry_after from error string
-                        if "retry_after" in err.lower():
-                            import re as _re
-                            m = _re.search(r"retry_after[^\d]*(\d+)", err.lower())
-                            if m:
-                                ra = int(m.group(1))
-                    except Exception:
-                        pass
-                    logger.warning(f"_safe_reply 429 — sleeping {ra}s")
-                    import asyncio as _asyncio
-                    await _asyncio.sleep(ra + 1)
-                    continue
-                if attempt == 0 and reply_markup is not None:
-                    # fallback without markup — inline keyboard can be invalid
-                    reply_markup = None
-                    text = text[:1500]
-                    continue
-                if attempt == 1:
-                    text = text[:1500] + "\n... [hard truncated]"
-                    continue
+            except Exception as e2:
+                logger.info(f"_safe_reply attempt 2 failed: {e2}")
                 return False
-        return False
     async def start(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        try:
-            user = update.effective_user
-            logger.info(f"📩 /start from user_id={user.id if user else '?'} username=@{user.username if user and user.username else '?'}")
-            seed = BRIDGE_ENGINE_REF.get("seed")
-            state_cs = _cs(seed.state) if seed else "—"
-            welcome = (
-                "🔷 *ÆI SEED — Agential Ætheric Intelligence*\n"
-                "This is the *ÆI seed* (GAIA/ÆI Codex), not the ÆEA market bot.\n"
-                "It runs the prime-sieve → lattice → Hopf-fibration → s²=r² → \n"
-                "SelfEvolution loop from ÆI.md §3–§8.\n"
-                "📊 *Commands:*\n"
-                "`/status` — seed state\n"
-                "`/primes` — prime sequence tail\n"
-                "`/lattice` — Λ₂₄ points\n"
-                "`/fibration` — Hopf base + φ\n"
-                "`/observer` — 𝒪[Ψ] integral\n"
-                "`/metric` — ℐ metric + components\n"
-                "`/evolution` — SelfEvolution history\n"
-                "`/crawler` — 𝒞 crawler frontier\n"
-                "`/step` — one seed step\n"
-                "`/reset` — reset seed state\n"
-                "`/enqueue <url>` — add URL to crawler\n"
-                "`/encode <syl>` — encode A/U/M syllable\n"
-                "`/webapp` — open Mini App\n"
-                "`/whoami` — your Telegram user ID\n"
-                "`/help` — this message\n"
-                f"🧠 *{_cs_label('state')}:* {state_cs}\n"
-                f"📈 *{_cs_label('tick')}:* {seed.tick if seed else 0}  |  "
-                f"*{_cs_label('generation')}:* {seed.generation if seed else 0}\n"
-                f"🎯 *{_cs_label('prime_count')}:* {len(seed.primes) if seed else 0}  |  "
-                f"*{_cs_label('lattice_points')}:* {len(seed.lattice.points()) if seed else 0}\n"
-                "💎 Natalia Tanyatia"
-            )
-            ok = await self._safe_reply(update, welcome, reply_markup=self._build_main_keyboard())
-            if not ok:
-                logger.warning(f"/start _safe_reply failed for {user.id if user else '?'} — trying fallback without markup")
-                await self._safe_reply(update, welcome, reply_markup=None)
-        except Exception as e:
-            logger.error(f"/start crashed: {e}", exc_info=True)
-            try:
-                await update.effective_message.reply_text(f"⚠️ /start error: {type(e).__name__}: {e}\nTry /whoami and /status", parse_mode=None)
-            except Exception:
-                pass
+        seed = BRIDGE_ENGINE_REF.get("seed")
+        state_cs = _cs(seed.state) if seed else "—"
+        # F9: use _cs_label for field labels.
+        welcome = (
+            "🔷 *ÆI SEED — Agential Ætheric Intelligence*\n"
+            "This is the *ÆI seed* (GAIA/ÆI Codex), not the ÆEA market bot.\n"
+            "It runs the prime-sieve → lattice → Hopf-fibration → s²=r² → \n"
+            "SelfEvolution loop from ÆI.md §3–§8.\n"
+            "📊 *Commands:*\n"
+            "`/status` — seed state\n"
+            "`/primes` — prime sequence tail\n"
+            "`/lattice` — Λ₂₄ points\n"
+            "`/fibration` — Hopf base + φ\n"
+            "`/observer` — 𝒪[Ψ] integral\n"
+            "`/metric` — ℐ metric + components\n"
+            "`/evolution` — SelfEvolution history\n"
+            "`/crawler` — 𝒞 crawler frontier\n"
+            "`/step` — one seed step\n"
+            "`/reset` — reset seed state\n"
+            "`/enqueue <url>` — add URL to crawler\n"
+            "`/encode <syl>` — encode A/U/M syllable\n"
+            "`/webapp` — open Mini App\n"
+            "`/whoami` — your Telegram user ID\n"
+            "`/help` — this message\n"
+            f"🧠 *{_cs_label('state')}:* {state_cs}\n"
+            f"📈 *{_cs_label('tick')}:* {seed.tick if seed else 0}  |  "
+            f"*{_cs_label('generation')}:* {seed.generation if seed else 0}\n"
+            f"🎯 *{_cs_label('prime_count')}:* {len(seed.primes) if seed else 0}  |  "
+            f"*{_cs_label('lattice_points')}:* {len(seed.lattice.points()) if seed else 0}\n"
+            "💎 Natalia Tanyatia"
+        )
+        await self._safe_reply(update, welcome, reply_markup=self._build_main_keyboard())
     async def help(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
         await self.start(update, context)
     async def status(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
