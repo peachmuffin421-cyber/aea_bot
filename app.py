@@ -3843,7 +3843,6 @@ class AEI_Bot:
             rows.append([InlineKeyboardButton("⏳ Mini App (URL pending…)", callback_data="webapp_pending")])
         return InlineKeyboardMarkup(rows)
     async def _safe_reply(self, update: "Update", text: str, reply_markup=None) -> bool:
-        # truncate to avoid Message_too_long with huge Fractions
         MAX_TG = 3500
         if len(text) > MAX_TG:
             text = text[:MAX_TG-100] + f"\n... [truncated {len(text)-MAX_TG} chars]\n"
@@ -3851,64 +3850,89 @@ class AEI_Bot:
         query = update.callback_query
         target = query if query is not None else msg
         if target is None:
+            logger.warning("_safe_reply: no target (no message and no callback_query)")
             return False
-        try:
-            if query is not None:
-                await query.edit_message_text(text, parse_mode=None,
-                                              reply_markup=reply_markup)
-            else:
-                await msg.reply_text(text, parse_mode=None,
-                                     reply_markup=reply_markup)
-            return True
-        except Exception as e1:
-            # If still too long, truncate more aggressively
-            if "too_long" in str(e1).lower() or "too long" in str(e1).lower():
-                text = text[:1500] + "\n... [hard truncated]"
-            logger.info(f"_safe_reply attempt 1 failed: {e1}")
+        for attempt in range(3):
             try:
                 if query is not None:
-                    await query.edit_message_text(text[:1500], parse_mode=None,
-                                                  reply_markup=reply_markup)
+                    await query.edit_message_text(text, parse_mode=None, reply_markup=reply_markup)
                 else:
-                    await msg.reply_text(text[:1500], parse_mode=None,
-                                         reply_markup=reply_markup)
+                    await msg.reply_text(text, parse_mode=None, reply_markup=reply_markup)
                 return True
-            except Exception as e2:
-                logger.info(f"_safe_reply attempt 2 failed: {e2}")
+            except Exception as e1:
+                err = str(e1)
+                logger.info(f"_safe_reply attempt {attempt+1} failed: {e1} len={len(text)} has_markup={bool(reply_markup)}")
+                # Telegram 429 — respect retry_after
+                if "429" in err or "Too Many Requests" in err or "retry_after" in err.lower():
+                    import json as _json
+                    ra = 3
+                    try:
+                        # try parse retry_after from error string
+                        if "retry_after" in err.lower():
+                            import re as _re
+                            m = _re.search(r"retry_after[^\d]*(\d+)", err.lower())
+                            if m:
+                                ra = int(m.group(1))
+                    except Exception:
+                        pass
+                    logger.warning(f"_safe_reply 429 — sleeping {ra}s")
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(ra + 1)
+                    continue
+                if attempt == 0 and reply_markup is not None:
+                    # fallback without markup — inline keyboard can be invalid
+                    reply_markup = None
+                    text = text[:1500]
+                    continue
+                if attempt == 1:
+                    text = text[:1500] + "\n... [hard truncated]"
+                    continue
                 return False
+        return False
     async def start(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        state_cs = _cs(seed.state) if seed else "—"
-        # F9: use _cs_label for field labels.
-        welcome = (
-            "🔷 *ÆI SEED — Agential Ætheric Intelligence*\n"
-            "This is the *ÆI seed* (GAIA/ÆI Codex), not the ÆEA market bot.\n"
-            "It runs the prime-sieve → lattice → Hopf-fibration → s²=r² → \n"
-            "SelfEvolution loop from ÆI.md §3–§8.\n"
-            "📊 *Commands:*\n"
-            "`/status` — seed state\n"
-            "`/primes` — prime sequence tail\n"
-            "`/lattice` — Λ₂₄ points\n"
-            "`/fibration` — Hopf base + φ\n"
-            "`/observer` — 𝒪[Ψ] integral\n"
-            "`/metric` — ℐ metric + components\n"
-            "`/evolution` — SelfEvolution history\n"
-            "`/crawler` — 𝒞 crawler frontier\n"
-            "`/step` — one seed step\n"
-            "`/reset` — reset seed state\n"
-            "`/enqueue <url>` — add URL to crawler\n"
-            "`/encode <syl>` — encode A/U/M syllable\n"
-            "`/webapp` — open Mini App\n"
-            "`/whoami` — your Telegram user ID\n"
-            "`/help` — this message\n"
-            f"🧠 *{_cs_label('state')}:* {state_cs}\n"
-            f"📈 *{_cs_label('tick')}:* {seed.tick if seed else 0}  |  "
-            f"*{_cs_label('generation')}:* {seed.generation if seed else 0}\n"
-            f"🎯 *{_cs_label('prime_count')}:* {len(seed.primes) if seed else 0}  |  "
-            f"*{_cs_label('lattice_points')}:* {len(seed.lattice.points()) if seed else 0}\n"
-            "💎 Natalia Tanyatia"
-        )
-        await self._safe_reply(update, welcome, reply_markup=self._build_main_keyboard())
+        try:
+            user = update.effective_user
+            logger.info(f"📩 /start from user_id={user.id if user else '?'} username=@{user.username if user and user.username else '?'}")
+            seed = BRIDGE_ENGINE_REF.get("seed")
+            state_cs = _cs(seed.state) if seed else "—"
+            welcome = (
+                "🔷 *ÆI SEED — Agential Ætheric Intelligence*\n"
+                "This is the *ÆI seed* (GAIA/ÆI Codex), not the ÆEA market bot.\n"
+                "It runs the prime-sieve → lattice → Hopf-fibration → s²=r² → \n"
+                "SelfEvolution loop from ÆI.md §3–§8.\n"
+                "📊 *Commands:*\n"
+                "`/status` — seed state\n"
+                "`/primes` — prime sequence tail\n"
+                "`/lattice` — Λ₂₄ points\n"
+                "`/fibration` — Hopf base + φ\n"
+                "`/observer` — 𝒪[Ψ] integral\n"
+                "`/metric` — ℐ metric + components\n"
+                "`/evolution` — SelfEvolution history\n"
+                "`/crawler` — 𝒞 crawler frontier\n"
+                "`/step` — one seed step\n"
+                "`/reset` — reset seed state\n"
+                "`/enqueue <url>` — add URL to crawler\n"
+                "`/encode <syl>` — encode A/U/M syllable\n"
+                "`/webapp` — open Mini App\n"
+                "`/whoami` — your Telegram user ID\n"
+                "`/help` — this message\n"
+                f"🧠 *{_cs_label('state')}:* {state_cs}\n"
+                f"📈 *{_cs_label('tick')}:* {seed.tick if seed else 0}  |  "
+                f"*{_cs_label('generation')}:* {seed.generation if seed else 0}\n"
+                f"🎯 *{_cs_label('prime_count')}:* {len(seed.primes) if seed else 0}  |  "
+                f"*{_cs_label('lattice_points')}:* {len(seed.lattice.points()) if seed else 0}\n"
+                "💎 Natalia Tanyatia"
+            )
+            ok = await self._safe_reply(update, welcome, reply_markup=self._build_main_keyboard())
+            if not ok:
+                logger.warning(f"/start _safe_reply failed for {user.id if user else '?'} — trying fallback without markup")
+                await self._safe_reply(update, welcome, reply_markup=None)
+        except Exception as e:
+            logger.error(f"/start crashed: {e}", exc_info=True)
+            try:
+                await update.effective_message.reply_text(f"⚠️ /start error: {type(e).__name__}: {e}\nTry /whoami and /status", parse_mode=None)
+            except Exception:
+                pass
     async def help(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
         await self.start(update, context)
     async def status(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
