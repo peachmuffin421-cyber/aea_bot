@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -730,13 +731,19 @@ SYMBOL: str = os.getenv("SYMBOL", "BTC-USD").strip() or "BTC-USD"
 INTERVAL: str = "1m"
 UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
 # ============================================================================
-# PRIVATE BOT GATE — HARD USER-ID ALLOWLIST
+# PRIVATE BOT GATE — ENV-CONTROLLED ALLOWLIST (Heroku var: ALLOWED_IDS)
 # ============================================================================
-# Only the user IDs in this set may interact with the bot (Telegram
+# Only the user IDs in ALLOWED_IDS may interact with the bot (Telegram
 # commands, callback buttons, Mini App initData, and every non-/health
-# bridge endpoint). Leave it as a hardcoded set for a single-owner
-# deployment. To add a second owner later, add another integer to the
-# set. An empty set means "open bot" (not recommended in production).
+# bridge endpoint).
+#
+# Heroku control:
+#   heroku config:set ALLOWED_IDS="8769538718,123456789" -a your-app-name  -> private
+#   heroku config:set ALLOWED_IDS="" -a your-app-name                      -> open to all
+#   heroku config:unset ALLOWED_IDS -a your-app-name                       -> open to all (same as blank)
+#
+# Format: comma, space, or semicolon separated ints. Blank/unset = open bot.
+# Legacy env var ALLOWED_USER_IDS is still read as fallback.
 #
 # This gate is enforced in three places:
 #   1. _track_inbound_message() — every Telegram update passes through
@@ -746,16 +753,46 @@ UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
 #      disallowed initData user receives HTTP 401.
 #   3. _require_auth() on the /handshake path — a disallowed user
 #      receives HTTP 403 instead of a session binding.
-#
-# The gate is closed by default: if ALLOWED_USER_IDS is empty, the bot
-# is OPEN (matches the pre-patch behavior). To keep the bot private,
-# leave at least one ID in the set.
 # ============================================================================
-ALLOWED_USER_IDS: set = {8769538718}
+def _load_allowed_ids_from_env() -> set:
+    # Primary var requested: ALLOWED_IDS
+    raw = os.getenv("ALLOWED_IDS", "")
+    # Fallback: support ALLOWED_USER_IDS as env var for legacy deploys
+    if not raw.strip():
+        raw = os.getenv("ALLOWED_USER_IDS", "")
+    raw = raw.strip()
+    if not raw:
+        # Blank / unset = open bot to all (what you asked for)
+        return set()
+    ids: set = set()
+    # Split on comma, semicolon, or whitespace
+    for part in _re_bridge.split(r'[\s,;]+', raw):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.add(int(part))
+        except ValueError:
+            # Ignore non-numeric junk
+            continue
+    return ids
+
+ALLOWED_USER_IDS: set = _load_allowed_ids_from_env()
+
+# Optional: log what mode we are in at startup (visible in heroku logs --tail)
+# This does not log the IDs themselves if you want more privacy, just count.
+# Comment out if you prefer silent.
+try:
+    if ALLOWED_USER_IDS:
+        logging.getLogger(__name__).info(f"🔐 Private bot gate ACTIVE — {len(ALLOWED_USER_IDS)} ID(s) allowed (from ALLOWED_IDS env)")
+    else:
+        logging.getLogger(__name__).info("🔓 Private bot gate OPEN — ALLOWED_IDS blank/unset, bot open to all")
+except Exception:
+    pass
 
 def _is_allowed_user(user_id) -> bool:
     """Return True if user_id is allowed to interact with the bot.
-    Empty ALLOWED_USER_IDS means the gate is open (legacy behavior)."""
+    Empty ALLOWED_USER_IDS means the gate is open (legacy behavior + blank ALLOWED_IDS)."""
     if not ALLOWED_USER_IDS:
         return True
     try:
