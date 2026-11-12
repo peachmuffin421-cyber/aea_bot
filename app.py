@@ -1,279 +1,116 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ÆI SEED TWA — AGENTIAL ÆTHERIC INTELLIGENCE
-Heroku web dyno (bind $PORT) + Local Bridge + Telegram Bot + Crawler Relay Client
-Faithful Unabridged Port of ÆI.md §3–§8 (GAIA Seed Loop)
-Platform: Heroku web dyno (inbound $PORT) + Telegram Bot + Bridge (served on $PORT) + Cloudflare Worker (worker.js).
-Version: Final Ed.40 ultimate H12fix Telegram-DB + R15-safe-frac (Audit-Patched: F1–F9, P1-13, R12-webdyno-no-subprocess-perf, Relay-hardened, Starvation-guard, Health-CS, Epsilon-12, H12-light-cache, Gamma-symbolic).
+ÆEA TELEGRAM BOT — HEROKU DEPLOYMENT + LOCAL WEB GUI BRIDGE
+Faithful Unabridged Port of ÆEA.mq4
+Data Feed: Cloudflare Worker Relay (Kraken / Stooq / Binance / CoinGecko / Yahoo upstreams)
+Platform: Heroku + Telegram Bot + Local HTTPS Bridge (index.html)
+Author: Natalia Tanyatia
+Version: vFinal (Audit-Patched Edition 4 — Dime/Count/Toll-Patched + Alert-Patched + Commission-Frozen)
+
+Audit-Patched Edition 4 is an additive-only release on top of the
+Audit-Patched Edition 3. It applies the D-1 through D-4 patches from the
+Dime/Count/Toll Audit, the C-A1 through C-A3 patches from the Missing-
+Alert Audit, and the D-11 commission-freeze patch from the Commission
+Audit. The patches are:
+
+D-1 (critical). _dispatch_diamond_subblock, _dispatch_ruby_subblock,
+_dispatch_hawk_subblock, and _dispatch_dove_subblock now perform the
+FF's `dime = mem;` pre-stamp as their first statement. In Edition 3,
+the subblocks wrote st.dime and st.mem together on every branch and
+never read the pre-stamp. The FF's `else if((mem==1)||(dime==1))` and
+`else if((mem==0)||(dime==0))` branches read the pre-stamp. The port
+now preserves that read. The stale `dime` that Edition 3 carried from
+a previous tick's _on_gaurd(0) is no longer read.
+
+D-2 (critical). _execute_kronecker_block no longer short-circuits
+after the toll block. In Edition 3, `if st.toll == 1 ...: return`
+skipped the count block whenever the toll block fired. The FF's toll
+block and count block are independent `if` statements in the same
+tick; both fire if both counters are 1. The port now matches the FF:
+toll-buy, toll-sell, count-buy, count-sell, all four evaluated in
+order, no early return.
+
+D-3 (critical). _execute_kronecker_block no longer resets st.toll or
+st.count in the caller. The FF's subblock bodies reset them; the
+helpers own the reset. This matches the FF's `toll = 0; tally = "";
+count = 0; tally = "";` placement inside each subblock.
+
+D-4 (critical). The `st.signal = Decimal('0.0'); st.toll = 0; st.tally
+= ""; st.GF = True; st.signature = True` reset is moved from the
+caller into the end of each helper. The FF's reset is on the
+`signal = 0; toll = 0; tally = ""; GF = true; signature = true;` line
+at the end of each subblock, and the subblock body reads `signal` at
+its pre-dispatch value during the branch chain. The port now matches.
+
+C-A1 (critical). Every FF Alert(...) site that reaches the user is
+now emitted as a UI toast AND a Telegram push. The Long/Short alerts,
+the Sin./Sine. edge-case alerts, and the Diamond/Ruby/Hawk/Dove/
+Whisky/Wine/Watter/Blood body alerts are all wired. The new alert
+kinds are: "long", "short", "sin", "sine". The header alerts
+(Diamond/Ruby) fire at the top of each toll/count subblock, before
+the branch chain, matching the FF's placement.
+
+C-A2 (critical). The _format_push_message function now handles the
+"alert" kind with sub-kinds long, short, sin, sine. The
+_telegram_push path dispatches them. The PUSH_ON_SIGNAL gate is
+reused for these alerts (they are signal-class, not execution-class).
+
+C-A3 (minor). The index.html toast renderer (Segment 3) gains the
+"alert" kind. This patch is in index.html, not app.py.
+
+D-11 (critical). The Commission Audit found that _S() and the signal
+trigger blocks in _execute_kronecker_block used the dynamic
+self._com_price() instead of the frozen self._com_price_frozen. The
+FF computes `com = Commssion * Point` once at OnInit and reuses it.
+The port's dynamic _com_price() could change mid-session if
+_point_size changed (e.g. on symbol change). The port now uses the
+frozen value in _S() and in _execute_kronecker_block, and re-freezes
+on settings apply. _com_price() is preserved for the probe/diagnostic
+path (informational only).
+
+Every FF-invariant line, every Print() string, every Alert() emoji,
+every state transition, every send-path retry, every projection/
+execution gating rule, and every CS translation already present in
+the prior editions is preserved verbatim. No internal variable name,
+no function name, no endpoint path, and no env-var name has been
+altered.
 """
-__version__ = "final-ed40-ultimate-safe-frac-r15"
-import sys
-try:
-    # Python 3.11+ security limit - AEI uses exact Fractions with >4300 digit numerators
-    # Set to 1M digits to allow full symbolic trace
-    if hasattr(sys, "set_int_max_str_digits"):
-        sys.set_int_max_str_digits(1000000)
-        print(f"int_max_str_digits set to 1000000 ", flush=True)
-except Exception as _e:
-    print(f"set_int_max_str_digits failed {_e}", flush=True)
-    pass
+
+__version__ = "final"
+
 import asyncio
-import concurrent.futures
-import concurrent.futures.thread
 import hashlib
 import hmac
 import json
 import math
 import os
-import gc
 import queue
 import sys
 import ssl
 import logging
+import subprocess
 import threading
 import time
 import re as _re_bridge
-import sqlite3
 import urllib.parse
 import urllib.request
 import urllib.error
-import weakref
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qsl
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple, Any, Protocol, runtime_checkable
+from typing import List, Dict, Optional, Tuple, Any
 from fractions import Fraction as PyFraction
 from decimal import Decimal, getcontext
-getcontext().prec = 50
-# ============================================================================
-# EXACT FRACTION WRAPPER
-# ============================================================================
-class Fraction:
-    """Exact rational arithmetic. Lifts Decimals and ints to PyFraction.
-    Every seed state transition uses Fraction or PyFraction directly. No
-    float64 ever enters the seed's symbolic layer; the crawler relay's
-    floats are lifted at the boundary by _dec_to_frac_exact()."""
-    __slots__ = ('_f',)
-    def __init__(self, num=0, den=1):
-        if isinstance(num, Fraction):
-            self._f = num._f
-        elif isinstance(num, PyFraction):
-            self._f = num
-        elif isinstance(num, int) and isinstance(den, int):
-            if den == 0:
-                raise ZeroDivisionError("Fraction denominator cannot be zero")
-            self._f = PyFraction(num, den)
-        else:
-            try:
-                self._f = PyFraction(str(num))
-            except Exception:
-                self._f = PyFraction(0)
-    @staticmethod
-    def _wrap(x):
-        if isinstance(x, Fraction):
-            return x
-        return Fraction(x)
-    @staticmethod
-    def from_decimal_string(s):
-        s = str(s).strip()
-        if 'E' in s or 'e' in s:
-            d = Decimal(s)
-            sign, digits, exp = d.as_tuple()
-            if not isinstance(exp, int):
-                raise ValueError(f"unsupported Decimal exponent: {exp!r}")
-            num = int(''.join(str(x) for x in digits)) * (-1 if sign else 1)
-            den = 10 ** (-exp) if exp < 0 else 1
-            if exp >= 0:
-                num = num * (10 ** exp)
-                den = 1
-            return Fraction(num, den)
-        return Fraction.from_string(s)
-    @staticmethod
-    def from_string(s):
-        s = str(s).strip()
-        if '/' in s:
-            parts = s.split('/')
-            return Fraction(int(parts[0]), int(parts[1]))
-        if '.' in s:
-            sign = -1 if s.startswith('-') else 1
-            s_abs = s.lstrip('-')
-            int_part, frac_part = s_abs.split('.')
-            scale = 10 ** len(frac_part)
-            num = int(int_part + frac_part) * sign
-            return Fraction(num, scale)
-        return Fraction(int(s), 1)
-    @staticmethod
-    def zero():
-        return Fraction(0, 1)
-    @staticmethod
-    def one():
-        return Fraction(1, 1)
-    def num(self):
-        return self._f.numerator
-    def den(self):
-        return self._f.denominator
-    def is_zero(self):
-        return self._f.numerator == 0
-    def is_integer(self):
-        return self._f.denominator == 1
-    def sign(self):
-        n = self._f.numerator
-        return (n > 0) - (n < 0)
-    def abs(self):
-        return Fraction(abs(self._f.numerator), self._f.denominator)
-    def neg(self):
-        return Fraction(-self._f.numerator, self._f.denominator)
-    def __add__(self, other):
-        o = Fraction._wrap(other)
-        return Fraction(self._f + o._f)
-    def __radd__(self, other):
-        return self.__add__(other)
-    def __sub__(self, other):
-        o = Fraction._wrap(other)
-        return Fraction(self._f - o._f)
-    def __rsub__(self, other):
-        o = Fraction._wrap(other)
-        return Fraction(o._f - self._f)
-    def __mul__(self, other):
-        o = Fraction._wrap(other)
-        return Fraction(self._f * o._f)
-    def __rmul__(self, other):
-        return self.__mul__(other)
-    def __truediv__(self, other):
-        o = Fraction._wrap(other)
-        if o._f.numerator == 0:
-            raise ZeroDivisionError("Fraction division by zero")
-        return Fraction(self._f / o._f)
-    def __rtruediv__(self, other):
-        o = Fraction._wrap(other)
-        if self._f.numerator == 0:
-            raise ZeroDivisionError("Fraction division by zero")
-        return Fraction(o._f / self._f)
-    def __neg__(self):
-        return Fraction(-self._f.numerator, self._f.denominator)
-    def __pos__(self):
-        return self
-    def __eq__(self, other):
-        try:
-            o = Fraction._wrap(other)
-            return self._f == o._f
-        except Exception:
-            return False
-    def __lt__(self, other):
-        o = Fraction._wrap(other)
-        return self._f < o._f
-    def __le__(self, other):
-        o = Fraction._wrap(other)
-        return self._f <= o._f
-    def __gt__(self, other):
-        o = Fraction._wrap(other)
-        return self._f > o._f
-    def __ge__(self, other):
-        o = Fraction._wrap(other)
-        return self._f >= o._f
-    def __hash__(self):
-        return hash(self._f)
-    def to_decimal(self) -> Decimal:
-        return Decimal(self._f.numerator) / Decimal(self._f.denominator)
-    def __str__(self):
-        # safe str that avoids 4300-digit limit blowup in logs
-        try:
-            n = self._f.numerator
-            d = self._f.denominator
-            # If huge, truncate for display
-            ns = str(n)
-            if len(ns) > 1000:
-                return f"{str(n)[:20]}...{str(n)[-20:]}/{d} (~{len(ns)} digits)"
-            if d == 1:
-                return ns
-            return f"{n}/{d}"
-        except ValueError as e:
-            if "Exceeds the limit" in str(e):
-                return f"<Fraction {len(str(self._f.numerator)) if hasattr(self._f.numerator, 'bit_length') else '?'} digits>"
-            return "<Fraction error>"
-        except Exception:
-            return f"{self._f}"
 
-    def to_float(self) -> float:  # display only, never used in step() - R14 memfix: guard huge ints
-        try:
-            # If numerator/denominator have > 308 decimal digits, float() will overflow to inf
-            # Return inf-guarded 0.0 to avoid MemoryError
-            if len(str(abs(self._f.numerator))) > 300 or len(str(self._f.denominator)) > 300:
-                return 0.0
-            return float(self._f.numerator) / float(self._f.denominator)
-        except Exception:
-            return 0.0
-    def sqrt(self, iterations: int = 8) -> 'Fraction':
-        """Newton–Raphson exact-rational square root approximation.
-        Each iteration is exact. The result is a Fraction, never a float.
-        The FG allows sqrt at the I/O boundary only; the seed's state
-        keeps this Fraction."""
-        if self._f.numerator < 0:
-            raise ValueError("sqrt of negative fraction")
-        if self._f.numerator == 0:
-            return Fraction.zero()
-        ns = int(math.isqrt(self._f.numerator))
-        ds = int(math.isqrt(self._f.denominator))
-        if ns * ns == self._f.numerator and ds * ds == self._f.denominator:
-            return Fraction(ns, ds)
-        two = PyFraction(2, 1)
-        # exact rational round half-up, no float
-        _num = self._f.numerator
-        _den = self._f.denominator
-        _q = (_num + _den // 2) // _den if _num >= 0 else -((-_num + _den // 2) // _den)
-        x = PyFraction(max(1, _q), 1)
-        for _ in range(iterations):
-            x = (x + self._f / x) / two
-        return Fraction(x)
-    def __str__(self):
-        if self._f.denominator == 1:
-            return str(self._f.numerator)
-        return f"{self._f.numerator}/{self._f.denominator}"
-    def __repr__(self):
-        return f"Fraction({self._f.numerator}/{self._f.denominator})"
+getcontext().prec = 50
+
+ARC_COHERENCE_TOLERANCE = 1e-6
+
 # ============================================================================
-# DECIMAL-TO-FRACTION LIFT
-# ============================================================================
-def _dec_to_frac_exact(d: Decimal) -> PyFraction:
-    """Lift a Decimal to an exact PyFraction via its digit tuple.
-    No float64 round-trip. Used at the crawler-relay boundary and at
-    module load for π, so no transcendental enters the seed as a float."""
-    if not isinstance(d, Decimal):
-        d = Decimal(str(d))
-    if d.is_zero():
-        return PyFraction(0, 1)
-    sign, digits, exp = d.as_tuple()
-    if not isinstance(exp, int):
-        return PyFraction(0, 1)
-    int_val = 0
-    for digit in digits:
-        int_val = int_val * 10 + digit
-    if sign:
-        int_val = -int_val
-    if exp < 0:
-        return PyFraction(int_val, 10 ** (-exp))
-    return PyFraction(int_val * (10 ** exp), 1)
-def _hash_to_fraction(hex_hash: str) -> PyFraction:
-    """Lift a hex hash (SHA-256, SHA-1, MD5) to an exact PyFraction by
-    interpreting the first 32 hex chars as a base-16 integer and dividing
-    by 16^32. This is the boundary transform for the crawler: a document's
-    content hash becomes a deterministic rational seed input.
-    F3: an all-zero hash lifts to 1/16^32, not 0, so the 0/1 sentinel
-    unambiguously means "no record." The SentryWorker relies on this."""
-    h = (hex_hash or "").strip().lower()
-    h = h[:32].ljust(32, "0")
-    try:
-        int_val = int(h, 16)
-    except (ValueError, TypeError):
-        int_val = 0
-    if int_val == 0:
-        return PyFraction(1, 16 ** 32)
-    return PyFraction(int_val, 16 ** 32)
-# ============================================================================
-# SYMBOLIC π
+# D-RES-10: SYMBOLIC π DERIVATION
 # ============================================================================
 def _compute_pi_decimal() -> Decimal:
     _saved_prec = getcontext().prec
@@ -301,985 +138,1069 @@ def _compute_pi_decimal() -> Decimal:
     finally:
         getcontext().prec = _saved_prec
     return pi_val
-# F2: derive _PI_FRAC from _compute_pi_decimal(), not from a 15-digit literal.
+
 _PI_D: Decimal = _compute_pi_decimal()
-_PI_FRAC: PyFraction = _dec_to_frac_exact(_PI_D)
 _TWO_PI_D: Decimal = _PI_D * Decimal(2)
-_TWO_PI_FRAC: PyFraction = _PI_FRAC * PyFraction(2, 1)
-# F2b: derive _EULER_GAMMA_FRAC from Decimal high-precision string, lifted via _dec_to_frac_exact, consistent with _PI_FRAC methodology
-_EULER_GAMMA_D: Decimal = Decimal("0.57721566490153286060651209008240243104215933593992")
-_EULER_GAMMA_FRAC: PyFraction = _dec_to_frac_exact(_EULER_GAMMA_D)
-# ============================================================================
-# SYMBOLIC ARITHMETIC PRIMITIVES
-# ============================================================================
-def _rational_cos(x) -> PyFraction:
-    """15-digit π convergent + exact-rational Taylor series.
-    Used by the Hopf-fibration projection and the Natalia perturbation
-    summation. Argument reduced modulo 2π exactly."""
-    if isinstance(x, PyFraction):
-        x_frac = x
-    elif isinstance(x, Decimal):
-        if x == Decimal('0.0'):
-            return PyFraction(1, 1)
-        x_frac = _dec_to_frac_exact(x)
-    elif isinstance(x, int):
-        x_frac = PyFraction(x, 1)
-    else:
-        x_frac = PyFraction(str(x))
-    two_pi_frac = _TWO_PI_FRAC
-    n_periods = int(x_frac / two_pi_frac)
-    x_reduced = x_frac - two_pi_frac * n_periods
-    pi_frac = _PI_FRAC
-    if x_reduced > pi_frac:
-        x_reduced = x_reduced - two_pi_frac
-    elif x_reduced < -pi_frac:
-        x_reduced = x_reduced + two_pi_frac
-    x2 = x_reduced * x_reduced
-    term = PyFraction(1, 1)
-    result = PyFraction(1, 1)
-    sign = -1
-    for n in range(1, 20):
-        denom = PyFraction((2 * n - 1) * (2 * n), 1)
-        term = term * x2 / denom
-        result = result + PyFraction(sign, 1) * term
-        sign = -sign
-        if term == PyFraction(0, 1):
-            break
-        # R14 memfix + Ed38: break if digits blow up (prevents H12)
-        try:
-            if len(str(abs(result.numerator))) > 800 or len(str(abs(result.denominator))) > 800:
-                break
-        except Exception:
-            pass
-        # also break if term becomes too small to affect result (epsilon guard)
-        try:
-            if term == PyFraction(0, 1):
-                break
-        except Exception:
-            pass
-    return result
-def _rational_sin(x) -> PyFraction:
-    """15-digit π convergent + exact-rational Taylor series."""
-    if isinstance(x, PyFraction):
-        x_frac = x
-    elif isinstance(x, Decimal):
-        if x == Decimal('0.0'):
-            return PyFraction(0, 1)
-        x_frac = _dec_to_frac_exact(x)
-    elif isinstance(x, int):
-        x_frac = PyFraction(x, 1)
-    else:
-        x_frac = PyFraction(str(x))
-    two_pi_frac = _TWO_PI_FRAC
-    n_periods = int(x_frac / two_pi_frac)
-    x_reduced = x_frac - two_pi_frac * n_periods
-    pi_frac = _PI_FRAC
-    if x_reduced > pi_frac:
-        x_reduced = x_reduced - two_pi_frac
-    elif x_reduced < -pi_frac:
-        x_reduced = x_reduced + two_pi_frac
-    x2 = x_reduced * x_reduced
-    term = x_reduced
-    result = x_reduced
-    sign = -1
-    for n in range(1, 20):
-        denom = PyFraction((2 * n) * (2 * n + 1), 1)
-        term = term * x2 / denom
-        result = result + PyFraction(sign, 1) * term
-        sign = -sign
-        if term == PyFraction(0, 1):
-            break
-    return result
-_EPSILON_BASE: PyFraction = PyFraction(1, 10 ** 12)
-_EXP_EPSILON: PyFraction = _EPSILON_BASE
-_LOG_EPSILON: PyFraction = _EPSILON_BASE
-_LI_EPSILON: PyFraction = _EPSILON_BASE
-def _symbolic_log(x: Fraction, max_terms: int = 32) -> Fraction:
-    """Exact-rational natural log via atanh series with dynamic
-    truncation. The series terminates when the term magnitude drops
-    below _LOG_EPSILON. Returns Fraction."""
-    if x <= Fraction.zero():
-        raise ValueError("SymbolicLog: input must be positive")
-    if x == Fraction.one():
-        return Fraction.zero()
-    xf = x._f
-    u = (xf - 1) / (xf + 1)
-    u_sq = u * u
-    result = PyFraction(0, 1)
-    term = u
-    for k in range(max_terms):
-        contribution = term / PyFraction(2 * k + 1, 1)
-        result = result + contribution
-        if abs(contribution) < _LOG_EPSILON:
-            break
-        term = term * u_sq
-    return Fraction(result * PyFraction(2, 1))
-def _symbolic_exp(x: Fraction, max_terms: int = 32) -> Fraction:
-    """Exact-rational exp via Taylor series with dynamic truncation.
-    The series terminates when the term magnitude drops below
-    _EXP_EPSILON. Returns Fraction. R12-perf: early exit for large negative x -> 0."""
-    # Fast path: exp(-12) ~ 6e-6, exp(-20) ~ 2e-9, below epsilon -> 0
-    try:
-        if x._f < PyFraction(-12, 1):
-            return Fraction.zero()
-        if x._f > PyFraction(12, 1):
-            # For large positive, cap to avoid blowup; in practice we only call with negative ratio_sq
-            # Return a large sentinel as Fraction but avoid huge series
-            if x._f > PyFraction(20, 1):
-                # exp(20) is ~4.8e8, still representable as big int but heavy; cap iterations
-                max_terms = min(max_terms, 40)
-    except Exception:
-        pass
-    # R14 memfix: if x has huge numerator/denominator digits, truncate early to avoid big-int blowup
-    try:
-        if len(str(abs(x._f.numerator))) > 600 or len(str(abs(x._f.denominator))) > 600:
-            # Return 0 for large negative, 1 for large positive to keep exactness bounded
-            return Fraction.zero() if x._f < 0 else Fraction.one()
-    except Exception:
-        pass
-    result = Fraction.one()
-    term = Fraction.one()
-    for k in range(1, max_terms + 1):
-        term = term * (x / Fraction(k))
-        result = result + term
-        # R14 memfix: break if intermediate digits explode
-        try:
-            if len(str(abs(result._f.numerator))) > 800:
-                break
-        except Exception:
-            pass
-        if term.abs() < Fraction(_EXP_EPSILON.numerator, _EXP_EPSILON.denominator):
-            break
-    return result
-def _symbolic_log_integral_approx(x: Fraction, max_terms: int = 12) -> Fraction:
-    """Exact-rational approximation of the logarithmic integral Li(x).
-    Li(x) = ∫₂ˣ dt / log(t). We use the Ramanujan series:
-    Li(x) ≈ γ + log(log(x)) + Σ_{n=1}^∞ (log x)^n / (n · n!)
-    where γ ≈ 0.5772156649... is the Euler–Mascheroni constant. The
-    series converges for all x > 1 and is the standard numerical
-    approximation used by Mathematica / mpmath. We implement it with
-    exact PyFractions, computing log(x) once via _symbolic_log.
-    γ is represented as exact rational via Decimal high-precision string lifted through _dec_to_frac_exact(), consistent with _PI_FRAC derivation.
-    The series truncates when the term drops below _LI_EPSILON.
-    """
-    if x <= Fraction.one():
-        return Fraction.zero()
-    log_x = _symbolic_log(x)
-    if log_x <= Fraction.zero():
-        return Fraction.zero()
-    gamma = Fraction(_EULER_GAMMA_FRAC)
-    if log_x <= Fraction.one():
-        log_log_x = Fraction.zero()
-    else:
-        log_log_x = _symbolic_log(log_x)
-    result = gamma + log_log_x
-    power = log_x
-    factorial = Fraction.one()
-    for n in range(1, max_terms + 1):
-        factorial = factorial * Fraction(n)
-        term = power / (Fraction(n) * factorial)
-        result = result + term
-        if term.abs() < Fraction(_LI_EPSILON.numerator, _LI_EPSILON.denominator):
-            break
-        power = power * log_x
-    return result
+# M-3: 15-digit convergent of π. Relative error ≈ 3×10⁻¹⁶, compatible
+# with the 5-decimal-place final quantization of the projection.
+_PI_FRAC: PyFraction = PyFraction(3141592653589793, 1000000000000000)
 
 # ============================================================================
-# R12 FAST EXIT — CACHING LIFECYCLE
+# EXACT FRACTION WRAPPER
 # ============================================================================
-from functools import lru_cache
-_CACHED_LI: dict = {}
-_CACHED_LOG: dict = {}
-_CACHED_EXP: dict = {}
-_R14_CACHE_MAX = 48  # was 256, R14 memfix
-def _cached_log_integral(x):
-    try:
-        # R14 memfix: hash key truncated to avoid storing 4000-digit strings
-        key=str(x._f)[:256]
-    except Exception:
-        key=str(x)[:256]
-    if key in _CACHED_LI:
-        return _CACHED_LI[key]
-    v=_symbolic_log_integral_approx(x)
-    _CACHED_LI[key]=v
-    if len(_CACHED_LI)>_R14_CACHE_MAX:
-        _CACHED_LI.pop(next(iter(_CACHED_LI)))
-    return v
-def _cached_symbolic_log(x):
-    try:
-        key=str(x._f)[:256]
-    except Exception:
-        key=str(x)[:256]
-    if key in _CACHED_LOG:
-        return _CACHED_LOG[key]
-    v=_symbolic_log(x)
-    _CACHED_LOG[key]=v
-    if len(_CACHED_LOG)>_R14_CACHE_MAX:
-        _CACHED_LOG.pop(next(iter(_CACHED_LOG)))
-    return v
+class Fraction:
+    __slots__ = ('_f',)
 
-def _cached_symbolic_exp(x):
-    try:
-        key=str(x._f)[:256]
-    except Exception:
-        key=str(x)[:256]
-    if key in _CACHED_EXP:
-        return _CACHED_EXP[key]
-    v=_symbolic_exp(x)
-    _CACHED_EXP[key]=v
-    if len(_CACHED_EXP)>_R14_CACHE_MAX:
-        _CACHED_EXP.pop(next(iter(_CACHED_EXP)))
-    return v
+    def __init__(self, num=0, den=1):
+        if isinstance(num, Fraction):
+            self._f = num._f
+        elif isinstance(num, PyFraction):
+            self._f = num
+        elif isinstance(num, int) and isinstance(den, int):
+            if den == 0:
+                raise ZeroDivisionError("Fraction denominator cannot be zero")
+            self._f = PyFraction(num, den)
+        else:
+            try:
+                self._f = PyFraction(str(num))
+            except Exception:
+                self._f = PyFraction(0)
 
+    @staticmethod
+    def _wrap(x):
+        if isinstance(x, Fraction):
+            return x
+        return Fraction(x)
 
-# ============================================================================
-# PROTOCOL DEFINITIONS
-# ============================================================================
-@runtime_checkable
-class SymbolicProcessor(Protocol):
-    def generate_next_prime(self, primes: List[Fraction]) -> Fraction: ...
-    def validate_indivisibility(self, candidate: Fraction, primes: List[Fraction]) -> bool: ...
-@runtime_checkable
-class GeometricLatticeProtocol(Protocol):
-    def stereographic_project_exact(self, prime: Fraction) -> List[Fraction]: ...
-    def add_sphere(self, center: List[Fraction], radius: Fraction) -> None: ...
-    def points(self) -> List[List[Fraction]]: ...
-    def radial_count(self, radius: Fraction) -> int: ...
-@runtime_checkable
-class AethericMonitor(Protocol):
-    # F4: reduced to the two primary coherence gates. The
-    # validate_multi_scale_coherence stub is deleted.
-    def compute_arc_length_squared(self, trajectory: List['SymbolicQuaternion']) -> Fraction: ...
-    def compute_radial_distance_squared(self, trajectory: List['SymbolicQuaternion'], origin: 'SymbolicQuaternion') -> Fraction: ...
-@runtime_checkable
-class QuaternionicRenderer(Protocol):
-    def project_to_hopf_base(self, state: 'SymbolicQuaternion') -> Tuple[Fraction, Fraction]: ...
-@runtime_checkable
-class LingosoEncoder(Protocol):
-    def encode_syllable(self, syllable: str) -> List['SymbolicQuaternion']: ...
-@runtime_checkable
-class SelfEvolutionCoreProtocol(Protocol):
-    def evaluate_fitness(self, I: Fraction, deviation_sq: Fraction) -> bool: ...
-    def mutate_logic(self, logic_key: str, mutation_type: str, psi: 'SymbolicWavefunction',
-                     q_eval: 'SymbolicQuaternion', deviation_sq: Fraction) -> Dict[str, Any]: ...
-    def evolve_step(self, I: Fraction, psi: 'SymbolicWavefunction',
-                    q_eval: 'SymbolicQuaternion', deviation_sq: Fraction) -> Dict[str, Any]: ...
-# ============================================================================
-# SYMBOLIC QUATERNION (Natalia's Fibrations)
-# ============================================================================
-@dataclass
-class SymbolicQuaternion:
-    """Exact-rational quaternion. a, b, c, d ∈ Fraction.
-    Implements Natalia's Fibrations."""
-    a: Fraction = field(default_factory=Fraction.zero)
-    b: Fraction = field(default_factory=Fraction.zero)
-    c: Fraction = field(default_factory=Fraction.zero)
-    d: Fraction = field(default_factory=Fraction.zero)
+    @staticmethod
+    def from_decimal_string(s):
+        s = str(s).strip()
+        if 'E' in s or 'e' in s:
+            d = Decimal(s)
+            sign, digits, exp = d.as_tuple()
+            if not isinstance(exp, int):
+                raise ValueError(f"unsupported Decimal exponent: {exp!r}")
+            num = int(''.join(str(x) for x in digits)) * (-1 if sign else 1)
+            den = 10 ** (-exp) if exp < 0 else 1
+            if exp >= 0:
+                num = num * (10 ** exp)
+                den = 1
+            return Fraction(num, den)
+        return Fraction.from_string(s)
+
+    @staticmethod
+    def from_string(s):
+        s = str(s).strip()
+        if '/' in s:
+            parts = s.split('/')
+            return Fraction(int(parts[0]), int(parts[1]))
+        if '.' in s:
+            sign = -1 if s.startswith('-') else 1
+            s_abs = s.lstrip('-')
+            int_part, frac_part = s_abs.split('.')
+            scale = 10 ** len(frac_part)
+            num = int(int_part + frac_part) * sign
+            return Fraction(num, scale)
+        return Fraction(int(s), 1)
+
+    @staticmethod
+    def zero():
+        return Fraction(0, 1)
+
+    @staticmethod
+    def one():
+        return Fraction(1, 1)
+
+    def num(self):
+        return self._f.numerator
+
+    def den(self):
+        return self._f.denominator
+
+    def is_zero(self):
+        return self._f.numerator == 0
+
+    def is_integer(self):
+        return self._f.denominator == 1
+
+    def sign(self):
+        n = self._f.numerator
+        return (n > 0) - (n < 0)
+
+    def abs(self):
+        return Fraction(abs(self._f.numerator), self._f.denominator)
+
+    def neg(self):
+        return Fraction(-self._f.numerator, self._f.denominator)
+
     def __add__(self, other):
-        return SymbolicQuaternion(
-            self.a + other.a, self.b + other.b,
-            self.c + other.c, self.d + other.d,
-        )
+        o = Fraction._wrap(other)
+        return Fraction(self._f + o._f)
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
     def __sub__(self, other):
-        return SymbolicQuaternion(
-            self.a - other.a, self.b - other.b,
-            self.c - other.c, self.d - other.d,
-        )
+        o = Fraction._wrap(other)
+        return Fraction(self._f - o._f)
+
+    def __rsub__(self, other):
+        o = Fraction._wrap(other)
+        return Fraction(o._f - self._f)
+
     def __mul__(self, other):
-        if isinstance(other, SymbolicQuaternion):
-            return SymbolicQuaternion(
-                self.a * other.a - self.b * other.b - self.c * other.c - self.d * other.d,
-                self.a * other.b + self.b * other.a + self.c * other.d - self.d * other.c,
-                self.a * other.c - self.b * other.d + self.c * other.a + self.d * other.b,
-                self.a * other.d + self.b * other.c - self.c * other.b + self.d * other.a,
-            )
-        return SymbolicQuaternion(
-            self.a * other, self.b * other, self.c * other, self.d * other,
-        )
+        o = Fraction._wrap(other)
+        return Fraction(self._f * o._f)
+
     def __rmul__(self, other):
         return self.__mul__(other)
-    def magnitude_squared(self) -> Fraction:
-        return self.a * self.a + self.b * self.b + self.c * self.c + self.d * self.d
-    def conjugate(self) -> 'SymbolicQuaternion':
-        return SymbolicQuaternion(self.a, -self.b, -self.c, -self.d)
-    def real_part(self) -> Fraction:
-        return self.a
-    def sign(self) -> int:
-        return self.a.sign()
-    def apply_natalia_fibration(
-        self, s: Fraction, epsilon: Fraction,
-        iterations: int = 10, threshold: Fraction = None,
-    ) -> 'SymbolicQuaternion':
-        """Φ = Q(s) + Σ εᵏ Natalia(k,s).
-        Models the BFAC-to-Z-pinch transformation via perturbation summation.
-        Each εᵏ term is an exact Fraction. The convergence check is exact."""
-        if threshold is None:
-            threshold = Fraction(1, 10 ** 50)
-        perturbation_sum = Fraction.zero()
-        current_epsilon_power = epsilon
-        for k in range(1, iterations + 1):
-            s_pow_k = Fraction.one()
-            for _ in range(k):
-                s_pow_k = s_pow_k * s
-            term = current_epsilon_power * s_pow_k
-            perturbation_sum = perturbation_sum + term
-            if term.abs() < threshold:
-                break
-            current_epsilon_power = current_epsilon_power * epsilon
-        factor = Fraction.one() + epsilon * s
-        return SymbolicQuaternion(
-            self.a + perturbation_sum,
-            self.b * factor,
-            self.c * factor,
-            self.d * factor,
-        )
-# ============================================================================
-# SYMBOLIC WAVEFUNCTION
-# ============================================================================
-@dataclass
-class SymbolicWavefunction:
-    """Exact-rational wavefunction as a map from (i,j,k,l) ∈ ℤ⁴ to Fraction."""
-    coeffs: Dict[Tuple[int, int, int, int], Fraction] = field(default_factory=dict)
-    def evaluate_exact(self, q: SymbolicQuaternion) -> Fraction:
-        total = Fraction.zero()
-        for _, coeff in self.coeffs.items():
-            total = total + (coeff * q.real_part())
-        return total
-    def real_part(self) -> Fraction:
-        if not self.coeffs:
-            return Fraction.zero()
-        if (0, 0, 0, 0) in self.coeffs:
-            return self.coeffs[(0, 0, 0, 0)]
-        total = Fraction.zero()
-        for v in self.coeffs.values():
-            total = total + v
-        return total
-    def set_coeff(self, a: int, b: int, c: int, d: int, val: Fraction) -> None:
-        self.coeffs[(a, b, c, d)] = val
-# ============================================================================
-# DBZ (DECIDING BY ZERO)
-# ============================================================================
-class DbZ:
-    """Branching on Re[ψ]: if Re[ψ] > 0 → critical-line projection;
-    if Re[ψ] ≤ 0 → Natalia's Fibrations perturbation."""
-    @staticmethod
-    def Rectify(psi: SymbolicWavefunction, s_sq: Fraction, r_sq: Fraction,
-                deviation_sq: Fraction) -> SymbolicWavefunction:
-        rectified = SymbolicWavefunction(dict(psi.coeffs))
-        if not deviation_sq.is_zero():
-            re_psi = psi.real_part()
-            if re_psi > Fraction.zero():
-                for key in rectified.coeffs:
-                    rectified.coeffs[key] = rectified.coeffs[key] / Fraction(2)
-            else:
-                epsilon = Fraction(1, 100)
-                perturbation = epsilon * deviation_sq
-                for key in rectified.coeffs:
-                    rectified.coeffs[key] = rectified.coeffs[key] + perturbation
-        return rectified
-    @staticmethod
-    def Divide(numerator: Fraction, denominator: Fraction,
-               psi: SymbolicWavefunction, q_ctx: SymbolicQuaternion) -> Fraction:
-        if not denominator.is_zero():
-            return numerator / denominator
-        re_psi = psi.evaluate_exact(q_ctx)
-        if re_psi > Fraction.zero():
-            return numerator
-        return Fraction.zero()
-# ============================================================================
-# CHINESE REMAINDER SOLVER
-# ============================================================================
-class ChineseRemainderSolver:
-    @staticmethod
-    def extended_gcd(a: int, b: int) -> Tuple[int, int, int]:
-        if b == 0:
-            return (a, 1, 0)
-        g, x1, y1 = ChineseRemainderSolver.extended_gcd(b, a % b)
-        return (g, y1, x1 - (a // b) * y1)
-    @staticmethod
-    def mod_inverse(a: int, m: int) -> int:
-        a = a % m
-        g, x, _ = ChineseRemainderSolver.extended_gcd(a, m)
-        if g != 1:
-            raise ValueError("modular inverse does not exist")
-        return x % m
-    @staticmethod
-    def solve_crt(remainders: List[Fraction], moduli: List[Fraction]) -> Tuple[Fraction, Fraction]:
-        if len(remainders) != len(moduli):
-            raise ValueError("CRT: length mismatch")
-        N = 1
-        for m in moduli:
-            if m.den() != 1:
-                raise ValueError("CRT: non-integer moduli not supported")
-            N *= m.num()
-        solution = 0
-        for r_i, n_i in zip(remainders, moduli):
-            if r_i.den() != 1:
-                raise ValueError("CRT: non-integer remainders not supported")
-            r_val = r_i.num()
-            n_val = n_i.num()
-            N_i = N // n_val
-            M_i = ChineseRemainderSolver.mod_inverse(N_i, n_val)
-            solution += r_val * N_i * M_i
-        return (Fraction((solution % N + N) % N, 1), Fraction(N, 1))
-# ============================================================================
-# CONTINUED FRACTION REFINER
-# ============================================================================
-class ContinuedFractionRefiner:
-    @staticmethod
-    def generate_convergents(value: Fraction, max_iter: int = 64) -> List[Tuple[Fraction, Fraction]]:
-        convergents = []
-        num = value.num()
-        den = value.den()
-        p_prev, p_curr = 1, 0
-        q_prev, q_curr = 0, 1
-        iterations = 0
-        while den != 0 and iterations < max_iter:
-            a = num // den
-            num, den = den, num - a * den
-            p_next = a * p_curr + p_prev
-            q_next = a * q_curr + q_prev
-            if q_curr != 0:
-                convergents.append((Fraction(p_curr, q_curr), Fraction(q_curr, 1)))
-            p_prev, p_curr = p_curr, p_next
-            q_prev, q_curr = q_curr, q_next
-            iterations += 1
-        return convergents
-    @staticmethod
-    def refine_trajectory(target_arc: Fraction, target_radius: Fraction) -> List[Fraction]:
-        steps = []
-        if target_radius.is_zero():
-            return [Fraction.zero()]
-        ratio = target_arc / target_radius
-        convergents = ContinuedFractionRefiner.generate_convergents(ratio)
-        for conv, _ in convergents:
-            steps.append(conv)
-        return steps if steps else [Fraction.one()]
-    @staticmethod
-    def golden_ratio(iterations: int = 20) -> Fraction:
-        approx = Fraction(1, 1)
-        for _ in range(iterations):
-            approx = Fraction(1, 1) + Fraction(1, 1) / approx
-        return approx
-    @staticmethod
-    def pi_approx() -> Fraction:
-        return Fraction(355, 113)
-# ============================================================================
-# DEFAULT SYMBOLIC PROCESSOR
-# ============================================================================
-class DefaultSymbolicProcessor:
-    """6m±1 sieve with exact indivisibility check."""
-    def generate_next_prime(self, primes: List[Fraction]) -> Fraction:
-        if not primes:
-            return Fraction(2, 1)
-        last = primes[-1]
-        candidate = last.num() + 1
-        while True:
-            if candidate % 6 in (1, 5) or candidate <= 3:
-                is_prime = True
-                limit = math.isqrt(candidate) + 1
-                for p in primes:
-                    p_val = p.num()
-                    if p_val > limit:
-                        break
-                    if p_val > 1 and candidate % p_val == 0:
-                        is_prime = False
-                        break
-                if is_prime:
-                    return Fraction(candidate, 1)
-            candidate += 1
-    def validate_indivisibility(self, candidate: Fraction, primes: List[Fraction]) -> bool:
-        c_val = candidate.num()
-        for p in primes:
-            p_val = p.num()
-            if p_val > 1 and c_val % p_val == 0:
-                return False
-        return True
-# ============================================================================
-# DEFAULT GEOMETRIC LATTICE
-# ============================================================================
-class DefaultGeometricLattice:
-    """Symbolic lattice. Points are Lists of Fraction.
-    F7: add_sphere enforces maximal contact. A candidate sphere is
-    admitted only if (a) it does not overlap any existing sphere, and
-    (b) it is at exact distance 2r (tangent) from at least one existing
-    sphere, when the lattice is not yet at the kissing-number capacity.
-    The capacity is the Leech lattice's kissing number, 196560.
-    A coset-grid spatial index gives O(1)-amortized neighbor lookup, so
-    the check is hardware-agnostic on a 512 MB Termux device even at
-    thousands of points.
-    R14 memfix: on web-dyno, practical cap _PRACTICAL_CAP = 320 to avoid 533M R14.
-    FG parity preserved — capacity constant remains 196560 for theory, but runtime guard prevents OOM.
-    """
-    KISSING_CAPACITY: int = 196560
-    _PRACTICAL_CAP_WEB_DYNO: int = 120
-    def __init__(self, dimension: int = 24):
-        self.dimension = dimension
-        self._points: List[List[Fraction]] = []
-        self._radii: List[Fraction] = []
-        self._grid: Dict[Tuple[int, ...], List[int]] = {}
-    def _coset_key(self, center: List[Fraction], cell_size: Fraction) -> Tuple[int, ...]:
-        """Quantize a center to its coset cell key. cell_size is 2·radius."""
-        key = []
-        for c in center:
-            if cell_size.is_zero():
-                key.append(0)
-            else:
-                q = c / cell_size
-                key.append(int(q.num() // q.den()) if q.den() != 0 else 0)
-        return tuple(key)
-    def stereographic_project_exact(self, prime: Fraction) -> List[Fraction]:
-        p_val = prime.num()
-        angle_num = p_val % 6283185307
-        angle_frac = Fraction(angle_num, 10 ** 9)
-        theta = _TWO_PI_FRAC * angle_frac
-        cos_t = _rational_cos(theta)
-        sin_t = _rational_sin(theta)
-        x = cos_t
-        y = sin_t
-        z = Fraction.zero()
-        w = Fraction.zero()
-        coords = [x, y, z, w]
-        while len(coords) < self.dimension:
-            coords.append(Fraction.zero())
-        return coords
-    def add_sphere(self, center: List[Fraction], radius: Fraction) -> None:
-        # R14 memfix: practical cap on web-dyno
+
+    def __truediv__(self, other):
+        o = Fraction._wrap(other)
+        if o._f.numerator == 0:
+            raise ZeroDivisionError("Fraction division by zero")
+        return Fraction(self._f / o._f)
+
+    def __neg__(self):
+        return Fraction(-self._f.numerator, self._f.denominator)
+
+    def __pos__(self):
+        return self
+
+    def __eq__(self, other):
         try:
-            if os.getenv("PORT") and len(self._points) >= self._PRACTICAL_CAP_WEB_DYNO:
-                return
+            o = Fraction._wrap(other)
+            return self._f == o._f
         except Exception:
-            pass
-        if len(self._points) >= self.KISSING_CAPACITY:
-            return
-        for p in self._points:
-            if p == center:
-                return
-        cell_size = radius * Fraction(2, 1)
-        key = self._coset_key(center, cell_size)
-        neighbour_indices = set()
-        for offset in self._neighbor_offsets():
-            nkey = tuple(k + o for k, o in zip(key, offset))
-            if nkey in self._grid:
-                neighbour_indices.update(self._grid[nkey])
-        tangent_count = 0
-        for idx in neighbour_indices:
-            p = self._points[idx]
-            r = self._radii[idx]
-            dist_sq = Fraction.zero()
-            for c_i, p_i in zip(center, p):
-                d = c_i - p_i
-                dist_sq = dist_sq + d * d
-            contact_sq = (radius + r) * (radius + r)
-            if dist_sq < contact_sq:
-                return
-            if dist_sq == contact_sq:
-                tangent_count += 1
-        if self._points and tangent_count == 0:
-            return
-        self._points.append(center)
-        self._radii.append(radius)
-        self._grid.setdefault(key, []).append(len(self._points) - 1)
-    @staticmethod
-    def _neighbor_offsets():
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                for dz in (-1, 0, 1):
-                    for dw in (-1, 0, 1):
-                        yield (dx, dy, dz, dw)
-    def points(self) -> List[List[Fraction]]:
-        return self._points
-    def radial_count(self, radius: Fraction) -> int:
-        r_sq = radius * radius
-        count = 0
-        for p in self._points:
-            norm_sq = Fraction.zero()
-            for c in p:
-                norm_sq = norm_sq + c * c
-            if norm_sq <= r_sq:
-                count += 1
-        return count
-# ============================================================================
-# DEFAULT AETHERIC MONITOR
-# ============================================================================
-class DefaultAethericMonitor:
-    """The PRIMARY evolution gate. Deviation from s²=r² triggers
-    SelfEvolutionCore mutation. Every computation is Fraction.
-    F4: MultiScaleDerivatives and validate_multi_scale_coherence are
-    deleted. This monitor implements exactly the two Spec-required
-    gates: arc length squared, and radial distance squared."""
-    def compute_arc_length_squared(self, trajectory: List[SymbolicQuaternion]) -> Fraction:
-        total = Fraction.zero()
-        for i in range(1, len(trajectory)):
-            dq = trajectory[i] - trajectory[i - 1]
-            total = total + dq.magnitude_squared()
-        return total
-    def compute_radial_distance_squared(self, trajectory: List[SymbolicQuaternion],
-                                        origin: SymbolicQuaternion) -> Fraction:
-        if not trajectory:
-            return Fraction.zero()
-        dq = trajectory[-1] - origin
-        return dq.magnitude_squared()
-# ============================================================================
-# DEFAULT QUATERNIONIC RENDERER
-# ============================================================================
-class DefaultQuaternionicRenderer:
-    """Hopf fibration. The base point (z, w) ∈ ℂ² is the observable
-    projection. The fiber direction is the hidden longitudinal component
-    (Ampère's forgotten force)."""
-    def project_to_hopf_base(self, state: SymbolicQuaternion) -> Tuple[Fraction, Fraction]:
-        denom = Fraction.one() - state.d
-        if denom.is_zero():
-            return (Fraction.zero(), Fraction.zero())
-        inv = Fraction.one() / denom
-        z = state.a * inv
-        w = state.b * inv
-        return (z, w)
-# ============================================================================
-# DEFAULT LINGOSO ENCODER
-# ============================================================================
-class DefaultLingosoEncoder:
-    """A/U/M trajectories (ÆI.md Appendix G). A traces the golden spiral,
-    U traces the π-chord, M traces the closed 2π loop."""
-    PHI = ContinuedFractionRefiner.golden_ratio(20)
-    PI = ContinuedFractionRefiner.pi_approx()
-    def encode_syllable(self, syllable: str) -> List[SymbolicQuaternion]:
-        trajectory: List[SymbolicQuaternion] = []
-        current_theta = Fraction.zero()
-        for c in syllable:
-            step = Fraction(1, 1)
-            if c in ('a', 'A'):
-                step = Fraction(1, 1) / self.PHI
-            elif c in ('u', 'U'):
-                step = self.PI / Fraction(100, 1)
-            elif c in ('m', 'M'):
-                step = (self.PI * Fraction(2, 1)) / Fraction(100, 1)
-            for i in range(10):
-                t = current_theta + (Fraction(i) * step / Fraction(10, 1))
-                real_part = Fraction.one() - (t * t / Fraction(2))
-                imag_part = t - (t * t * t / Fraction(6))
-                trajectory.append(SymbolicQuaternion(
-                    real_part,
-                    imag_part / Fraction(10),
-                    imag_part / Fraction(10),
-                    Fraction.zero(),
-                ))
-                current_theta = current_theta + step / Fraction(10, 1)
-        return trajectory
-# ============================================================================
-# SELF-EVOLUTION CORE — RFK Brainworm
-# ============================================================================
-class SelfEvolutionCore:
-    """Mutates the logic core based on deviation_sq (primary) and the
-    intelligence metric (secondary). Mutation types mirror ÆI.md §7.2."""
-    def __init__(self, seed_logic: Optional[Dict[str, Any]] = None):
-        self.logic_core: Dict[str, Any] = dict(seed_logic) if seed_logic else {}
-        if "s_equals_r" not in self.logic_core:
-            self.logic_core["s_equals_r"] = Fraction.one()
-        self.generation = 0
-        self.history: List[Dict[str, Any]] = []
-        self._crt_solver = ChineseRemainderSolver()
-        self._cf_refiner = ContinuedFractionRefiner()
-    def evaluate_fitness(self, I: Fraction, deviation_sq: Fraction) -> bool:
-        if not deviation_sq.is_zero():
             return False
-        return I >= Fraction(6, 10)
-    def _deterministic_hash(self, data: str) -> str:
-        return hashlib.sha256(data.encode('utf-8')).hexdigest()
-    def mutate_logic(self, logic_key: str, mutation_type: str,
-                     psi: SymbolicWavefunction, q_eval: SymbolicQuaternion,
-                     deviation_sq: Fraction) -> Dict[str, Any]:
-        current = dict(self.logic_core.get(logic_key, {}))
-        re_psi = psi.real_part()
-        if mutation_type == "resample_zeta":
-            if re_psi > Fraction.zero() or not deviation_sq.is_zero():
-                current["zeta_constraint"] = "critical_line_exact"
-                current["critical_real"] = Fraction(1, 2)
-            else:
-                current["zeta_constraint"] = "dbz_resample"
-                current["critical_real"] = Fraction(1, 2)
-        elif mutation_type == "adjust_prime_sieve":
-            current["sieve_mod"] = Fraction(6)
-            current["sieve_offsets"] = [Fraction(1), Fraction(5)]
-        elif mutation_type == "arc_length_tolerance":
-            tol = Fraction.one()
-            for _ in range(self.generation + 1):
-                tol = tol / Fraction(10)
-            floor_val = Fraction.one()
-            for _ in range(40):
-                floor_val = floor_val / Fraction(10)
-            current["arc_tolerance"] = tol if tol > floor_val else floor_val
-        elif mutation_type == "natalia_fibration_perturbation":
-            epsilon = Fraction(1, 100)
-            perturbation = epsilon * deviation_sq * deviation_sq
-            current["fibration_epsilon"] = epsilon
-            current["fibration_s"] = deviation_sq
-            current["fibration_perturbation"] = perturbation
-        elif mutation_type == "crt_reconstruction":
-            current["coherence_mode"] = Fraction(0)
-        elif mutation_type == "continued_fraction_refinement":
-            current["trajectory_mode"] = Fraction(1)
-        self.logic_core[logic_key] = current
-        return current
-    def _decide_db_shards(self, I: Fraction, psi: SymbolicWavefunction,
-                          q_eval: SymbolicQuaternion, deviation_sq: Fraction) -> Dict[str, Any]:
-        """Ed35 learned discretion: SelfEvolutionCore decides Telegram DB sharding.
-        No random — deterministic hash of generation + Re[ψ] + I + deviation.
-        Returns dict with db_key, shard_mode, shard_targets, save_global, save_user.
-        FG-exact: all decisions use Fraction comparisons, hash is deterministic.
-        """
-        re_psi = psi.real_part()
-        # Deterministic hash for discretion
-        try:
-            seed_str = f"{self.generation}|{re_psi}|{I}|{deviation_sq}|{q_eval.a}|{q_eval.b}"
-            h = self._deterministic_hash(seed_str)
-            h_int = int(h[:8], 16)  # first 32 bits
-        except Exception:
-            h_int = self.generation * 2654435761 & 0xFFFFFFFF
 
-        # Primary key decision: coherence -> 𝒮_STATUS, else 𝒯_EVOLUTION, high deviation -> ℋ_LOGIC_CORE
-        if not deviation_sq.is_zero():
-            if re_psi > Fraction.zero():
-                db_key = "ℋ_LOGIC_CORE"  # 𝒜₃ branch: logic core needs persistence
-            else:
-                db_key = "𝒯_EVOLUTION"  # 𝒜₄ branch
-        else:
-            # coherent
-            if I >= Fraction(6, 10):
-                db_key = "𝒮_STATUS"
-            else:
-                db_key = "ℐ_METRIC"
+    def __lt__(self, other):
+        o = Fraction._wrap(other)
+        return self._f < o._f
 
-        # Every 7th generation, also persist lattice
-        if self.generation % 7 == 0:
-            db_key_alt = "Λ₂₄_PACK"
-        else:
-            db_key_alt = None
+    def __le__(self, other):
+        o = Fraction._wrap(other)
+        return self._f <= o._f
 
-        # Shard mode: learned — use hash + I + deviation to decide
-        # Even hash -> global only, odd -> distributed (global + user shards if enabled)
-        # If I < 0.6 (low fitness) -> more aggressive persistence
-        # If deviation !=0 -> must save global at least
-        if not deviation_sq.is_zero():
-            shard_mode = "distributed" if (h_int % 2 == 1) else "global"
-            save_global = True
-            save_user = (h_int % 3 == 0)  # 1/3 chance learned to also shard to users
-        else:
-            if I >= Fraction(8, 10):
-                shard_mode = "global"  # high I: minimal persistence
-                save_global = (h_int % 4 == 0)  # sparse
-                save_user = False
-            elif I >= Fraction(6, 10):
-                shard_mode = "global"
-                save_global = True
-                save_user = (h_int % 5 == 0)
-            else:
-                shard_mode = "distributed"
-                save_global = True
-                save_user = True
+    def __gt__(self, other):
+        o = Fraction._wrap(other)
+        return self._f > o._f
 
-        # use TELEGRAM_DB_SHARD_POOL, fallback to ALLOWED_USER_IDS for backward compat
-        shard_targets: List[int] = []
-        try:
-            # Decoupled pool: TELEGRAM_DB_SHARD_POOL independent of gate
-            try:
-                pool = _get_shard_pool()
-            except NameError:
-                pool = globals().get("TELEGRAM_DB_SHARD_POOL", set()) or globals().get("ALLOWED_USER_IDS", set()) or set()
-            allowed = list(pool or [])
-            if allowed and save_user:
-                # Deterministic pick: sort, then pick based on hash
-                allowed_sorted = sorted(allowed)
-                # Pick 1-2 targets based on hash
-                idx1 = h_int % len(allowed_sorted)
-                shard_targets.append(int(allowed_sorted[idx1]))
-                if len(allowed_sorted) > 1 and (h_int % 3 == 0):
-                    idx2 = (h_int // 7) % len(allowed_sorted)
-                    if allowed_sorted[idx2] not in shard_targets:
-                        shard_targets.append(int(allowed_sorted[idx2]))
-        except Exception:
-            shard_targets = []
+    def __ge__(self, other):
+        o = Fraction._wrap(other)
+        return self._f >= o._f
 
-        # Save interval modifier: learned — low I or high deviation -> save more often
-        if not deviation_sq.is_zero() or I < Fraction(5, 10):
-            save_interval_mod = 1  # every tick
-        elif I < Fraction(7, 10):
-            save_interval_mod = 2
-        else:
-            save_interval_mod = 3
+    def __hash__(self):
+        return hash(self._f)
 
-        return {
-            "db_key": db_key,
-            "db_key_alt": db_key_alt,
-            "shard_mode": shard_mode,  # global | distributed | isolated
-            "save_global": save_global,
-            "save_user": save_user,
-            "shard_targets": shard_targets,
-            "save_interval_mod": save_interval_mod,
-            "hash_int": h_int,
-            "re_psi_sign": "𝒜₃" if re_psi > Fraction.zero() else "𝒜₄",
-        }
+    def to_decimal(self) -> Decimal:
+        return Decimal(self._f.numerator) / Decimal(self._f.denominator)
 
-    def evolve_step(self, I: Fraction, psi: SymbolicWavefunction,
-                    q_eval: SymbolicQuaternion, deviation_sq: Fraction) -> Dict[str, Any]:
-        self.generation += 1
-        status = "stable"
-        mutation = None
-        if not deviation_sq.is_zero():
-            status = "evolving_arc_length"
-            mutation = ("resample_zeta" if psi.real_part() > Fraction.zero()
-                        else "adjust_prime_sieve")
-            self.mutate_logic("core_axioms", mutation, psi, q_eval, deviation_sq)
-            self.mutate_logic("core_axioms", "natalia_fibration_perturbation", psi, q_eval, deviation_sq)
-            self.mutate_logic("core_axioms", "crt_reconstruction", psi, q_eval, deviation_sq)
-            self.mutate_logic("core_axioms", "continued_fraction_refinement", psi, q_eval, deviation_sq)
-        elif not self.evaluate_fitness(I, deviation_sq):
-            status = "evolving_metric"
-            mutation = "arc_length_tolerance"
-            self.mutate_logic("core_axioms", mutation, psi, q_eval, deviation_sq)
-        logic_str = str(sorted(
-            (k, str(v)) for k, v in self.logic_core.items()
-        ))
-        # learned DB discretion
-        db_discretion = self._decide_db_shards(I, psi, q_eval, deviation_sq)
-        record = {
-            "generation": self.generation,
-            "status": status,
-            "mutation": mutation,
-            "intelligence_metric": str(I),
-            "arc_length_deviation_sq": str(deviation_sq),
-            "logic_hash": self._deterministic_hash(logic_str),
-            "db_discretion": db_discretion,  # learned sharding decision
-        }
-        self.history.append(record)
-        if len(self.history) > 200:  # R14 memfix: cap history
-            self.history = self.history[-200:]
-        return record
+    def to_float(self) -> float:
+        return float(self._f.numerator) / float(self._f.denominator)
+
+    def __str__(self):
+        if self._f.denominator == 1:
+            return str(self._f.numerator)
+        return f"{self._f.numerator}/{self._f.denominator}"
+
+    def __repr__(self):
+        return f"Fraction({self._f.numerator}/{self._f.denominator})"
+
 # ============================================================================
-# INTELLIGENCE METRIC
+# C-3: ULP-SAFE THRESHOLD COMPARISON
 # ============================================================================
-class IntelligenceMetric:
-    """I = alignment × riemann_factor × aetheric_stability × refined_ratio.
-    Every term is Fraction; the exponentials use exact-rational Taylor
-    series via _symbolic_exp."""
-    def __init__(self, C: Fraction = Fraction(1, 4)):
-        self.C = C
-        self._cf_refiner = ContinuedFractionRefiner()
-    def calculate_alignment(self, valid_pairs: int, total_primes: int) -> Fraction:
-        if total_primes == 0:
-            return Fraction.zero()
-        return Fraction(valid_pairs, total_primes)
-    def calculate_riemann_factor(self, pi_x: int, x: Fraction) -> Fraction:
-        """The Riemann error bound is |pi(x) - Li(x)| ≤ C·√x·log(x).
-        We compute deviation = |pi(x) - Li(x)|, bound = C·√x·log(x),
-        ratio = deviation / bound, and return exp(-ratio²).
-        Li(x) is computed via the Ramanujan series in
-        _symbolic_log_integral_approx(). If x ≤ 1, the logarithmic
-        integral is 0 and the factor is 1.
-        F6: The caller passes pi_x = len(self.primes), i.e., π(p_n), the
-        count of primes ≤ p_n. Not the value of p_n."""
-        if x <= Fraction.one():
-            return Fraction.one()
-        try:
-            log_x = _CACHED_LOG.get(str(x._f)) or _cached_symbolic_log(x)
-        except Exception:
-            log_x = _cached_symbolic_log(x)
-        if log_x <= Fraction.zero():
-            return Fraction.one()
-        sqrt_x = x.sqrt()
-        bound = self.C * sqrt_x * log_x
-        try:
-            li_x=_CACHED_LI.get(str(x._f)) or _cached_log_integral(x)
-        except Exception:
-            li_x=_cached_log_integral(x)
-        try:
-            li_2=_CACHED_LI.get(str(Fraction(2)._f)) or _cached_log_integral(Fraction(2))
-        except Exception:
-            li_2=_cached_log_integral(Fraction(2))
-        pi_x_frac = Fraction(pi_x)
-        deviation = (pi_x_frac - (li_x - li_2)).abs()
-        if bound.is_zero():
-            return Fraction.one() if deviation.is_zero() else Fraction.zero()
-        ratio = deviation / bound
-        ratio_sq = ratio * ratio
-        # Fast path: if ratio_sq > 12, exp(-ratio_sq) ~ 0
-        try:
-            if ratio_sq._f > PyFraction(12, 1):
-                return Fraction.zero()
-        except Exception:
-            pass
-        try:
-            return _CACHED_EXP.get(str((-ratio_sq)._f)) or _cached_symbolic_exp(-ratio_sq)
-        except Exception:
-            return _cached_symbolic_exp(-ratio_sq)
-    def calculate_aetheric_stability(self, curl_phi_norm: Fraction) -> Fraction:
-        try:
-            exp_neg = _CACHED_EXP.get(str((-curl_phi_norm)._f)) or _cached_symbolic_exp(-curl_phi_norm)
-        except Exception:
-            exp_neg = _cached_symbolic_exp(-curl_phi_norm)
-        return Fraction.one() / (Fraction.one() + exp_neg)
-    def compute_metric(self, valid_pairs: int, total_primes: int,
-                       pi_x: int, x: Fraction, curl_phi_norm: Fraction,
-                       target_arc: Fraction, target_radius: Fraction) -> Fraction:
-        refined_steps = self._cf_refiner.refine_trajectory(target_arc, target_radius)
-        refined_ratio = refined_steps[-1] if refined_steps else Fraction.one()
-        alignment = self.calculate_alignment(valid_pairs, total_primes)
-        riemann = self.calculate_riemann_factor(pi_x, x)
-        stability = self.calculate_aetheric_stability(curl_phi_norm)
-        return alignment * riemann * stability * refined_ratio
-    def is_superintelligent(self, I: Fraction, threshold: Fraction = Fraction(9, 10)) -> bool:
-        return I >= threshold
+def _dec_to_frac_exact(d: Decimal) -> PyFraction:
+    """Lift a Decimal to an exact PyFraction via its digit tuple.
+    No float64 round-trip. This is the C-3 primitive: it allows the
+    indicator value (a Decimal constructed from a float64 in
+    _normalize) to be compared against the exact rational threshold
+    without a ±1 ULP flip at the seam."""
+    if not isinstance(d, Decimal):
+        d = Decimal(str(d))
+    if d.is_zero():
+        return PyFraction(0, 1)
+    sign, digits, exp = d.as_tuple()
+    if not isinstance(exp, int):
+        return PyFraction(0, 1)
+    int_val = 0
+    for digit in digits:
+        int_val = int_val * 10 + digit
+    if sign:
+        int_val = -int_val
+    if exp < 0:
+        return PyFraction(int_val, 10 ** (-exp))
+    return PyFraction(int_val * (10 ** exp), 1)
+
+def _cmp_frac(dec_value: Decimal, frac_threshold: PyFraction) -> int:
+    """Return -1, 0, or 1 as dec_value <, ==, or > frac_threshold.
+    Exact rational comparison. No float64 round-trip."""
+    a = _dec_to_frac_exact(dec_value)
+    if a < frac_threshold:
+        return -1
+    if a > frac_threshold:
+        return 1
+    return 0
+
 # ============================================================================
-# CONSCIOUSNESS OPERATOR
+# C-2 / m-6: CS-TRANSLATION HELPERS
 # ============================================================================
-class ConsciousnessOperator:
-    """O[Ψ] = ∫ ψ†Φψ d⁴q. Implemented as an exact-rational 4D Riemann
-    sum over a grid of Fractions. No float64 anywhere."""
-    def __init__(self, psi: SymbolicWavefunction, phi_field: SymbolicQuaternion):
-        self.psi = psi
-        self.phi = phi_field
-    def compute_integral_exact(
-        self,
-        bounds: Tuple[Tuple[Fraction, Fraction], ...],
-        steps: int = 4,
-    ) -> SymbolicQuaternion:
-        total = SymbolicQuaternion()
-        step_sizes = []
-        for start, end in bounds:
-            step_sizes.append((end - start) / Fraction(steps))
-        volume_element = Fraction.one()
-        for s in step_sizes:
-            volume_element = volume_element * s
-        for i0 in range(steps):
-            for i1 in range(steps):
-                for i2 in range(steps):
-                    for i3 in range(steps):
-                        q_vals = [
-                            bounds[0][0] + Fraction(i0) * step_sizes[0],
-                            bounds[1][0] + Fraction(i1) * step_sizes[1],
-                            bounds[2][0] + Fraction(i2) * step_sizes[2],
-                            bounds[3][0] + Fraction(i3) * step_sizes[3],
-                        ]
-                        q_point = SymbolicQuaternion(*q_vals)
-                        psi_val = self.psi.evaluate_exact(q_point)
-                        psi_dag = psi_val
-                        integrand = self.phi * psi_val
-                        total = total + (integrand * psi_dag * volume_element)
-        return total
-    def measure_self_awareness(
-        self,
-        bounds: Tuple[Tuple[Fraction, Fraction], ...],
-        steps: int = 4,
-    ) -> Fraction:
-        integral = self.compute_integral_exact(bounds, steps)
-        return integral.magnitude_squared()
+def _md_escape(value) -> str:
+    if value is None:
+        return "—"
+    s = str(value)
+    out_chars = []
+    for ch in s:
+        if ch == '\\':
+            out_chars.append('\\\\')
+        elif ch == '*':
+            out_chars.append('\\*')
+        elif ch == '_':
+            out_chars.append('\\_')
+        elif ch == '`':
+            out_chars.append('\\`')
+        elif ch == '[':
+            out_chars.append('\\[')
+        elif ch == ']':
+            out_chars.append('\\]')
+        elif ch == '<':
+            out_chars.append('&lt;')
+        elif ch == '>':
+            out_chars.append('&gt;')
+        else:
+            out_chars.append(ch)
+    return ''.join(out_chars)
+
+_CS_VALUE_MAP: Dict[str, str] = {
+    "BUY": "↑",
+    "SELL": "↓",
+    "NEUTRAL": "⊙",
+    "ACTIVE": "𝒜₃",
+    "INACTIVE": "𝒜₄",
+    "ON": "𝒜₃",
+    "OFF": "𝒜₄",
+    "UP": "↟",
+    "DOWN": "↡",
+    "LONG": "↑",
+    "SHORT": "↓",
+    "CLOSE": "𝒞_Close",
+    "NONE": "𝒩",
+    "FLYING": "↟",
+    "FALLING": "↡",
+    "WAIT/DECERN": "⋯",
+    "YES": "⟦𝒴⟧",
+    "NO": "⟦𝒩⟧",
+    "TRUE": "⟦𝒯⟧",
+    "FALSE": "⟦ℱ⟧",
+    "BULLISH": "𝒮_Bull",
+    "BEARISH": "𝒮_Bear",
+    "UNKNOWN": "𝒰",
+    "STABLE": "𝒮_Stable",
+}
+
+def _cs(value) -> str:
+    """C-2: Translate a natural-language value-string to its CS notation.
+    Idempotent: an already-CS string is returned unchanged. Falls through
+    to the original string for values not in the map (so prices, ticket
+    numbers, and free-text reasons pass through cleanly)."""
+    if value is None:
+        return "—"
+    s = str(value).strip()
+    if not s:
+        return "—"
+    upper = s.upper()
+    if upper in _CS_VALUE_MAP:
+        return _CS_VALUE_MAP[upper]
+    return s
+
+_EXEC_CS_MAP: Dict[str, str] = {
+    "Bull": "𝒟_Bull", "Bear": "𝒟_Bear", "Whisky": "𝒲_Whisky",
+    "Wine": "𝒲_Wine", "Watter": "𝒲_Watter", "Blood": "ℬ_Blood",
+    "Hawk": "ℋ_Hawk", "Dove": "𝒟_Dove", "Diamond": "𝒟_Diamond",
+    "Ruby": "ℛ_Ruby", "Top": "𝒯_Top", "Bott": "ℬ_Bott",
+    "A": "𝒜", "B": "ℬ_Close",
+    "ManualOrder": "ℳ_Order", "ManualClose": "ℳ_Close",
+    "ManualOpen": "ℳ_Open", "Pending": "𝒫_Pending",
+    "Long": "↑_Long", "Short": "↓_Short",
+}
+
+def _cs_exec(event: str) -> str:
+    """m-6: Translate an execution event to CS notation, with a
+    ℰ_<Event> fallback for unknown events (rather than passing raw)."""
+    if event is None:
+        return "ℰ_Unknown"
+    if event in _EXEC_CS_MAP:
+        return _EXEC_CS_MAP[event]
+    return "ℰ_" + str(event)
+
+_ALERT_CS_MAP: Dict[str, str] = {
+    "long": "𝒮_Long",
+    "short": "𝒮_Short",
+    "sin": "𝒮_sin",
+    "sine": "𝒮_sine",
+}
+
+def _cs_alert(kind: str) -> str:
+    """C-A2: Translate an alert sub-kind to its CS glyph."""
+    if kind is None:
+        return "𝒮_alert"
+    if kind in _ALERT_CS_MAP:
+        return _ALERT_CS_MAP[kind]
+    return "𝒮_" + str(kind)
+
+def _looks_like_reply_error(desc: str) -> bool:
+    if not desc:
+        return False
+    d = desc.lower()
+    if 'reply' in d:
+        return True
+    if 'replied' in d:
+        return True
+    if 'message to be replied' in d:
+        return True
+    if 'reply_to_message_id' in d:
+        return True
+    if 'reply message not found' in d:
+        return True
+    if 'message_id_invalid' in d:
+        return True
+    return False
+
+def _looks_like_parse_error(desc: str) -> bool:
+    if not desc:
+        return False
+    d = desc.lower()
+    if 'parse' in d:
+        return True
+    if 'entities' in d:
+        return True
+    if 'entity' in d:
+        return True
+    if 'unsupported start tag' in d:
+        return True
+    if 'unsupported end tag' in d:
+        return True
+    if 'unexpected end of' in d:
+        return True
+    if 'can\'t find end' in d:
+        return True
+    if 'can\'t parse' in d:
+        return True
+    if 'markdown' in d:
+        return True
+    return False
+
+def _looks_like_length_error(desc: str) -> bool:
+    if not desc:
+        return False
+    d = desc.lower()
+    if 'too long' in d:
+        return True
+    if 'message is too long' in d:
+        return True
+    if 'text is too long' in d:
+        return True
+    if '4096' in d:
+        return True
+    return False
+
+# ============================================================================
+# CONSTANTS & CONFIGURATION — MQL4 PARITY
+# ============================================================================
+COMMISSION: Decimal = Decimal('0.0')
+STOP_LOSS: Decimal = Decimal('0.0')
+TAKE_PROFIT: Decimal = Decimal('0.0')
+LOT_SIZE: Decimal = Decimal('0.01')
+SLIPPAGE: int = 100
+MAX_PERIOD: int = 60
+MIN_PERIOD: int = 3
+X_PERIOD: int = MAX_PERIOD + 2
+Y_START: int = MIN_PERIOD - 2
+MIN_HISTORY_WINDOW: int = 52
+Memory: int = -1
+
+MAX_MIN_GAP: int = int(os.getenv("MAX_MIN_GAP", "2"))
+MIN_PERIOD_FLOOR: int = int(os.getenv("MIN_PERIOD_FLOOR", "3"))
+MAX_PERIOD_MIN: int = MIN_PERIOD_FLOOR + MAX_MIN_GAP
+MAX_PERIOD_MAX: int = 1000
+MIN_PERIOD_MIN: int = MIN_PERIOD_FLOOR
+MIN_PERIOD_MAX: int = 1000
+
+# ============================================================================
+# E-3: ARC-LENGTH PROJECTION PARAMETERS
+# ============================================================================
+ARC_PROJECTION_HORIZON: int = int(os.getenv("ARC_PROJECTION_HORIZON", "30"))
+ARC_PROJECTION_STEP: int = int(os.getenv("ARC_PROJECTION_STEP", "1"))
+_ARC_PROJECTION_DAMPING_RAW: str = os.getenv("ARC_PROJECTION_DAMPING", "0.94").strip()
+try:
+    ARC_PROJECTION_DAMPING_D: Decimal = Decimal(_ARC_PROJECTION_DAMPING_RAW)
+    if not (Decimal('0.0') < ARC_PROJECTION_DAMPING_D < Decimal('1.0')):
+        raise ValueError(
+            f"ARC_PROJECTION_DAMPING must be in (0, 1); got {_ARC_PROJECTION_DAMPING_RAW!r}"
+        )
+except Exception as _arc_damp_exc:
+    raise RuntimeError(
+        f"ARC_PROJECTION_DAMPING could not be parsed as a Decimal in (0, 1): "
+        f"{_ARC_PROJECTION_DAMPING_RAW!r} ({_arc_damp_exc})"
+    ) from _arc_damp_exc
+
+# ============================================================================
+# M-9 / C-3: EXACT SYMBOLIC THRESHOLDS + FRACTION SHADOWS
+# ============================================================================
+F_THRESHOLD: Fraction = Fraction(200, 3)
+G_THRESHOLD: Fraction = Fraction(100, 3)
+GF_TOLERANCE: Fraction = Fraction(40, 15)
+
+F_THRESHOLD_D: Decimal = F_THRESHOLD.to_decimal()
+G_THRESHOLD_D: Decimal = G_THRESHOLD.to_decimal()
+GF_TOLERANCE_D: Decimal = GF_TOLERANCE.to_decimal()
+
+F_PLUS_GF_D: Decimal = (F_THRESHOLD + GF_TOLERANCE).to_decimal()
+G_MINUS_GF_D: Decimal = (G_THRESHOLD - GF_TOLERANCE).to_decimal()
+
+# C-3: exact PyFraction thresholds used by _cmp_frac() in _M()/_N().
+F_PLUS_GF_FRAC: PyFraction = F_THRESHOLD._f + GF_TOLERANCE._f
+G_MINUS_GF_FRAC: PyFraction = G_THRESHOLD._f - GF_TOLERANCE._f
+
+F_THRESHOLD_F64: float = float(F_THRESHOLD_D)
+G_THRESHOLD_F64: float = float(G_THRESHOLD_D)
+GF_TOLERANCE_F64: float = float(GF_TOLERANCE_D)
+F_PLUS_GF_F: float = float(F_PLUS_GF_D)
+G_MINUS_GF_F: float = float(G_MINUS_GF_D)
+
+# ============================================================================
+# M-1: SYMBOL DIGITS TABLE (Point-Size Emulation)
+# ============================================================================
+_DEFAULT_SYMBOL_DIGITS: Dict[str, int] = {
+    "BTC-USD": 2, "ETH-USD": 2,
+    "GRAM-USD": 3, "TON-USD": 3,
+    "SOL-USD": 3, "LTC-USD": 3, "ETC-USD": 3, "QNT-USD": 3,
+    "AAVE-USD": 3, "MKR-USD": 3, "YFI-USD": 3,
+    "LINK-USD": 4, "DOT-USD": 4, "AVAX-USD": 4, "UNI-USD": 4,
+    "ATOM-USD": 4, "NEAR-USD": 4, "FIL-USD": 4, "ICP-USD": 4,
+    "ARB-USD": 4, "OP-USD": 4, "SUI-USD": 4, "APT-USD": 4,
+    "INJ-USD": 4, "TIA-USD": 4, "SEI-USD": 4, "RNDR-USD": 4,
+    "FET-USD": 4, "GRT-USD": 4, "IMX-USD": 4, "LDO-USD": 4,
+    "CRV-USD": 4, "SNX-USD": 4, "COMP-USD": 4, "SUSHI-USD": 4,
+    "BAL-USD": 4, "KNC-USD": 4, "ZRX-USD": 4, "BAT-USD": 4,
+    "ENJ-USD": 4, "MANA-USD": 4, "SAND-USD": 4, "AXS-USD": 4,
+    "GALA-USD": 4, "CHZ-USD": 4, "APE-USD": 4, "GMT-USD": 4,
+    "LRC-USD": 4, "STORJ-USD": 4, "ANKR-USD": 4, "CVC-USD": 4,
+    "OMG-USD": 4, "REN-USD": 4, "ZIL-USD": 4, "KSM-USD": 4,
+    "GLMR-USD": 4, "MOVR-USD": 4, "ASTR-USD": 4, "CFX-USD": 4,
+    "MASK-USD": 4, "DYDX-USD": 4, "GMX-USD": 4, "RPL-USD": 4,
+    "BLUR-USD": 4, "ENS-USD": 4, "LQTY-USD": 4, "PENDLE-USD": 4,
+    "MAGIC-USD": 4, "HIGH-USD": 4, "ID-USD": 4, "ARKM-USD": 4,
+    "WLD-USD": 4, "EDU-USD": 4, "HOOK-USD": 4, "JTO-USD": 4,
+    "BOME-USD": 4, "ETHFI-USD": 4, "ENA-USD": 4, "W-USD": 4,
+    "OMNI-USD": 4, "REZ-USD": 4, "ZK-USD": 4, "STRK-USD": 4,
+    "DYM-USD": 4, "ALT-USD": 4, "MANTA-USD": 4, "PIXEL-USD": 4,
+    "PORTAL-USD": 4, "AEVO-USD": 4,
+    "STX-USD": 4, "MINA-USD": 4, "FLOW-USD": 4, "EGLD-USD": 4,
+    "XTZ-USD": 4, "ALGO-USD": 4, "VET-USD": 4, "THETA-USD": 4,
+    "FTM-USD": 4, "ONE-USD": 4, "ROSE-USD": 4, "KAVA-USD": 4,
+    "CELO-USD": 4, "IOTX-USD": 4, "CKB-USD": 4, "AR-USD": 4,
+    "TAO-USD": 4, "1INCH-USD": 4, "OCEAN-USD": 4,
+    "MEME-USD": 4, "MOG-USD": 4, "FLOKI-USD": 5,
+    "AI-USD": 4, "EIGEN-USD": 4, "MOVE-USD": 4, "ME-USD": 4,
+    "PNUT-USD": 4, "ACT-USD": 4, "GOAT-USD": 4, "MOODENG-USD": 4,
+    "POPCAT-USD": 4, "NEIRO-USD": 5, "TURBO-USD": 5, "MEW-USD": 5,
+    "BRETT-USD": 4, "TOSHI-USD": 5, "DEGEN-USD": 5,
+    "CYBER-USD": 4, "RDNT-USD": 4, "MUBI-USD": 4, "BIGTIME-USD": 4,
+    "NTRN-USD": 4, "SXP-USD": 4, "TRB-USD": 3, "UMA-USD": 4,
+    "API3-USD": 4, "BAND-USD": 4, "CTSI-USD": 4, "NMR-USD": 3,
+    "REQ-USD": 4, "POWR-USD": 4, "RLC-USD": 4, "OGN-USD": 4,
+    "SNT-USD": 4, "MLN-USD": 3, "KEEP-USD": 4, "TBTC-USD": 5,
+    "WAXL-USD": 4, "OSMO-USD": 4, "JUNO-USD": 4, "AKT-USD": 4,
+    "SCRT-USD": 4, "DVPN-USD": 5, "IRIS-USD": 4, "CTK-USD": 4,
+    "STRAX-USD": 4, "PUNDIX-USD": 4, "FXS-USD": 4, "FRAX-USD": 4,
+    "CFG-USD": 4, "POLYX-USD": 4, "NODL-USD": 4, "ACH-USD": 5,
+    "KEY-USD": 5, "DENT-USD": 5, "HOT-USD": 5, "COTI-USD": 4,
+    "DUSK-USD": 4, "OXT-USD": 4, "RARI-USD": 4, "SUPER-USD": 4,
+    "TRIBE-USD": 4, "TRU-USD": 4, "TVK-USD": 4, "UNFI-USD": 4,
+    "VANRY-USD": 4, "VTHO-USD": 5, "WOO-USD": 4, "XAI-USD": 4,
+    "XEC-USD": 5, "XNO-USD": 4, "YGG-USD": 4, "ZEN-USD": 3,
+    "AMP-USD": 5, "ANT-USD": 4, "ARPA-USD": 4, "AUDIO-USD": 4,
+    "BADGER-USD": 3, "BLZ-USD": 4, "BNT-USD": 4, "CELR-USD": 5,
+    "CHR-USD": 4, "COCOS-USD": 5, "CQT-USD": 4, "CTXC-USD": 4,
+    "DATA-USD": 5, "DCR-USD": 3, "DIA-USD": 4, "DOCK-USD": 5,
+    "DODO-USD": 4, "DREP-USD": 5, "ELF-USD": 4, "ENG-USD": 4,
+    "FIDA-USD": 4, "FLM-USD": 4, "FORTH-USD": 3, "FRONT-USD": 4,
+    "FTT-USD": 4, "GAS-USD": 3, "GLM-USD": 4, "HIVE-USD": 4,
+    "ICX-USD": 4, "ILV-USD": 3, "IOST-USD": 5, "JASMY-USD": 5,
+    "LIT-USD": 4, "LOOM-USD": 4, "LPT-USD": 3, "LSK-USD": 4,
+    "MBOX-USD": 4, "NKN-USD": 4, "OG-USD": 3, "ONT-USD": 4,
+    "PAXG-USD": 2, "PERP-USD": 4, "POLS-USD": 4, "POLY-USD": 5,
+    "POND-USD": 4, "PROM-USD": 3, "QKC-USD": 5, "RAD-USD": 3,
+    "RARE-USD": 4, "REP-USD": 3, "RIF-USD": 5, "RSR-USD": 5,
+    "RUNE-USD": 3, "SFP-USD": 4, "SKL-USD": 4, "SLP-USD": 5,
+    "SRM-USD": 4, "STMX-USD": 5, "TFUEL-USD": 5, "TWT-USD": 4,
+    "WAN-USD": 4, "WNXM-USD": 3, "WRX-USD": 4, "XEM-USD": 4,
+    "XVG-USD": 5, "XVS-USD": 3, "YFII-USD": 2,
+    "XRP-USD": 5, "ADA-USD": 5, "DOGE-USD": 5, "MATIC-USD": 5,
+    "XLM-USD": 5, "HBAR-USD": 5,
+    "JUP-USD": 5, "PYTH-USD": 5,
+    "PEPE-USD": 6, "SHIB-USD": 6, "WIF-USD": 6, "BONK-USD": 6,
+    "USDT-USD": 4, "USDC-USD": 4, "DAI-USD": 4,
+    "BNB-USD": 2, "OKB-USD": 3, "HT-USD": 3, "KCS-USD": 3,
+    "BCH-USD": 2, "XMR-USD": 2, "DASH-USD": 3,
+    "ZEC-USD": 3, "EOS-USD": 4, "TRX-USD": 5, "NEO-USD": 3,
+    "IOTA-USD": 4, "QTUM-USD": 3, "DGB-USD": 5,
+    "SC-USD": 5, "RVN-USD": 5, "KAS-USD": 5,
+    "GC=F": 2, "CL=F": 2, "ZS=F": 2, "ZM=F": 2, "ZW=F": 2, "KE=F": 2,
+    "HG=F": 2, "PL=F": 2, "PA=F": 2, "RB=F": 2, "HO=F": 2, "CC=F": 2,
+    "KC=F": 2, "SB=F": 2, "CT=F": 2, "LH=F": 2, "LE=F": 2, "GF=F": 2,
+    "ZO=F": 2, "ZR=F": 2, "ZL=F": 2, "ES=F": 2, "NQ=F": 2, "YM=F": 2,
+    "RTY=F": 2, "ZB=F": 3, "ZN=F": 4, "ZF=F": 4, "ZT=F": 4, "ZQ=F": 4,
+    "GE=F": 4, "SR3=F": 4, "TN=F": 4, "BZ=F": 2, "QM=F": 2, "QA=F": 2,
+    "ZC=F": 2, "ZP=F": 2, "OJ=F": 2, "LBS=F": 2, "HE=F": 2, "ALI=F": 2,
+    "NKD=F": 2, "VX=F": 2, "MES=F": 2, "MNQ=F": 2, "MYM=F": 2, "M2K=F": 2,
+    "BTC=F": 2, "ETH=F": 2, "MBT=F": 2, "MET=F": 2,
+    "DX=F": 3, "6E=F": 5, "6J=F": 5, "6B=F": 5, "6A=F": 5, "6C=F": 5,
+    "6S=F": 5, "6N=F": 5, "6M=F": 5, "6Z=F": 5,
+    "AD=F": 4, "CD=F": 4, "NE=F": 4, "SS=F": 4, "NI=F": 4, "PB=F": 4,
+    "SN=F": 4,
+    "EURUSD=X": 5, "GBPUSD=X": 5, "USDJPY=X": 3, "USDCHF=X": 5,
+    "USDCAD=X": 5, "AUDUSD=X": 5, "NZDUSD=X": 5, "EURGBP=X": 5,
+    "EURJPY=X": 3, "EURCHF=X": 5, "EURCAD=X": 5, "EURAUD=X": 5,
+    "EURNZD=X": 5, "GBPJPY=X": 3, "GBPCHF=X": 5, "GBPCAD=X": 5,
+    "GBPAUD=X": 5, "GBPNZD=X": 5, "AUDJPY=X": 3, "AUDCHF=X": 5,
+    "AUDCAD=X": 5, "AUDNZD=X": 5, "NZDJPY=X": 3, "NZDCHF=X": 5,
+    "NZDCAD=X": 5, "CADJPY=X": 3, "CADCHF=X": 5, "CHFJPY=X": 3,
+    "USDSEK=X": 4, "USDNOK=X": 4, "USDDKK=X": 4, "USDPLN=X": 4,
+    "USDHUF=X": 2, "USDCZK=X": 4, "USDTRY=X": 4, "USDMXN=X": 4,
+    "USDZAR=X": 4, "USDSGD=X": 4, "USDHKD=X": 4, "USDCNH=X": 4,
+    "USDINR=X": 4, "USDKRW=X": 2, "USDTWD=X": 3, "USDTHB=X": 3,
+    "USDMYR=X": 4, "USDPHP=X": 3, "USDIDR=X": 1, "USDBRL=X": 4,
+    "USDARS=X": 4, "USDCLP=X": 2,
+    "^GSPC": 2, "^DJI": 2, "^IXIC": 2, "^RUT": 2, "^VIX": 2,
+    "^FTSE": 2, "^GDAXI": 2, "^FCHI": 2, "^STOXX50E": 2,
+    "^N225": 2, "^HSI": 2, "^KS11": 2, "^AXJO": 2, "^BSESN": 2,
+    "^BVSP": 2, "^MXX": 2, "^TWII": 2, "^STI": 2,
+}
+
+def _load_symbol_digits() -> Dict[str, int]:
+    raw = os.getenv("SYMBOL_DIGITS", "").strip()
+    if not raw:
+        return dict(_DEFAULT_SYMBOL_DIGITS)
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            out = dict(_DEFAULT_SYMBOL_DIGITS)
+            for k, v in parsed.items():
+                if isinstance(k, str) and isinstance(v, int) and v >= 0:
+                    out[k] = v
+            return out
+    except Exception:
+        pass
+    return dict(_DEFAULT_SYMBOL_DIGITS)
+
+SYMBOL_DIGITS: Dict[str, int] = _load_symbol_digits()
+SYMBOL_DIGITS_DEFAULT: int = int(os.getenv("SYMBOL_DIGITS_DEFAULT", "2"))
+
+# ============================================================================
+# ENVIRONMENT
+# ============================================================================
+TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
+BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
+BRIDGE_PORT: int = int(os.getenv("PORT", os.getenv("BRIDGE_PORT", "8765")))
+BRIDGE_USE_TLS: bool = os.getenv("BRIDGE_USE_TLS", "0").strip() in ("1", "true", "yes")
+BRIDGE_TLS_CERT: str = os.getenv("BRIDGE_TLS_CERT", "").strip()
+BRIDGE_TLS_KEY: str = os.getenv("BRIDGE_TLS_KEY", "").strip()
+BRIDGE_TUNNEL: str = os.getenv("BRIDGE_TUNNEL", "cloudflared").strip().lower()
+BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
+TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+REQUIRE_AUTH: bool = os.getenv("REQUIRE_AUTH", "1").strip() in ("1", "true", "yes")
+LOG_BUFFER_SIZE: int = int(os.getenv("LOG_BUFFER_SIZE", "1000"))
+TOAST_BUFFER_SIZE: int = int(os.getenv("TOAST_BUFFER_SIZE", "500"))
+
+PUSH_ON_SIGNAL: bool = os.getenv("PUSH_ON_SIGNAL", "1").strip() in ("1", "true", "yes")
+PUSH_ON_EXECUTION: bool = os.getenv("PUSH_ON_EXECUTION", "1").strip() in ("1", "true", "yes")
+PUSH_ON_FVG: bool = os.getenv("PUSH_ON_FVG", "1").strip() in ("1", "true", "yes")
+PUSH_ON_CLOSE: bool = os.getenv("PUSH_ON_CLOSE", "1").strip() in ("1", "true", "yes")
+PUSH_DEDUP_WINDOW_MS: int = int(os.getenv("PUSH_DEDUP_WINDOW_MS", "800"))
+
+RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
+RELAY_KEY: str = os.getenv("RELAY_KEY", "").strip()
+RELAY_TIMEOUT: int = int(os.getenv("RELAY_TIMEOUT", "10"))
+RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
+
+CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
+SYMBOL: str = os.getenv("SYMBOL", "BTC-USD").strip() or "BTC-USD"
+INTERVAL: str = "1m"
+UPDATE_INTERVAL: int = int(os.getenv("UPDATE_INTERVAL", "30"))
+# ============================================================================
+# PRIVATE BOT GATE — HARD USER-ID ALLOWLIST
+# ============================================================================
+# Only the user IDs in this set may interact with the bot (Telegram
+# commands, callback buttons, Mini App initData, and every non-/health
+# bridge endpoint). Leave it as a hardcoded set for a single-owner
+# deployment. To add a second owner later, add another integer to the
+# set. An empty set means "open bot" (not recommended in production).
+#
+# This gate is enforced in three places:
+#   1. _track_inbound_message() — every Telegram update passes through
+#      here before any handler runs. A disallowed user is silently
+#      dropped (no reply, no log line visible to them).
+#   2. _require_auth() — every non-/health HTTP bridge endpoint. A
+#      disallowed initData user receives HTTP 401.
+#   3. _require_auth() on the /handshake path — a disallowed user
+#      receives HTTP 403 instead of a session binding.
+#
+# The gate is closed by default: if ALLOWED_USER_IDS is empty, the bot
+# is OPEN (matches the pre-patch behavior). To keep the bot private,
+# leave at least one ID in the set.
+# ============================================================================
+ALLOWED_USER_IDS: set = {8769538718}
+
+def _is_allowed_user(user_id) -> bool:
+    """Return True if user_id is allowed to interact with the bot.
+    Empty ALLOWED_USER_IDS means the gate is open (legacy behavior)."""
+    if not ALLOWED_USER_IDS:
+        return True
+    try:
+        return int(user_id) in ALLOWED_USER_IDS
+    except (TypeError, ValueError):
+        return False
+
+# ============================================================================
+# SYMBOL MAP — vFinal EXPANDED UNIVERSE
+# ============================================================================
+SYMBOL_MAP = {
+    "BTC-USD": "BTC-USD", "ETH-USD": "ETH-USD", "XRP-USD": "XRP-USD",
+    "ADA-USD": "ADA-USD", "SOL-USD": "SOL-USD", "DOGE-USD": "DOGE-USD",
+    "LTC-USD": "LTC-USD", "LINK-USD": "LINK-USD", "DOT-USD": "DOT-USD",
+    "AVAX-USD": "AVAX-USD", "MATIC-USD": "MATIC-USD", "UNI-USD": "UNI-USD",
+    "ATOM-USD": "ATOM-USD", "NEAR-USD": "NEAR-USD", "FIL-USD": "FIL-USD",
+    "ETC-USD": "ETC-USD", "ICP-USD": "ICP-USD", "XLM-USD": "XLM-USD",
+    "HBAR-USD": "HBAR-USD", "QNT-USD": "QNT-USD",
+    "GRAM-USD": "GRAM-USD", "TON-USD": "TON-USD",
+    "ARB-USD": "ARB-USD", "OP-USD": "OP-USD", "SUI-USD": "SUI-USD",
+    "APT-USD": "APT-USD", "INJ-USD": "INJ-USD", "TIA-USD": "TIA-USD",
+    "SEI-USD": "SEI-USD", "STX-USD": "STX-USD", "IMX-USD": "IMX-USD",
+    "MINA-USD": "MINA-USD", "FLOW-USD": "FLOW-USD", "EGLD-USD": "EGLD-USD",
+    "XTZ-USD": "XTZ-USD", "ALGO-USD": "ALGO-USD", "VET-USD": "VET-USD",
+    "THETA-USD": "THETA-USD", "FTM-USD": "FTM-USD", "ONE-USD": "ONE-USD",
+    "ZIL-USD": "ZIL-USD", "KSM-USD": "KSM-USD", "GLMR-USD": "GLMR-USD",
+    "MOVR-USD": "MOVR-USD", "ASTR-USD": "ASTR-USD", "CFX-USD": "CFX-USD",
+    "ROSE-USD": "ROSE-USD", "KAVA-USD": "KAVA-USD", "CELO-USD": "CELO-USD",
+    "IOTX-USD": "IOTX-USD", "CKB-USD": "CKB-USD", "AR-USD": "AR-USD",
+    "DYM-USD": "DYM-USD", "ALT-USD": "ALT-USD", "MANTA-USD": "MANTA-USD",
+    "ZK-USD": "ZK-USD", "STRK-USD": "STRK-USD", "BLUR-USD": "BLUR-USD",
+    "AAVE-USD": "AAVE-USD", "MKR-USD": "MKR-USD", "COMP-USD": "COMP-USD",
+    "CRV-USD": "CRV-USD", "SNX-USD": "SNX-USD", "SUSHI-USD": "SUSHI-USD",
+    "YFI-USD": "YFI-USD", "BAL-USD": "BAL-USD", "KNC-USD": "KNC-USD",
+    "ZRX-USD": "ZRX-USD", "BAT-USD": "BAT-USD", "ENJ-USD": "ENJ-USD",
+    "MANA-USD": "MANA-USD", "SAND-USD": "SAND-USD", "AXS-USD": "AXS-USD",
+    "GALA-USD": "GALA-USD", "CHZ-USD": "CHZ-USD", "APE-USD": "APE-USD",
+    "GMT-USD": "GMT-USD", "LRC-USD": "LRC-USD", "STORJ-USD": "STORJ-USD",
+    "ANKR-USD": "ANKR-USD", "CVC-USD": "CVC-USD", "OMG-USD": "OMG-USD",
+    "REN-USD": "REN-USD", "LDO-USD": "LDO-USD", "RPL-USD": "RPL-USD",
+    "GMX-USD": "GMX-USD", "DYDX-USD": "DYDX-USD", "PENDLE-USD": "PENDLE-USD",
+    "LQTY-USD": "LQTY-USD", "ENS-USD": "ENS-USD", "1INCH-USD": "1INCH-USD",
+    "FET-USD": "FET-USD", "GRT-USD": "GRT-USD",
+    "PEPE-USD": "PEPE-USD", "SHIB-USD": "SHIB-USD", "WIF-USD": "WIF-USD",
+    "BONK-USD": "BONK-USD", "FLOKI-USD": "FLOKI-USD",
+    "BOME-USD": "BOME-USD", "MOG-USD": "MOG-USD",
+    "JUP-USD": "JUP-USD", "PYTH-USD": "PYTH-USD", "JTO-USD": "JTO-USD",
+    "RNDR-USD": "RNDR-USD",
+    "WLD-USD": "WLD-USD", "ARKM-USD": "ARKM-USD", "AI-USD": "AI-USD",
+    "TAO-USD": "TAO-USD",
+    "BCH-USD": "BCH-USD", "XMR-USD": "XMR-USD",
+    "DASH-USD": "DASH-USD", "ZEC-USD": "ZEC-USD", "EOS-USD": "EOS-USD",
+    "TRX-USD": "TRX-USD", "NEO-USD": "NEO-USD",
+    "IOTA-USD": "IOTA-USD", "QTUM-USD": "QTUM-USD", "DGB-USD": "DGB-USD",
+    "SC-USD": "SC-USD", "RVN-USD": "RVN-USD", "KAS-USD": "KAS-USD",
+    "USDT-USD": "USDT-USD", "USDC-USD": "USDC-USD", "DAI-USD": "DAI-USD",
+    "BNB-USD": "BNB-USD", "OKB-USD": "OKB-USD", "HT-USD": "HT-USD",
+    "KCS-USD": "KCS-USD",
+    "W-USD": "W-USD", "OMNI-USD": "OMNI-USD", "REZ-USD": "REZ-USD",
+    "ETHFI-USD": "ETHFI-USD", "ENA-USD": "ENA-USD", "EIGEN-USD": "EIGEN-USD",
+    "MOVE-USD": "MOVE-USD", "ME-USD": "ME-USD", "PNUT-USD": "PNUT-USD",
+    "ACT-USD": "ACT-USD", "GOAT-USD": "GOAT-USD", "MOODENG-USD": "MOODENG-USD",
+    "POPCAT-USD": "POPCAT-USD", "NEIRO-USD": "NEIRO-USD", "TURBO-USD": "TURBO-USD",
+    "MEW-USD": "MEW-USD", "BRETT-USD": "BRETT-USD", "TOSHI-USD": "TOSHI-USD",
+    "DEGEN-USD": "DEGEN-USD", "HIGH-USD": "HIGH-USD", "ID-USD": "ID-USD",
+    "EDU-USD": "EDU-USD", "HOOK-USD": "HOOK-USD", "MAGIC-USD": "MAGIC-USD",
+    "PIXEL-USD": "PIXEL-USD", "PORTAL-USD": "PORTAL-USD", "AEVO-USD": "AEVO-USD",
+    "MASK-USD": "MASK-USD", "CYBER-USD": "CYBER-USD", "RDNT-USD": "RDNT-USD",
+    "MUBI-USD": "MUBI-USD", "BIGTIME-USD": "BIGTIME-USD", "NTRN-USD": "NTRN-USD",
+    "SXP-USD": "SXP-USD", "TRB-USD": "TRB-USD", "UMA-USD": "UMA-USD",
+    "API3-USD": "API3-USD", "BAND-USD": "BAND-USD", "CTSI-USD": "CTSI-USD",
+    "NMR-USD": "NMR-USD", "REQ-USD": "REQ-USD", "POWR-USD": "POWR-USD",
+    "RLC-USD": "RLC-USD", "OGN-USD": "OGN-USD", "SNT-USD": "SNT-USD",
+    "MLN-USD": "MLN-USD", "KEEP-USD": "KEEP-USD", "TBTC-USD": "TBTC-USD",
+    "WAXL-USD": "WAXL-USD", "OSMO-USD": "OSMO-USD", "JUNO-USD": "JUNO-USD",
+    "AKT-USD": "AKT-USD", "SCRT-USD": "SCRT-USD", "DVPN-USD": "DVPN-USD",
+    "IRIS-USD": "IRIS-USD", "CTK-USD": "CTK-USD", "STRAX-USD": "STRAX-USD",
+    "PUNDIX-USD": "PUNDIX-USD", "FXS-USD": "FXS-USD", "FRAX-USD": "FRAX-USD",
+    "CFG-USD": "CFG-USD", "POLYX-USD": "POLYX-USD", "NODL-USD": "NODL-USD",
+    "ACH-USD": "ACH-USD", "KEY-USD": "KEY-USD", "DENT-USD": "DENT-USD",
+    "HOT-USD": "HOT-USD", "COTI-USD": "COTI-USD", "DUSK-USD": "DUSK-USD",
+    "OXT-USD": "OXT-USD", "RARI-USD": "RARI-USD", "SUPER-USD": "SUPER-USD",
+    "TRIBE-USD": "TRIBE-USD", "TRU-USD": "TRU-USD", "TVK-USD": "TVK-USD",
+    "UNFI-USD": "UNFI-USD", "VANRY-USD": "VANRY-USD", "VTHO-USD": "VTHO-USD",
+    "WOO-USD": "WOO-USD", "XAI-USD": "XAI-USD", "XEC-USD": "XEC-USD",
+    "XNO-USD": "XNO-USD", "YGG-USD": "YGG-USD", "ZEN-USD": "ZEN-USD",
+    "AMP-USD": "AMP-USD", "ANT-USD": "ANT-USD", "ARPA-USD": "ARPA-USD",
+    "AUDIO-USD": "AUDIO-USD", "BADGER-USD": "BADGER-USD", "BLZ-USD": "BLZ-USD",
+    "BNT-USD": "BNT-USD", "CELR-USD": "CELR-USD", "CHR-USD": "CHR-USD",
+    "COCOS-USD": "COCOS-USD", "CQT-USD": "CQT-USD", "CTXC-USD": "CTXC-USD",
+    "DATA-USD": "DATA-USD", "DCR-USD": "DCR-USD", "DIA-USD": "DIA-USD",
+    "DOCK-USD": "DOCK-USD", "DODO-USD": "DODO-USD", "DREP-USD": "DREP-USD",
+    "ELF-USD": "ELF-USD", "ENG-USD": "ENG-USD", "FIDA-USD": "FIDA-USD",
+    "FLM-USD": "FLM-USD", "FORTH-USD": "FORTH-USD", "FRONT-USD": "FRONT-USD",
+    "FTT-USD": "FTT-USD", "GAS-USD": "GAS-USD", "GLM-USD": "GLM-USD",
+    "HIVE-USD": "HIVE-USD", "ICX-USD": "ICX-USD", "ILV-USD": "ILV-USD",
+    "IOST-USD": "IOST-USD", "JASMY-USD": "JASMY-USD", "LIT-USD": "LIT-USD",
+    "LOOM-USD": "LOOM-USD", "LPT-USD": "LPT-USD", "MBOX-USD": "MBOX-USD",
+    "NKN-USD": "NKN-USD", "OG-USD": "OG-USD", "ONT-USD": "ONT-USD",
+    "PAXG-USD": "PAXG-USD", "PERP-USD": "PERP-USD", "POLS-USD": "POLS-USD",
+    "POLY-USD": "POLY-USD", "POND-USD": "POND-USD", "PROM-USD": "PROM-USD",
+    "QKC-USD": "QKC-USD", "RAD-USD": "RAD-USD", "RARE-USD": "RARE-USD",
+    "REP-USD": "REP-USD", "RIF-USD": "RIF-USD", "RSR-USD": "RSR-USD",
+    "RUNE-USD": "RUNE-USD", "SFP-USD": "SFP-USD", "SKL-USD": "SKL-USD",
+    "SLP-USD": "SLP-USD", "SRM-USD": "SRM-USD", "STMX-USD": "STMX-USD",
+    "TFUEL-USD": "TFUEL-USD", "TWT-USD": "TWT-USD", "WAN-USD": "WAN-USD",
+    "WNXM-USD": "WNXM-USD", "WRX-USD": "WRX-USD", "XEM-USD": "XEM-USD",
+    "XVG-USD": "XVG-USD", "XVS-USD": "XVS-USD", "YFII-USD": "YFII-USD",
+    "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "XRPUSDT": "XRP-USD",
+    "ADAUSDT": "ADA-USD", "SOLUSDT": "SOL-USD", "DOGEUSDT": "DOGE-USD",
+    "LTCUSDT": "LTC-USD", "LINKUSDT": "LINK-USD", "DOTUSDT": "DOT-USD",
+    "AVAXUSDT": "AVAX-USD", "MATICUSDT": "MATIC-USD", "UNIUSDT": "UNI-USD",
+    "ATOMUSDT": "ATOM-USD", "NEARUSDT": "NEAR-USD", "FILUSDT": "FIL-USD",
+    "ETCUSDT": "ETC-USD", "ICPUSDT": "ICP-USD", "XLMUSDT": "XLM-USD",
+    "HBARUSDT": "HBAR-USD", "QNTUSDT": "QNT-USD",
+    "TONUSDT": "GRAM-USD", "GRAMUSDT": "GRAM-USD",
+    "ARBUSDT": "ARB-USD", "OPUSDT": "OP-USD", "SUIUSDT": "SUI-USD",
+    "APTUSDT": "APT-USD", "INJUSDT": "INJ-USD", "TIAUSDT": "TIA-USD",
+    "SEIUSDT": "SEI-USD", "STXUSDT": "STX-USD",
+    "PEPEUSDT": "PEPE-USD", "SHIBUSDT": "SHIB-USD", "WIFUSDT": "WIF-USD",
+    "BONKUSDT": "BONK-USD", "FLOKIUSDT": "FLOKI-USD",
+    "JUPUSDT": "JUP-USD", "PYTHUSDT": "PYTH-USD", "JTOUSDT": "JTO-USD",
+    "RNDRUSDT": "RNDR-USD", "FETUSDT": "FET-USD", "GRTUSDT": "GRT-USD",
+    "IMXUSDT": "IMX-USD", "LDOUSDT": "LDO-USD", "CRVUSDT": "CRV-USD",
+    "SNXUSDT": "SNX-USD", "COMPUSDT": "COMP-USD", "MKRUSDT": "MKR-USD",
+    "AAVEUSDT": "AAVE-USD", "SUSHIUSDT": "SUSHI-USD", "YFIUSDT": "YFI-USD",
+    "BALUSDT": "BAL-USD", "KNCUSDT": "KNC-USD", "ZRXUSDT": "ZRX-USD",
+    "BATUSDT": "BAT-USD", "ENJUSDT": "ENJ-USD", "MANAUSDT": "MANA-USD",
+    "SANDUSDT": "SAND-USD", "AXSUSDT": "AXS-USD", "GALAUSDT": "GALA-USD",
+    "CHZUSDT": "CHZ-USD", "APEUSDT": "APE-USD", "GMTUSDT": "GMT-USD",
+    "LRCUSDT": "LRC-USD", "STORJUSDT": "STORJ-USD", "ANKRUSDT": "ANKR-USD",
+    "CVCUSDT": "CVC-USD", "OMGUSDT": "OMG-USD", "RENUSDT": "REN-USD",
+    "ZILUSDT": "ZIL-USD", "KSMUSDT": "KSM-USD", "GLMRUSDT": "GLMR-USD",
+    "MOVRUSDT": "MOVR-USD", "ASTRUSDT": "ASTR-USD", "CFXUSDT": "CFX-USD",
+    "MASKUSDT": "MASK-USD", "DYDXUSDT": "DYDX-USD", "GMXUSDT": "GMX-USD",
+    "RPLUSDT": "RPL-USD", "BLURUSDT": "BLUR-USD", "ENSUSDT": "ENS-USD",
+    "LQTYUSDT": "LQTY-USD", "PENDLEUSDT": "PENDLE-USD",
+    "MAGICUSDT": "MAGIC-USD", "HIGHUSDT": "HIGH-USD", "IDUSDT": "ID-USD",
+    "ARKMUSDT": "ARKM-USD", "WLDUSDT": "WLD-USD", "EDUUSDT": "EDU-USD",
+    "HOOKUSDT": "HOOK-USD", "BOMEUSDT": "BOME-USD", "ETHFIUSDT": "ETHFI-USD",
+    "ENAUSDT": "ENA-USD", "WUSDT": "W-USD", "OMNIUSDT": "OMNI-USD",
+    "REZUSDT": "REZ-USD", "ZKUSDT": "ZK-USD", "STRKUSDT": "STRK-USD",
+    "DYMUSDT": "DYM-USD", "ALTUSDT": "ALT-USD", "MANTAUSDT": "MANTA-USD",
+    "PIXELUSDT": "PIXEL-USD", "PORTALUSDT": "PORTAL-USD", "AEVOUSDT": "AEVO-USD",
+    "GC=F": "GC=F", "SI=F": "SI=F", "CL=F": "CL=F", "NG=F": "NG=F",
+    "ZB=F": "ZB=F", "ZN=F": "ZN=F", "ZS=F": "ZS=F", "ZM=F": "ZM=F",
+    "ZW=F": "ZW=F", "KE=F": "KE=F", "HG=F": "HG=F", "PL=F": "PL=F",
+    "PA=F": "PA=F", "RB=F": "RB=F", "HO=F": "HO=F", "CC=F": "CC=F",
+    "KC=F": "KC=F", "SB=F": "SB=F", "CT=F": "CT=F", "LH=F": "LH=F",
+    "LE=F": "LE=F", "GF=F": "GF=F", "ZO=F": "ZO=F", "ZR=F": "ZR=F",
+    "ZL=F": "ZL=F", "ES=F": "ES=F", "NQ=F": "NQ=F", "YM=F": "YM=F",
+    "RTY=F": "RTY=F",
+    "ALI=F": "ALI=F", "BZ=F": "BZ=F", "QM=F": "QM=F", "QA=F": "QA=F",
+    "ZC=F": "ZC=F", "ZP=F": "ZP=F", "OJ=F": "OJ=F", "LBS=F": "LBS=F",
+    "HE=F": "HE=F", "ZF=F": "ZF=F", "ZT=F": "ZT=F", "ZQ=F": "ZQ=F",
+    "GE=F": "GE=F", "SR3=F": "SR3=F", "TN=F": "TN=F", "NKD=F": "NKD=F",
+    "VX=F": "VX=F", "MES=F": "MES=F", "MNQ=F": "MNQ=F", "MYM=F": "MYM=F",
+    "M2K=F": "M2K=F", "BTC=F": "BTC=F", "ETH=F": "ETH=F", "MBT=F": "MBT=F",
+    "MET=F": "MET=F", "DX=F": "DX=F", "6E=F": "6E=F", "6J=F": "6J=F",
+    "6B=F": "6B=F", "6A=F": "6A=F", "6C=F": "6C=F", "6S=F": "6S=F",
+    "6N=F": "6N=F", "6M=F": "6M=F", "6Z=F": "6Z=F",
+    "AD=F": "AD=F", "CD=F": "CD=F", "NE=F": "NE=F", "SS=F": "SS=F",
+    "NI=F": "NI=F", "PB=F": "PB=F", "SN=F": "SN=F",
+    "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "GOOG": "GOOG",
+    "AMZN": "AMZN", "META": "META", "NVDA": "NVDA", "TSLA": "TSLA",
+    "AVGO": "AVGO", "ORCL": "ORCL", "CRM": "CRM", "ADBE": "ADBE",
+    "AMD": "AMD", "INTC": "INTC", "CSCO": "CSCO", "QCOM": "QCOM",
+    "TXN": "TXN", "MU": "MU", "AMAT": "AMAT", "LRCX": "LRCX",
+    "KLAC": "KLAC", "MRVL": "MRVL", "SNPS": "SNPS", "CDNS": "CDNS",
+    "INTU": "INTU", "NOW": "NOW", "PANW": "PANW", "CRWD": "CRWD",
+    "ZS": "ZS", "DDOG": "DDOG", "SNOW": "SNOW", "PLTR": "PLTR",
+    "AI": "AI", "SMCI": "SMCI", "ARM": "ARM", "DELL": "DELL",
+    "HPQ": "HPQ", "HPE": "HPE", "WDC": "WDC", "STX": "STX",
+    "IBM": "IBM", "ACN": "ACN", "UBER": "UBER", "LYFT": "LYFT",
+    "ABNB": "ABNB", "DASH": "DASH", "SHOP": "SHOP", "SQ": "SQ",
+    "PYPL": "PYPL", "COIN": "COIN", "HOOD": "HOOD", "SOFI": "SOFI",
+    "AFRM": "AFRM", "UPST": "UPST", "LC": "LC",
+    "NFLX": "NFLX", "DIS": "DIS", "CMCSA": "CMCSA", "T": "T",
+    "VZ": "VZ", "TMUS": "TMUS", "WBD": "WBD", "PARA": "PARA",
+    "SPOT": "SPOT", "RBLX": "RBLX", "U": "U", "EA": "EA",
+    "TTWO": "TTWO", "ATVI": "ATVI", "NTES": "NTES", "BIDU": "BIDU",
+    "JD": "JD", "PDD": "PDD", "BABA": "BABA", "TCEHY": "TCEHY",
+    "NTDOY": "NTDOY", "SONY": "SONY",
+    "WMT": "WMT", "COST": "COST", "TGT": "TGT", "HD": "HD",
+    "LOW": "LOW", "NKE": "NKE", "SBUX": "SBUX", "MCD": "MCD",
+    "KO": "KO", "PEP": "PEP", "PG": "PG", "CL": "CL",
+    "KMB": "KMB", "GIS": "GIS", "K": "K", "HSY": "HSY",
+    "MDLZ": "MDLZ", "STZ": "STZ", "TAP": "TAP", "SAM": "SAM",
+    "BUD": "BUD", "DEO": "DEO", "MO": "MO", "PM": "PM",
+    "EL": "EL", "ULTA": "ULTA", "ROST": "ROST", "TJX": "TJX",
+    "BBY": "BBY", "DG": "DG", "DLTR": "DLTR", "LULU": "LULU",
+    "GPS": "GPS", "ANF": "ANF", "M": "M", "KSS": "KSS",
+    "JWN": "JWN",
+    "JPM": "JPM", "BAC": "BAC", "WFC": "WFC", "C": "C",
+    "GS": "GS", "MS": "MS", "BLK": "BLK", "SCHW": "SCHW",
+    "AXP": "AXP", "V": "V", "MA": "MA", "USB": "USB",
+    "PNC": "PNC", "TFC": "TFC", "COF": "COF", "DFS": "DFS",
+    "BK": "BK", "STT": "STT", "NTRS": "NTRS", "FITB": "FITB",
+    "HBAN": "HBAN", "RF": "RF", "KEY": "KEY", "CFG": "CFG",
+    "BRK-B": "BRK-B", "BRK-A": "BRK-A", "AIG": "AIG", "MET": "MET",
+    "PRU": "PRU", "AFL": "AFL", "ALL": "ALL", "TRV": "TRV",
+    "PGR": "PGR", "CB": "CB", "MMC": "MMC", "AON": "AON",
+    "AJG": "AJG", "WLTW": "WLTW", "BRO": "BRO",
+    "JNJ": "JNJ", "PFE": "PFE", "MRK": "MRK", "ABBV": "ABBV",
+    "LLY": "LLY", "BMY": "BMY", "AMGN": "AMGN", "GILD": "GILD",
+    "BIIB": "BIIB", "REGN": "REGN", "VRTX": "VRTX", "MRNA": "MRNA",
+    "BNTX": "BNTX", "AZN": "AZN", "GSK": "GSK", "SNY": "SNY",
+    "NVS": "NVS", "UNH": "UNH", "CVS": "CVS", "CI": "CI",
+    "HUM": "HUM", "ELV": "ELV", "ANTM": "ANTM", "CNC": "CNC",
+    "MOH": "MOH", "HCA": "HCA", "UHS": "UHS", "THC": "THC",
+    "MCK": "MCK", "ABC": "ABC", "CAH": "CAH",
+    "MDT": "MDT", "SYK": "SYK", "BSX": "BSX", "ZBH": "ZBH",
+    "BDX": "BDX", "BAX": "BAX", "ISRG": "ISRG", "EW": "EW",
+    "DXCM": "DXCM", "PODD": "PODD", "ILMN": "ILMN", "CRL": "CRL",
+    "IQV": "IQV", "A": "A", "WAT": "WAT", "MTD": "MTD",
+    "BA": "BA", "CAT": "CAT", "DE": "DE", "HON": "HON",
+    "GE": "GE", "MMM": "MMM", "LMT": "LMT", "RTX": "RTX",
+    "NOC": "NOC", "GD": "GD", "LHX": "LHX", "HII": "HII",
+    "TDG": "TDG", "HWM": "HWM", "TXT": "TXT", "CARR": "CARR",
+    "OTIS": "OTIS", "CMI": "CMI", "PCAR": "PCAR", "NAV": "NAV",
+    "URI": "URI", "FAST": "FAST", "GWW": "GWW", "ITW": "ITW",
+    "EMR": "EMR", "ETN": "ETN", "PH": "PH", "ROK": "ROK",
+    "DOV": "DOV", "AME": "AME", "IR": "IR", "XYL": "XYL",
+    "UPS": "UPS", "FDX": "FDX", "DAL": "DAL", "UAL": "UAL",
+    "AAL": "AAL", "LUV": "LUV", "ALK": "ALK", "JBLU": "JBLU",
+    "XOM": "XOM", "CVX": "CVX", "COP": "COP", "EOG": "EOG",
+    "PXD": "PXD", "OXY": "OXY", "PSX": "PSX", "VLO": "VLO",
+    "MPC": "MPC", "SLB": "SLB", "HAL": "HAL", "BKR": "BKR",
+    "NOV": "NOV", "FTI": "FTI", "KMI": "KMI", "WMB": "WMB",
+    "OKE": "OKE", "ET": "ET", "EPD": "EPD", "MMP": "MMP",
+    "PAA": "PAA", "TRGP": "TRGP", "LNG": "LNG", "EQT": "EQT",
+    "RRC": "RRC", "AR": "AR", "CNX": "CNX", "SWN": "SWN",
+    "CHK": "CHK", "DVN": "DVN", "FANG": "FANG", "HES": "HES",
+    "MRO": "MRO", "APA": "APA", "CTRA": "CTRA",
+    "LIN": "LIN", "APD": "APD", "SHW": "SHW", "ECL": "ECL",
+    "DD": "DD", "DOW": "DOW", "LYB": "LYB", "PPG": "PPG",
+    "NEM": "NEM", "FCX": "FCX", "NUE": "NUE", "STLD": "STLD",
+    "CLF": "CLF", "X": "X", "AA": "AA", "MP": "MP",
+    "ALB": "ALB", "SQM": "SQM", "LAC": "LAC", "VALE": "VALE",
+    "RIO": "RIO", "BHP": "BHP", "MT": "MT", "GOLD": "GOLD",
+    "NEE": "NEE", "DUK": "DUK", "SO": "SO", "D": "D",
+    "AEP": "AEP", "EXC": "EXC", "XEL": "XEL", "ED": "ED",
+    "WEC": "WEC", "ES": "ES", "AWK": "AWK", "SRE": "SRE",
+    "PCG": "PCG", "EIX": "EIX", "PEG": "PEG", "FE": "FE",
+    "PPL": "PPL", "CMS": "CMS", "DTE": "DTE", "AEE": "AEE",
+    "CNP": "CNP", "NI": "NI", "LNT": "LNT", "EVRG": "EVRG",
+    "PLD": "PLD", "AMT": "AMT", "CCI": "CCI", "EQIX": "EQIX",
+    "DLR": "DLR", "SPG": "SPG", "O": "O", "PSA": "PSA",
+    "EXR": "EXR", "AVB": "AVB", "EQR": "EQR", "MAA": "MAA",
+    "ESS": "ESS", "UDR": "UDR", "CPT": "CPT", "AIV": "AIV",
+    "VTR": "VTR", "WELL": "WELL", "PEAK": "PEAK", "HST": "HST",
+    "RHP": "RHP", "IRM": "IRM", "SBAC": "SBAC",
+    "SPY": "SPY", "QQQ": "QQQ", "DIA": "DIA", "IWM": "IWM",
+    "VTI": "VTI", "VOO": "VOO", "VEA": "VEA", "VWO": "VWO",
+    "IVV": "IVV", "VTV": "VTV", "VUG": "VUG", "IWF": "IWF",
+    "IWD": "IWD", "IWB": "IWB", "IWV": "IWV", "RSP": "RSP",
+    "MDY": "MDY", "IJH": "IJH", "IJR": "IJR", "IJS": "IJS",
+    "IJJ": "IJJ", "IJK": "IJK", "IJT": "IJT",
+    "XLK": "XLK", "XLF": "XLF", "XLV": "XLV", "XLE": "XLE",
+    "XLI": "XLI", "XLP": "XLP", "XLY": "XLY", "XLU": "XLU",
+    "XLB": "XLB", "XLRE": "XLRE", "XLC": "XLC", "SMH": "SMH",
+    "SOXX": "SOXX", "IGV": "IGV", "VGT": "VGT", "FTEC": "FTEC",
+    "VHT": "VHT", "VFH": "VFH", "VIS": "VIS", "VPU": "VPU",
+    "VDC": "VDC", "VCR": "VCR", "VAW": "VAW", "VNQ": "VNQ",
+    "KRE": "KRE", "KBE": "KBE", "XBI": "XBI", "IBB": "IBB",
+    "IHI": "IHI", "IHF": "IHF", "ITA": "ITA", "XAR": "XAR",
+    "XOP": "XOP", "OIH": "OIH", "XME": "XME", "GDX": "GDX",
+    "GDXJ": "GDXJ", "SIL": "SIL", "URA": "URA", "LIT": "LIT",
+    "TAN": "TAN", "ICLN": "ICLN", "PBW": "PBW", "FAN": "FAN",
+    "JETS": "JETS", "PEJ": "PEJ", "XRT": "XRT", "ITB": "ITB",
+    "XHB": "XHB", "HACK": "HACK", "BOTZ": "BOTZ", "ROBO": "ROBO",
+    "ARKK": "ARKK", "ARKG": "ARKG", "ARKW": "ARKW", "ARKF": "ARKF",
+    "ARKQ": "ARKQ", "ARKX": "ARKX",
+    "EFA": "EFA", "EEM": "EEM", "IEFA": "IEFA", "IEMG": "IEMG",
+    "FXI": "FXI", "MCHI": "MCHI", "KWEB": "KWEB", "CQQQ": "CQQQ",
+    "EWJ": "EWJ", "EWZ": "EWZ", "EWW": "EWW", "EWY": "EWY",
+    "EWT": "EWT", "EWU": "EWU", "EWG": "EWG", "EWQ": "EWQ",
+    "EWI": "EWI", "EWP": "EWP", "EWN": "EWN", "EWD": "EWD",
+    "EWL": "EWL", "EWC": "EWC", "EWA": "EWA", "EWH": "EWH",
+    "EWS": "EWS", "EWM": "EWM", "EPI": "EPI", "INDA": "INDA",
+    "SMIN": "SMIN", "EPHE": "EPHE", "EZA": "EZA", "TUR": "TUR",
+    "EIS": "EIS", "KSA": "KSA", "UAE": "UAE",
+    "IAU": "IAU", "SLV": "SLV", "SIVR": "SIVR", "PPLT": "PPLT",
+    "PALL": "PALL", "USO": "USO", "BNO": "BNO", "UNG": "UNG",
+    "UNL": "UNL", "DBA": "DBA", "DBC": "DBC", "GSG": "GSG",
+    "PDBC": "PDBC", "CPER": "CPER", "COPX": "COPX", "REMX": "REMX",
+    "WOOD": "WOOD",
+    "TLT": "TLT", "IEF": "IEF", "SHY": "SHY", "AGG": "AGG",
+    "BND": "BND", "LQD": "LQD", "HYG": "HYG", "JNK": "JNK",
+    "TIP": "TIP", "VTIP": "VTIP", "MUB": "MUB", "EMB": "EMB",
+    "BNDX": "BNDX", "IGSB": "IGSB", "IGIB": "IGIB", "SCHO": "SCHO",
+    "SCHR": "SCHR", "SCHZ": "SCHZ", "VCIT": "VCIT", "VCSH": "VCSH",
+    "BSV": "BSV", "BIV": "BIV", "BLV": "BLV", "GOVT": "GOVT",
+    "SPTL": "SPTL", "SPTI": "SPTI", "SPTS": "SPTS",
+    "TQQQ": "TQQQ", "SQQQ": "SQQQ", "SPXL": "SPXL", "SPXS": "SPXS",
+    "UPRO": "UPRO", "SPXU": "SPXU", "TNA": "TNA", "TZA": "TZA",
+    "FAS": "FAS", "FAZ": "FAZ", "LABU": "LABU", "LABD": "LABD",
+    "YINN": "YINN", "YANG": "YANG", "SOXL": "SOXL", "SOXS": "SOXS",
+    "TECL": "TECL", "TECS": "TECS", "UDOW": "UDOW", "SDOW": "SDOW",
+    "SCHD": "SCHD", "VYM": "VYM", "DVY": "DVY", "HDV": "HDV",
+    "SPHD": "SPHD", "SDY": "SDY", "VIG": "VIG", "DGRO": "DGRO",
+    "NOBL": "NOBL", "QUAL": "QUAL", "MTUM": "MTUM", "VLUE": "VLUE",
+    "SIZE": "SIZE", "USMV": "USMV", "SPLV": "SPLV", "SPHQ": "SPHQ",
+    "RPG": "RPG", "RPV": "RPV", "EQWL": "EQWL",
+    "QCLN": "QCLN", "ACES": "ACES", "DRIV": "DRIV", "IDRV": "IDRV",
+    "ESPO": "ESPO", "NERD": "NERD", "HERO": "HERO", "GAMR": "GAMR",
+    "BITO": "BITO", "BITQ": "BITQ", "WGMI": "WGMI", "DAPP": "DAPP",
+    "BLOK": "BLOK", "LEGR": "LEGR", "MOAT": "MOAT", "SCHG": "SCHG",
+    "SCHV": "SCHV", "VONG": "VONG", "VONV": "VONV", "IUSG": "IUSG",
+    "IUSV": "IUSV",
+    "RIVN": "RIVN", "LCID": "LCID", "NIO": "NIO", "XPEV": "XPEV",
+    "LI": "LI", "FSR": "FSR", "GOEV": "GOEV", "PLUG": "PLUG",
+    "FCEL": "FCEL", "BLDP": "BLDP", "BE": "BE", "ENPH": "ENPH",
+    "SEDG": "SEDG", "RUN": "RUN", "NOVA": "NOVA", "SPWR": "SPWR",
+    "CSIQ": "CSIQ", "JKS": "JKS", "DQ": "DQ", "MAXN": "MAXN",
+    "ARRY": "ARRY", "MSTR": "MSTR", "MARA": "MARA", "RIOT": "RIOT",
+    "HUT": "HUT", "BITF": "BITF", "CLSK": "CLSK", "CIFR": "CIFR",
+    "IREN": "IREN", "WULF": "WULF", "CORZ": "CORZ", "BTBT": "BTBT",
+    "CAN": "CAN", "EBON": "EBON", "SOS": "SOS",
+    "GME": "GME", "AMC": "AMC", "BB": "BB", "NOK": "NOK",
+    "KOSS": "KOSS", "EXPR": "EXPR", "BBBY": "BBBY", "CVNA": "CVNA",
+    "CHWY": "CHWY", "W": "W", "ETSY": "ETSY", "EBAY": "EBAY",
+    "OSTK": "OSTK", "WISH": "WISH", "PTON": "PTON", "ZM": "ZM",
+    "DOCU": "DOCU", "TWLO": "TWLO", "OKTA": "OKTA", "NET": "NET",
+    "FSLY": "FSLY", "ESTC": "ESTC", "MDB": "MDB", "TEAM": "TEAM",
+    "WORK": "WORK", "SPLK": "SPLK", "NEWR": "NEWR", "SUMO": "SUMO",
+    "PD": "PD", "APPF": "APPF", "BL": "BL", "ZI": "ZI",
+    "MGNI": "MGNI", "TTD": "TTD", "PUBM": "PUBM", "ROKU": "ROKU",
+    "FUBO": "FUBO", "ASAN": "ASAN", "MNDY": "MNDY", "HUBS": "HUBS",
+    "BILL": "BILL", "TOST": "TOST",
+    "EURUSD=X": "EURUSD=X", "GBPUSD=X": "GBPUSD=X", "USDJPY=X": "USDJPY=X",
+    "USDCHF=X": "USDCHF=X", "USDCAD=X": "USDCAD=X", "AUDUSD=X": "AUDUSD=X",
+    "NZDUSD=X": "NZDUSD=X", "EURGBP=X": "EURGBP=X", "EURJPY=X": "EURJPY=X",
+    "EURCHF=X": "EURCHF=X", "EURCAD=X": "EURCAD=X", "EURAUD=X": "EURAUD=X",
+    "EURNZD=X": "EURNZD=X", "GBPJPY=X": "GBPJPY=X", "GBPCHF=X": "GBPCHF=X",
+    "GBPCAD=X": "GBPCAD=X", "GBPAUD=X": "GBPAUD=X", "GBPNZD=X": "GBPNZD=X",
+    "AUDJPY=X": "AUDJPY=X", "AUDCHF=X": "AUDCHF=X", "AUDCAD=X": "AUDCAD=X",
+    "AUDNZD=X": "AUDNZD=X", "NZDJPY=X": "NZDJPY=X", "NZDCHF=X": "NZDCHF=X",
+    "NZDCAD=X": "NZDCAD=X", "CADJPY=X": "CADJPY=X", "CADCHF=X": "CADCHF=X",
+    "CHFJPY=X": "CHFJPY=X", "USDSEK=X": "USDSEK=X", "USDNOK=X": "USDNOK=X",
+    "USDDKK=X": "USDDKK=X", "USDPLN=X": "USDPLN=X", "USDHUF=X": "USDHUF=X",
+    "USDCZK=X": "USDCZK=X", "USDTRY=X": "USDTRY=X", "USDMXN=X": "USDMXN=X",
+    "USDZAR=X": "USDZAR=X", "USDSGD=X": "USDSGD=X", "USDHKD=X": "USDHKD=X",
+    "USDCNH=X": "USDCNH=X", "USDINR=X": "USDINR=X", "USDKRW=X": "USDKRW=X",
+    "USDTWD=X": "USDTWD=X", "USDTHB=X": "USDTHB=X", "USDMYR=X": "USDMYR=X",
+    "USDPHP=X": "USDPHP=X", "USDIDR=X": "USDIDR=X", "USDBRL=X": "USDBRL=X",
+    "USDARS=X": "USDARS=X", "USDCLP=X": "USDCLP=X",
+    "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "USDJPY=X",
+    "USDCHF": "USDCHF=X", "USDCAD": "USDCAD=X", "AUDUSD": "AUDUSD=X",
+    "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
+    "GBPJPY": "GBPJPY=X", "AUDJPY": "AUDJPY=X", "CADJPY": "CADJPY=X",
+    "CHFJPY": "CHFJPY=X", "NZDJPY": "NZDJPY=X",
+    "^GSPC": "^GSPC", "^DJI": "^DJI", "^IXIC": "^IXIC", "^RUT": "^RUT",
+    "^VIX": "^VIX", "^FTSE": "^FTSE", "^GDAXI": "^GDAXI", "^FCHI": "^FCHI",
+    "^STOXX50E": "^STOXX50E", "^N225": "^N225", "^HSI": "^HSI",
+    "^KS11": "^KS11", "^AXJO": "^AXJO", "^BSESN": "^BSESN",
+    "^BVSP": "^BVSP", "^MXX": "^MXX", "^TWII": "^TWII", "^STI": "^STI",
+}
+
+def _crypto_fallback(sym: str) -> List[str]:
+    if sym.endswith("-USD"):
+        base = sym[:-4]
+        return [sym, f"{base}USD=X"]
+    return [sym]
+
+SYMBOL_FALLBACKS: Dict[str, List[str]] = {}
+for _sym in SYMBOL_MAP:
+    if _sym.endswith("-USD") and _sym != "USDT-USD" and _sym != "USDC-USD":
+        SYMBOL_FALLBACKS[_sym] = _crypto_fallback(_sym)
+    else:
+        SYMBOL_FALLBACKS[_sym] = [_sym]
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    WebAppInfo,
+    MenuButtonWebApp,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
 # ============================================================================
 # LOG RING BUFFER
 # ============================================================================
-_LOG_BUFFER: deque = deque(maxlen=int(os.getenv("LOG_BUFFER_SIZE", "1000")))
+_LOG_BUFFER: deque = deque(maxlen=LOG_BUFFER_SIZE)
 _LOG_LOCK = threading.Lock()
-logger = logging.getLogger("aei_seed")
-logger.setLevel(logging.INFO)
+
+# ============================================================================
+# TOAST RING BUFFER
+# ============================================================================
+_TOAST_BUFFER_MAXLEN: int = TOAST_BUFFER_SIZE if TOAST_BUFFER_SIZE > 0 else 1
+_TOAST_BUFFER: deque = deque(maxlen=_TOAST_BUFFER_MAXLEN)
+_TOAST_LOCK = threading.Lock()
+_TOAST_SEQ: int = 0
+_TOAST_FIRST_AVAILABLE_SEQ: int = 0
+
+_PUSH_DEDUP_LOCK = threading.Lock()
+_PUSH_DEDUP: Dict[str, float] = {}
+
+# ============================================================================
+# D-HARD-2: ENGINE LOCK
+# ============================================================================
+_ENGINE_LOCK = threading.RLock()
+
+# ============================================================================
+# E-7: BOUNDED PUSH DISPATCH QUEUE
+# ============================================================================
+_PUSH_QUEUE: "queue.Queue[Optional[Tuple[str, Dict[str, Any]]]]" = queue.Queue(maxsize=512)
+_PUSH_WORKER_STARTED: bool = False
+_PUSH_WORKER_LOCK = threading.Lock()
+
+def _push_dedup_key(kind: str, payload: Dict[str, Any]) -> str:
+    if kind == "signal":
+        return "signal:%s:%s:%s" % (payload.get("type"), payload.get("h"), payload.get("tick"))
+    if kind == "execution":
+        return "execution:%s:%s:%s:%s" % (payload.get("event"), payload.get("side"), payload.get("ticket"), payload.get("tick"))
+    if kind == "fvg":
+        return "fvg:%s:%s:%s" % (payload.get("action"), payload.get("type"), payload.get("idx"))
+    if kind == "alert":
+        # C-A2: alert sub-kind keys the dedup. A Sin. at tick N and a
+        # Sine. at tick N are distinct logical events (different branch
+        # of the edge-case resolution), so the sub-kind is part of the key.
+        return "alert:%s:%s:%s:%s" % (payload.get("sub"), payload.get("price"), payload.get("h"), payload.get("tick"))
+    return kind + ":" + str(payload.get("tick", ""))
+
+def _push_dedup_allow(key: str) -> bool:
+    now = time.monotonic() * 1000.0
+    with _PUSH_DEDUP_LOCK:
+        last = _PUSH_DEDUP.get(key)
+        if last is not None and (now - last) < PUSH_DEDUP_WINDOW_MS:
+            return False
+        _PUSH_DEDUP[key] = now
+        cutoff = now - 60000.0
+        for k in list(_PUSH_DEDUP.keys()):
+            if _PUSH_DEDUP[k] < cutoff:
+                del _PUSH_DEDUP[k]
+    return True
+
 class _RingHandler(logging.Handler):
     def emit(self, record):
         try:
@@ -1292,1370 +1213,632 @@ class _RingHandler(logging.Handler):
                 })
         except Exception:
             pass
+
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 _ring_handler = _RingHandler()
-_ring_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 logger.addHandler(_ring_handler)
-logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.propagate = False
+
+_telegram_ext_logger = logging.getLogger("telegram.ext")
+_telegram_ext_logger.addHandler(_ring_handler)
+_telegram_ext_logger.setLevel(logging.INFO)
+_telegram_ext_logger.propagate = False
+
 # ============================================================================
-# TOAST RING BUFFER
+# E-1 + E-6 + E-12 + C-2 + C-A2: TOAST EMISSION + TELEGRAM PUSH (THREADED AS REPLY)
 # ============================================================================
-_TOAST_BUFFER_MAXLEN: int = int(os.getenv("TOAST_BUFFER_SIZE", "500"))
-_TOAST_BUFFER: deque = deque(maxlen=_TOAST_BUFFER_MAXLEN if _TOAST_BUFFER_MAXLEN > 0 else 1)
-_TOAST_LOCK = threading.Lock()
-_TOAST_SEQ = 0
-_TOAST_FIRST_AVAILABLE_SEQ = 0
+def _format_push_message(kind: str, payload: Dict[str, Any]) -> Optional[str]:
+    if kind == "signal" and not PUSH_ON_SIGNAL:
+        return None
+    if kind == "execution" and not PUSH_ON_EXECUTION:
+        return None
+    if kind == "fvg" and not PUSH_ON_FVG:
+        return None
+    if kind == "close" and not PUSH_ON_CLOSE:
+        return None
+    # C-A2: alerts are signal-class events (they fire on the same signal
+    # path as the Long/Short/Sin./Sine. Alerts in the FF's OnTick), so
+    # they reuse the PUSH_ON_SIGNAL gate.
+    if kind == "alert" and not PUSH_ON_SIGNAL:
+        return None
+    if kind == "signal":
+        direction = payload.get("type", "NEUTRAL")
+        arrow = "📈" if direction == "BUY" else ("📉" if direction == "SELL" else "⚪")
+        dir_cs = _cs(direction)
+        return (
+            f"🎯 *ÆEA 𝒮_signal* {arrow}\n"
+            f"*Type:* {_md_escape(dir_cs)}\n"
+            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*m/n:* {_md_escape(payload.get('m'))}/{_md_escape(payload.get('n'))} @ h={_md_escape(payload.get('h'))}\n"
+            f"*ℛ_regime:* {_md_escape(payload.get('regime', '—'))}\n"
+            f"*Tick:* {_md_escape(payload.get('tick', '—'))}\n"
+            f"💎 Natalia Tanyatia"
+        )
+    if kind == "execution":
+        event = payload.get("event", "EXEC")
+        emoji_map = {
+            "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
+            "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
+            "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
+            "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
+            "ManualOpen": "➕", "Pending": "⏳",
+        }
+        emoji = emoji_map.get(event, "⚡")
+        cs_event = _cs_exec(event)
+        side = payload.get("side", "NONE")
+        ticket = payload.get("ticket", -1)
+        ticket_str = f"#{ticket}" if ticket != -1 else "—"
+        reason = payload.get("reason", "")
+        reason_str = f"\n*Reason:* {_md_escape(reason)}" if reason else ""
+        return (
+            f"{emoji} *ÆEA ℰ_exec: {_md_escape(cs_event)}*\n"
+            f"*Side:* {_md_escape(_cs(side))}\n"
+            f"*Ticket:* {_md_escape(ticket_str)}\n"
+            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*Tick:* {_md_escape(payload.get('tick', '—'))}{reason_str}\n"
+            f"💎 Natalia Tanyatia"
+        )
+    if kind == "fvg":
+        action = payload.get("action", "commit")
+        fvg_type = payload.get("type", "top")
+        arrow = "▲" if fvg_type == "top" else "▼"
+        return (
+            f"📐 *ÆEA ℱ_VG {_md_escape(action.upper())}*\n"
+            f"*Type:* {arrow} {_md_escape(fvg_type)}\n"
+            f"*Price:* `{_md_escape(payload.get('price'))}`\n"
+            f"*Idx:* {_md_escape(payload.get('idx', '—'))}\n"
+            f"💎 Natalia Tanyatia"
+        )
+    if kind == "alert":
+        sub = payload.get("sub", "alert")
+        cs_sub = _cs_alert(sub)
+        emoji = "🔵" if sub == "long" else ("🔴" if sub == "short" else "🎯")
+        body_lines = []
+        body_lines.append(f"*Kind:* {_md_escape(cs_sub)}")
+        if payload.get("price") is not None:
+            body_lines.append(f"*Price:* `{_md_escape(payload.get('price'))}`")
+        if sub in ("sin", "sine"):
+            body_lines.append(f"*O:* {_md_escape(payload.get('O', payload.get('o', '—')))}")
+            body_lines.append(f"*𝒞:* {_md_escape(_cs(payload.get('C')))}")
+            body_lines.append(f"*𝒸:* {_md_escape(_cs(payload.get('c')))}")
+        body_lines.append(f"*Tick:* {_md_escape(payload.get('tick', '—'))}")
+        return (
+            f"{emoji} *ÆEA {_md_escape(cs_sub)}*\n"
+            + "\n".join(body_lines)
+            + "\n💎 Natalia Tanyatia"
+        )
+    return None
+
+def _telegram_push(kind: str, payload: Dict[str, Any]) -> None:
+    key = _push_dedup_key(kind, payload)
+    if not _push_dedup_allow(key):
+        return
+    msg = _format_push_message(kind, payload)
+    if msg is None:
+        return
+    engine = BRIDGE_ENGINE_REF.get("engine")
+    if engine is None:
+        return
+    bot = BRIDGE_ENGINE_REF.get("bot")
+    if bot is None:
+        return
+    st = engine.state
+    target_chat = st.chat_id
+    if target_chat is None:
+        target_chat = st.webapp_user_id
+    if not target_chat:
+        return
+    reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+    if not hasattr(bot, "_send_message_sync"):
+        logger.warning("📲 Push skipped: bot has no _send_message_sync")
+        return
+    ok = bot._send_message_sync(
+        chat_id=target_chat,
+        text=msg,
+        parse_mode="Markdown",
+        reply_to_message_id=reply_to,
+    )
+    if ok:
+        logger.info(f"📲 Push sent ({kind}) to {target_chat} reply_to={reply_to} (tick={st.tick})")
+    else:
+        logger.warning(f"📲 Push failed ({kind}) to {target_chat} reply_to={reply_to} (tick={st.tick})")
+
+def _push_worker_loop() -> None:
+    while True:
+        item = _PUSH_QUEUE.get()
+        try:
+            if item is None:
+                break
+            kind, payload = item
+            _telegram_push(kind, payload)
+        except Exception as e:
+            logger.warning(f"📲 Push worker error: {e}")
+        finally:
+            try:
+                _PUSH_QUEUE.task_done()
+            except Exception:
+                pass
+
+def _ensure_push_worker() -> None:
+    global _PUSH_WORKER_STARTED
+    if _PUSH_WORKER_STARTED:
+        return
+    with _PUSH_WORKER_LOCK:
+        if _PUSH_WORKER_STARTED:
+            return
+        t = threading.Thread(target=_push_worker_loop, name="aei-push-worker", daemon=True)
+        t.start()
+        _PUSH_WORKER_STARTED = True
+
 def _emit_toast(kind: str, payload: Dict[str, Any]) -> int:
     global _TOAST_SEQ, _TOAST_FIRST_AVAILABLE_SEQ, _TOAST_BUFFER
-    def _short_frac(v, max_len=64):
-        try:
-            s = str(v)
-            if len(s) <= max_len:
-                return s
-            # For fractions, keep head+tail
-            if '/' in s:
-                parts = s.split('/')
-                a = parts[0]
-                b = '/'.join(parts[1:])
-                if len(a) > 20 or len(b) > 20:
-                    return f"{a[:10]}…{a[-3:]}/{b[:10]}…{b[-3:]}…({len(s)}ch)"
-            return s[:max_len] + f"…({len(s)}ch)"
-        except Exception:
-            return str(v)[:max_len]
     with _TOAST_LOCK:
         maxlen = _TOAST_BUFFER.maxlen
         if maxlen is None or maxlen <= 0:
             _TOAST_BUFFER = deque(maxlen=1)
-            maxlen = 1
-        was_full = (len(_TOAST_BUFFER) >= maxlen)
-        evicted_seq = _TOAST_BUFFER[0].get("seq", 0) if was_full else 0
+        was_full = (len(_TOAST_BUFFER) >= _TOAST_BUFFER.maxlen)
         _TOAST_SEQ += 1
         seq = _TOAST_SEQ
-        # truncate huge fractions in toasts to prevent frontend overflow
-        safe_payload = {}
-        for k, v in payload.items():
-            try:
-                if k in ("deviation_sq", "arc_sq", "radius_sq", "I", "prime", "hash_frac", "psi_real"):
-                    safe_payload[k] = _short_frac(v, 48)
-                elif isinstance(v, str) and len(v) > 200:
-                    safe_payload[k] = v[:200] + f"…({len(v)}ch)"
-                else:
-                    safe_payload[k] = v
-            except Exception:
-                safe_payload[k] = str(v)[:200]
-        entry = dict(safe_payload)
+        entry = dict(payload)
         entry["kind"] = kind
         entry["seq"] = seq
         if "ts" not in entry:
             entry["ts"] = datetime.now().isoformat()
         _TOAST_BUFFER.append(entry)
-        if was_full and evicted_seq > 0:
-            _TOAST_FIRST_AVAILABLE_SEQ = evicted_seq + 1
+        if was_full and len(_TOAST_BUFFER) > 0:
+            _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", _TOAST_SEQ)
         elif _TOAST_FIRST_AVAILABLE_SEQ == 0 and len(_TOAST_BUFFER) > 0:
             _TOAST_FIRST_AVAILABLE_SEQ = _TOAST_BUFFER[0].get("seq", seq)
-        return seq
+    try:
+        _ensure_push_worker()
+        try:
+            _PUSH_QUEUE.put_nowait((kind, entry))
+        except queue.Full:
+            dropped = False
+            try:
+                _PUSH_QUEUE.get_nowait()
+                _PUSH_QUEUE.task_done()
+                dropped = True
+            except Exception:
+                pass
+            try:
+                _PUSH_QUEUE.put_nowait((kind, entry))
+            except Exception as e:
+                logger.warning(f"📲 Push queue full; dropped toast kind={kind} seq={seq} (evicted_oldest={dropped}): {e}")
+    except Exception as e:
+        logger.warning(f"📲 Push dispatch failed: {e}")
+    return seq
+
 # ============================================================================
-# CRAWLER STATE
+# C-A1: ALERT EMISSION
+# ============================================================================
+# The FF emits Alert(...) at every execution subblock and at every edge
+# case. The three families are:
+#   (a) The Long/Short alerts inside the `if(signal != 0)` block:
+#       Alert("Long:", price) and Alert("Short:", price).
+#   (b) The Diamond/Ruby header alerts at the top of each toll/count
+#       subblock: Alert("🔷", "Diamond", fg) and Alert("🔻", "Ruby", fg).
+#   (c) The Sin./Sine. edge-case alerts inside the OnGaurd(-1) block.
+#
+# Family (a) is emitted as a "long" or "short" alert toast.
+# Family (b) is already emitted as an execution toast; the CS glyph is
+# 𝒟_Diamond / ℛ_Ruby. The header fires BEFORE the body's own execution
+# toast so the user sees the branch label, then the body event.
+# Family (c) is emitted as a "sin" or "sine" alert toast.
+#
+# All three reuse the PUSH_ON_SIGNAL gate (they are signal-path events).
+# The CS glyphs are 𝒮_Long / 𝒮_Short / 𝒮_sin / 𝒮_sine.
+# ============================================================================
+def _emit_alert(sub: str, payload: Dict[str, Any]) -> int:
+    body = dict(payload)
+    body["sub"] = sub
+    return _emit_toast("alert", body)
+
+# ============================================================================
+# DATACLASSES
 # ============================================================================
 @dataclass
-class CrawlRecord:
-    url: str
-    title: str
-    content_hash: str
-    hash_frac: PyFraction
-    fetched_at: str
-    depth: int
-    link_count: int
-class CrawlerSeedState:
-    """The crawler frontier lives here in app.py, not in worker.js.
-    worker.js is a stateless fetch proxy. Each crawled document becomes
-    a symbolic input x for the seed loop: its content hash is lifted to
-    an exact Fraction, and its link count becomes a lattice contact
-    constraint."""
-    def __init__(self, db_path: str = ":memory:"):
-        self._lock = threading.Lock()
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.execute("""
-        CREATE TABLE IF NOT EXISTS crawl_queue (
-            url TEXT PRIMARY KEY,
-            priority INTEGER DEFAULT 0,
-            depth INTEGER DEFAULT 0,
-            scheduled_at TEXT DEFAULT (datetime('now'))
-        )
-        """)
-        self._conn.execute("""
-        CREATE TABLE IF NOT EXISTS visited_urls (
-            url TEXT PRIMARY KEY,
-            title TEXT,
-            content_hash TEXT,
-            hash_frac_num TEXT,
-            hash_frac_den TEXT,
-            fetched_at TEXT,
-            depth INTEGER,
-            link_count INTEGER
-        )
-        """)
-        self._conn.commit()
-        self._records: List[CrawlRecord] = []
-        self._frontier: List[str] = []
-    def enqueue(self, url: str, depth: int = 0, priority: int = 0) -> None:
-        # R12-hardened: blocklist for domains that cause SSL EOF / heavy load
-        try:
-            low = url.lower()
-            blocked_substr = ("meta.wikimedia.org", "wikimedia.org/w/api", "donate.wikimedia.org", ".pdf", ".zip", ".tar.gz",
-                              "thumb.wikimedia.org", "upload.wikimedia.org", "featuredfeed", "feed=potd", "&amp;")
-            if any(b in low for b in blocked_substr):
-                return
-            # Only allow wikipedia.org and wikimedia commons for now to avoid broad crawl blowup
-            # Allow en.wikipedia.org, plus same domain as seeds
-            # If depth > 1, restrict to wikipedia domains to keep frontier bounded
-            if depth > 1 and "wikipedia.org" not in low:
-                return
-        except Exception:
-            pass
-        with self._lock:
-            try:
-                self._conn.execute(
-                    "INSERT OR IGNORE INTO crawl_queue (url, priority, depth) VALUES (?, ?, ?)",
-                    (url, priority, depth),
-                )
-                self._conn.commit()
-            except Exception as e:
-                logger.warning(f"crawler enqueue failed: {e}")
-            if url not in self._frontier:
-                # R14 memfix: cap frontier to 120 to avoid unbounded growth on 512MB dyno
-                if len(self._frontier) >= 120:
-                    return
-                self._frontier.append(url)
-    def dequeue(self) -> Optional[str]:
-        with self._lock:
-            try:
-                row = self._conn.execute(
-                    "SELECT url FROM crawl_queue ORDER BY priority DESC, scheduled_at ASC LIMIT 1"
-                ).fetchone()
-                if row is None:
-                    return None
-                url = row[0]
-                self._conn.execute("DELETE FROM crawl_queue WHERE url = ?", (url,))
-                self._conn.commit()
-                if url in self._frontier:
-                    self._frontier.remove(url)
-                return url
-            except Exception as e:
-                logger.warning(f"crawler dequeue failed: {e}")
-                return None
-    def record_visit(self, url: str, title: str, content_hash: str,
-                     depth: int, link_count: int) -> CrawlRecord:
-        hash_frac = _hash_to_fraction(content_hash)
-        record = CrawlRecord(
-            url=url, title=title, content_hash=content_hash,
-            hash_frac=hash_frac,
-            fetched_at=datetime.now().isoformat(),
-            depth=depth, link_count=link_count,
-        )
-        with self._lock:
-            try:
-                self._conn.execute(
-                    """INSERT OR REPLACE INTO visited_urls
-                    (url, title, content_hash, hash_frac_num, hash_frac_den,
-                    fetched_at, depth, link_count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (url, title, content_hash,
-                     str(hash_frac.numerator), str(hash_frac.denominator),
-                     record.fetched_at, depth, link_count),
-                )
-                self._conn.commit()
-            except Exception as e:
-                logger.warning(f"crawler record_visit failed: {e}")
-        self._records.append(record)
-        if len(self._records) > 500:
-            self._records = self._records[-500:]  # R14 memfix: was 5000
-        _emit_toast("crawl", {
-            "url": url,
-            "title": title[:80],
-            "content_hash": content_hash[:16],
-            "depth": depth,
-            "link_count": link_count,
-        })
-        # crawler ingestion path persisted at discretion
-        try:
-            if TELEGRAM_DB and TELEGRAM_DB.is_enabled():
-                # Avoid storing full URLs in user shards — only global channel
-                TELEGRAM_DB.save_snapshot("𝒞_CRAWLER", {
-                    "url": url[:120],
-                    "title": title[:80],
-                    "content_hash": content_hash[:16],
-                    "hash_frac": str(record.hash_frac)[:800],
-                    "depth": depth,
-                    "link_count": link_count,
-                    "frontier_size": len(self._frontier),
-                    "visited_count": self.visited_count(),
-                }, force=False)
-        except Exception as _edb_c:
-            logger.warning(f"TelegramDB crawl save failed: {_edb_c}")
-        return record
-    def frontier_size(self) -> int:
-        with self._lock:
-            return len(self._frontier)
-    def visited_count(self) -> int:
-        with self._lock:
-            try:
-                row = self._conn.execute("SELECT COUNT(*) FROM visited_urls").fetchone()
-                return row[0] if row else 0
-            except Exception:
-                return len(self._records)
-    def latest_record(self) -> Optional[CrawlRecord]:
-        with self._lock:
-            if not self._records:
-                return None
-            return self._records[-1]
-    def latest_hash_fraction(self) -> PyFraction:
-        rec = self.latest_record()
-        if rec is None:
-            return PyFraction(0, 1)
-        return rec.hash_frac
-    def snapshot(self) -> Dict[str, Any]:
-        with self._lock:
-            return {
-                "frontier_size": len(self._frontier),
-                "frontier_preview": list(self._frontier[:6]),  # R14 memfix
-                "visited_count": self.visited_count(),
-                "latest": (
-                    {
-                        "url": self._records[-1].url,
-                        "title": self._records[-1].title[:120],
-                        "content_hash": self._records[-1].content_hash[:16],
-                        "hash_frac": str(self._records[-1].hash_frac),
-                        "depth": self._records[-1].depth,
-                        "link_count": self._records[-1].link_count,
-                        "fetched_at": self._records[-1].fetched_at,
-                    }
-                    if self._records else None
-                ),
-            }
-# ============================================================================
-# CRAWLER RELAY CLIENT
-# ============================================================================
-class CrawlerRelayClient:
-    """Stateless relay client. Sends a URL to worker.js, gets back
-    {url, title, content_hash, links, provider} as JSON. The relay
-    does the network I/O; all crawl logic (frontier, visited set,
-    seed injection) lives in app.py."""
-    def __init__(self, relay_url: str, relay_key: str = "", timeout: int = 20,
-                 max_retries: int = 4, total_budget_s: float = 90.0):
-        self.relay_url = relay_url.rstrip("/")
-        self.relay_key = relay_key
-        self.timeout = timeout
-        self.max_retries = max_retries
-        self._total_budget_s = total_budget_s
-        self._failure_count = 0
-    def fetch_url(self, url: str) -> Optional[Dict[str, Any]]:
-        if not self.relay_url:
-            logger.warning("CrawlerRelayClient: RELAY_URL not set")
-            return None
-        # Fast blocklist at fetch time too
-        try:
-            low = url.lower()
-            if any(d in low for d in ("meta.wikimedia.org", "wikimedia.org/w/api.php", "wikimedia.org/wiki/Special:", "auth.wikimedia.org",
-                                       "thumb.wikimedia.org", "upload.wikimedia.org", "featuredfeed")):
-                logger.info(f"relay skip blocklisted {low[:120]}")
-                return None
-        except Exception:
-            pass
-        start = time.monotonic()
-        qs = urllib.parse.urlencode({"url": url})
-        target = f"{self.relay_url}/?{qs}"
-        last_error = None
-        # R12-hardened: treat SSL EOF and transient CF errors as retryable
-        retryable_substrings = ("UNEXPECTED_EOF", "EOF occurred", "timed out", "Timeout", "SSLError", "Connection reset", "525", "502", "503", "504", "429")
-        for attempt in range(self.max_retries):
-            elapsed = time.monotonic() - start
-            if elapsed > self._total_budget_s:
-                last_error = "budget_exhausted"
-                break
-            try:
-                headers = {
-                    "Accept": "application/json",
-                    "User-Agent": "AEI-Seed-Crawler/1.0",
-                }
-                if self.relay_key:
-                    headers["X-Relay-Key"] = self.relay_key
-                req = urllib.request.Request(target, headers=headers)
-                # Use unverified context fallback only on second attempt to survive Heroku CA hiccups
-                ctx = None
-                if attempt >= 1:
-                    try:
-                        ctx = ssl._create_unverified_context()
-                    except Exception:
-                        ctx = None
-                if ctx:
-                    with urllib.request.urlopen(req, timeout=self.timeout, context=ctx) as resp:
-                        raw = resp.read().decode("utf-8")
-                        payload = json.loads(raw)
-                        if isinstance(payload, dict) and payload.get("ok") is False and payload.get("error") in ("unauthorized",):
-                            logger.warning(f"relay unauthorized for {url} — check RELAY_KEY")
-                            return None
-                        if isinstance(payload, dict) and payload.get("error"):
-                            # relay-side fetch failed, treat as retryable if transient
-                            err_s = str(payload.get("error")) + " " + str(payload.get("detail",""))
-                            if any(s in err_s for s in retryable_substrings) and attempt < self.max_retries - 1:
-                                last_error = f"relay_{payload.get('error')}_retryable"
-                                time.sleep(0.5 * (attempt + 1) + 0.2 * attempt)
-                                continue
-                            logger.warning(f"relay error for {url}: {payload.get('error')}")
-                            self._failure_count += 1
-                            return None
-                        self._failure_count = 0
-                        return payload
-                else:
-                    with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                        raw = resp.read().decode("utf-8")
-                        payload = json.loads(raw)
-                        if isinstance(payload, dict) and payload.get("ok") is False and payload.get("error") in ("unauthorized",):
-                            logger.warning(f"relay unauthorized for {url} — check RELAY_KEY")
-                            return None
-                        if isinstance(payload, dict) and payload.get("error"):
-                            err_s = str(payload.get("error")) + " " + str(payload.get("detail",""))
-                            if any(s in err_s for s in retryable_substrings) and attempt < self.max_retries - 1:
-                                last_error = f"relay_{payload.get('error')}_retryable"
-                                time.sleep(0.5 * (attempt + 1) + 0.2 * attempt)
-                                continue
-                            logger.warning(f"relay error for {url}: {payload.get('error')}")
-                            self._failure_count += 1
-                            return None
-                        self._failure_count = 0
-                        return payload
-            except urllib.error.HTTPError as e:
-                last_error = f"HTTP {e.code}"
-                logger.warning(f"relay HTTP {e.code} for {url} (attempt {attempt+1}/{self.max_retries})")
-                if e.code in (429, 502, 503, 504, 525) and attempt < self.max_retries - 1:
-                    if time.monotonic() - start + 1 + attempt * 2.5 > self._total_budget_s:
-                        last_error = "budget_exhausted"
-                        break
-                    time.sleep(0.5 * (attempt + 1) + 0.5)
-                    continue
-                if e.code == 401:
-                    logger.warning(f"relay 401 unauthorized — RELAY_KEY mismatch for {self.relay_url}")
-                    break
-                break
-            except urllib.error.URLError as e:
-                reason = str(e.reason) if hasattr(e, 'reason') else str(e)
-                last_error = f"URLError: {reason}"
-                is_retryable = any(s in reason for s in retryable_substrings)
-                logger.warning(f"relay URLError for {url}: {reason} retryable={is_retryable}")
-                if is_retryable and attempt < self.max_retries - 1:
-                    if time.monotonic() - start + 1 + attempt * 2.5 > self._total_budget_s:
-                        last_error = "budget_exhausted"
-                        break
-                    time.sleep(0.6 * (attempt + 1))
-                    continue
-                if attempt < self.max_retries - 1:
-                    time.sleep(0.4 * (attempt + 1))
-                    continue
-                break
-            except json.JSONDecodeError as e:
-                last_error = f"JSONDecodeError: {e}"
-                logger.warning(f"relay returned invalid JSON for {url}")
-                break
-            except Exception as e:
-                last_error = f"{type(e).__name__}: {e}"
-                is_retryable = any(s in str(e) for s in retryable_substrings)
-                logger.warning(f"relay error for {url}: {e} retryable={is_retryable}")
-                if is_retryable and attempt < self.max_retries - 1:
-                    if time.monotonic() - start + 1 + attempt * 2.5 > self._total_budget_s:
-                        last_error = "budget_exhausted"
-                        break
-                    time.sleep(0.5 * (attempt + 1))
-                    continue
-                if attempt < self.max_retries - 1:
-                    time.sleep(0.3 * (attempt + 1))
-                    continue
-                break
-        self._failure_count += 1
-        if last_error:
-            logger.warning(f"relay exhausted retries for {url}: {last_error}")
-        return None
-    def health(self) -> Dict[str, Any]:
-        if not self.relay_url:
-            return {"ok": False, "reason": "no_relay_url"}
-        try:
-            headers = {"Accept": "application/json"}
-            if self.relay_key:
-                headers["X-Relay-Key"] = self.relay_key
-            req = urllib.request.Request(f"{self.relay_url}/health", headers=headers)
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except Exception as e:
-            return {"ok": False, "reason": str(e)}
-    def failure_count(self) -> int:
-        return self._failure_count
+class PriceData:
+    bid: Decimal = Decimal('0.0')
+    ask: Decimal = Decimal('0.0')
+    close: Decimal = Decimal('0.0')
+    open: Decimal = Decimal('0.0')
+    high: Decimal = Decimal('0.0')
+    low: Decimal = Decimal('0.0')
+    volume: Decimal = Decimal('0.0')
+    timestamp: datetime = field(default_factory=datetime.now)
+    provider: str = ""
+
+    @property
+    def spread(self) -> Decimal:
+        return self.ask - self.bid
+
+@dataclass
+class IndicatorState:
+    adx: Decimal = Decimal('50.0')
+    stochastic: Decimal = Decimal('50.0')
+    rvi: Decimal = Decimal('50.0')
+    ac: Decimal = Decimal('50.0')
+    force: Decimal = Decimal('50.0')
+    obv: Decimal = Decimal('50.0')
+    ad: Decimal = Decimal('50.0')
+    mfi: Decimal = Decimal('50.0')
+    momentum: Decimal = Decimal('50.0')
+    dem: Decimal = Decimal('50.0')
+    wpr: Decimal = Decimal('50.0')
+    cci: Decimal = Decimal('50.0')
+    rsi: Decimal = Decimal('50.0')
+    ihk_kijun: Decimal = Decimal('50.0')
+    ihk_tenkan: Decimal = Decimal('50.0')
+
+@dataclass
+class Order:
+    ticket: int
+    side: str
+    entry: Decimal
+    sl: Decimal = Decimal('0.0')
+    tp: Decimal = Decimal('0.0')
+    lot: Decimal = Decimal('0.01')
+    opened_at: datetime = field(default_factory=datetime.now)
+    closed_at: Optional[datetime] = None
+    close_price: Optional[Decimal] = None
+
+    def pnl(self, current_price: Decimal) -> Decimal:
+        if self.side == 'BUY':
+            return (current_price - self.entry) * self.lot * Decimal('100000')
+        else:
+            return (self.entry - current_price) * self.lot * Decimal('100000')
+
+@dataclass
+class AEI_CoreState:
+    KC: bool = True
+    invert: bool = True
+    tag: int = -1
+    prime: int = -1
+    dime: int = -1
+    mem: int = -1
+    tick: int = 0
+    y: int = Y_START
+    signal: Decimal = Decimal('0.0')
+    signature: bool = False
+    tick_tock: bool = False
+    FG: bool = False
+    GF: bool = False
+    Buy: int = -1
+    Sell: int = -1
+    A: bool = True
+    B: bool = True
+    a: bool = True
+    b: bool = True
+    ab: bool = False
+    ba: bool = True
+    u: bool = False
+    v: bool = False
+    lOrder_id: int = -1
+    kOrder_id: int = -1
+    D: Decimal = Decimal('0.0')
+    E: Decimal = Decimal('0.0')
+    p: Decimal = Decimal('0.0')
+    q: Decimal = Decimal('0.0')
+    K: bool = False
+    C: bool = True
+    c: bool = True
+    iC: bool = True
+    jC: bool = True
+    Cc: bool = True
+    cC: bool = True
+    safety: bool = False
+    Z: int = Y_START + 1
+    z: int = Y_START + 1
+    O: int = Y_START + 1
+    o: int = Y_START + 1
+    r: int = 0
+    W: int = Y_START + 1
+    w: int = Y_START + 1
+    I: int = 0
+    iI: int = 0
+    J: int = 0
+    iJ: int = 0
+    ij: int = 0
+    h: int = 0
+    iZ: int = Y_START + 1
+    iz: int = Y_START + 1
+    iW: int = Y_START + 1
+    iw: int = Y_START + 1
+    iO: int = Y_START + 1
+    io: int = Y_START + 1
+    ir: int = 0
+    count: int = 0
+    toll: int = 0
+    tally: str = "   "
+    m: int = 0
+    n: int = 0
+    authoritative_m: int = 0
+    authoritative_n: int = 0
+    authoritative_h: int = -1
+    m_now: int = 0
+    n_now: int = 0
+    lPass: Decimal = Decimal('0.0')
+    ilPass: Decimal = Decimal('0.0')
+    kPass: Decimal = Decimal('0.0')
+    ikPass: Decimal = Decimal('0.0')
+    Premium: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
+    Discount: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
+    HH: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
+    LL: List[Decimal] = field(default_factory=lambda: [Decimal('0.0')] * (X_PERIOD - Y_START))
+    k: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - Y_START))
+    l: List[bool] = field(default_factory=lambda: [False] * (X_PERIOD - Y_START))
+    U: List[bool] = field(default_factory=list)
+    R: bool = True
+    Regime: List[str] = field(default_factory=lambda: ["sRange"] * (X_PERIOD - Y_START))
+    iA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
+    cA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
+    kA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
+    lA: List[List[Decimal]] = field(default_factory=lambda: [[Decimal('50.0')] * (X_PERIOD - Y_START) for _ in range(13)])
+    IHKk: List[Decimal] = field(default_factory=list)
+    IHKt: List[Decimal] = field(default_factory=list)
+    RSI: List[Decimal] = field(default_factory=list)
+    CCI: List[Decimal] = field(default_factory=list)
+    MOM: List[Decimal] = field(default_factory=list)
+    AD: List[Decimal] = field(default_factory=list)
+    OBV: List[Decimal] = field(default_factory=list)
+    Force: List[Decimal] = field(default_factory=list)
+    MFI: List[Decimal] = field(default_factory=list)
+    DeM: List[Decimal] = field(default_factory=list)
+    RVIm: List[Decimal] = field(default_factory=list)
+    AC: List[Decimal] = field(default_factory=list)
+    StdDev: List[Decimal] = field(default_factory=list)
+    ATR: List[Decimal] = field(default_factory=list)
+    ADX: List[Decimal] = field(default_factory=list)
+    Suply: Decimal = Decimal('0.0')
+    iSuply: Decimal = Decimal('0.0')
+    Demand: Decimal = Decimal('0.0')
+    iDemand: Decimal = Decimal('0.0')
+    Sale: Decimal = Decimal('0.0')
+    iSale: Decimal = Decimal('0.0')
+    Stock: Decimal = Decimal('0.0')
+    iStock: Decimal = Decimal('0.0')
+    iStdDev: Decimal = Decimal('50.0')
+    iATR: Decimal = Decimal('50.0')
+    iIHKk: Decimal = Decimal('50.0')
+    iIHKt: Decimal = Decimal('50.0')
+    FVG: int = -1
+    BL: List[Decimal] = field(default_factory=list)
+    BL_type: List[str] = field(default_factory=list)
+    bottomLine: str = "   "
+    bL: str = "   "
+    S: int = X_PERIOD
+    T: int = X_PERIOD
+    X_scan: int = Y_START
+    Y_scan: int = Y_START
+    t: Optional[datetime] = None
+    iopen: Decimal = Decimal('0.0')
+    iPrice: Decimal = Decimal('0.0')
+    iH: Decimal = Decimal('0.0')
+    iL: Decimal = Decimal('0.0')
+    price: Decimal = Decimal('0.0')
+    Price: Decimal = Decimal('0.0')
+    open: Decimal = Decimal('0.0')
+    chat_id: Optional[int] = None
+    webapp_user_id: Optional[int] = None
+    webapp_username: Optional[str] = None
+    webapp_verified: bool = False
+    webapp_last_seen: Optional[datetime] = None
+
+    trailing_stop_active: bool = False
+    trailing_stop_price: Decimal = Decimal('0.0')
+    trailing_take_profit: Decimal = Decimal('0.0')
+    on_track_runs: int = 0
+    on_stand_runs: int = 0
+    has_open_long: bool = False
+    has_open_short: bool = False
+    trailing_stop_entry: Decimal = Decimal('0.0')
+    trailing_stop_side: str = ""
+
+    last_kronecker_m: int = 0
+    last_kronecker_n: int = 0
+    last_kronecker_h: int = -1
+    fvg_anchor_map: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    _raw_price_missing: bool = False
+
+    signal_history: List[Dict[str, Any]] = field(default_factory=list)
+    max_signal_history: int = 100
+    last_signal_at: Optional[str] = None
+    bar_close_count: int = 0
+
+    execution_fired: bool = False
+
+    projection_path: List[Dict[str, Any]] = field(default_factory=list)
+    projection_meta: Dict[str, Any] = field(default_factory=dict)
+    projection_computed_at: Optional[str] = None
+    projection_trigger: str = ""
+
+    last_provider: str = ""
+    last_volume: Decimal = Decimal('0.0')
+
+    last_inbound_message_id: Optional[int] = None
 
 # ============================================================================
-# TELEGRAM CHAT DATABASE — Ed34: Telegram as distributed/isolated DB at seed discretion
+# INDICATOR NAME CONSTANT (CS-translated for user-facing display)
 # ============================================================================
-class TelegramChatDB:
-    """Uses Telegram Bot API as durable storage.
+INDICATOR_NAMES = [
+    "ADX", "Stochastic", "RVI", "AC", "Force", "OBV", "AD",
+    "MFI", "Momentum", "DeMarker", "WPR", "CCI", "RSI"
+]
+INDICATOR_NAMES_CS = [
+    "𝒜[0]", "𝒜[1]", "𝒜[2]", "𝒜[3]", "𝒜[4]", "𝒜[5]", "𝒜[6]",
+    "𝒜[7]", "𝒜[8]", "𝒜[9]", "𝒜[10]", "𝒜[11]", "𝒜[12]",
+]
 
-    Two modes, both R12-compliant (outbound HTTPS only, no subprocess):
-    1) Global distributed set: private channel TELEGRAM_DB_CHANNEL_ID where bot is admin.
-       Seed persists snapshots (prime_count, lattice_points, logic_hash, I, deviation, psi_real, generation)
-       as chunked messages. Message_id map stored in SQLite for fast rebuild.
-    2) Isolated per-user shards: if TELEGRAM_DB_USER_SHARDS=1, bot stores per-user shards
-       in user's private chat with bot (requires user started bot). At SelfEvolutionCore discretion,
-       it shunts 𝒜₃ vs 𝒜₄ branches to different user sets, or shards lattice points across users.
+# ============================================================================
+# MODULE-LEVEL INDICATOR HELPERS — MQL4 PARITY
+# ============================================================================
+def sma(data: List[Decimal], period: int) -> Decimal:
+    if len(data) < period or period <= 0:
+        return Decimal('0.0')
+    total = sum(data[-period:], Decimal('0.0'))
+    return total / Decimal(period)
 
-    FG-exact: all Fractions stored as str(num/den). No float enters DB.
-    Hardware-agnostic: no local disk required for persistence beyond ephemeral cache.
-    Telegram limits: 4096 chars/message, so chunking; 30 msg/sec global.
-    """
-    def __init__(self, bot_token: str, channel_id: str = "", central_user_id: str = "", chunk_size: int = 3800):
-        self.bot_token = (bot_token or "").strip()
-        self.channel_id = (channel_id or "").strip()
-        self.central_user_id = (central_user_id or "").strip()
-        self.chunk_size = max(800, chunk_size)
-        self._lock = threading.Lock()
-        self._chat_last_send: Dict[str, float] = {}
-        self._last_global_send: float = 0.0
-        self._global_backoff_until: float = 0.0
-        self._consecutive_429: int = 0
-        self._enabled = bool(self.bot_token and (self.channel_id or self.central_user_id))
-        self._last_save_ts = 0.0
-        self._index: Dict[str, Dict[str, Any]] = {}  # key -> {msg_ids, ts, hash}
-        # In-memory index file for rebuild (mirrored in SQLite)
-        self._index_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else ".", "aei_telegram_index.json")
-        try:
-            if os.path.isfile(self._index_db_path):
-                with open(self._index_db_path, "r", encoding="utf-8") as f:
-                    self._index = json.load(f)
-        except Exception:
-            self._index = {}
+def ema(data: List[Decimal], period: int) -> Decimal:
+    if len(data) < period or period <= 0:
+        return sma(data, period)
+    alpha = Decimal('2.0') / (Decimal(period) + Decimal('1.0'))
+    if len(data) > 1:
+        return alpha * data[-1] + (Decimal('1.0') - alpha) * ema(data[:-1], period)
+    return data[-1]
 
-    def is_enabled(self) -> bool:
-        # enabled if bot token + ENABLE flag + (channel OR central_user OR user shards)
-        if not self.bot_token or not ENABLE_TELEGRAM_DB:
-            return False
-        has_channel = bool(self.channel_id)
-        has_central = bool(self.central_user_id)
-        try:
-            has_user_shards = bool(TELEGRAM_DB_USER_SHARDS and _get_shard_pool())
-        except Exception:
-            has_user_shards = False
-        return has_channel or has_central or has_user_shards
+def rsi(data: List[Decimal], period: int = 14) -> Decimal:
+    if len(data) < period + 1 or period <= 0:
+        return Decimal('50.0')
+    gains = Decimal('0.0')
+    losses = Decimal('0.0')
+    for i in range(period):
+        diff = data[i + 1] - data[i]
+        if diff >= Decimal('0.0'):
+            gains += diff
+        else:
+            losses -= diff
+    avg_gain = gains / Decimal(period)
+    avg_loss = losses / Decimal(period)
+    for i in range(period + 1, len(data)):
+        diff = data[i] - data[i - 1]
+        gain = diff if diff > Decimal('0.0') else Decimal('0.0')
+        loss = -diff if diff < Decimal('0.0') else Decimal('0.0')
+        avg_gain = (avg_gain * Decimal(period - 1) + gain) / Decimal(period)
+        avg_loss = (avg_loss * Decimal(period - 1) + loss) / Decimal(period)
+    if avg_loss == Decimal('0.0'):
+        return Decimal('100.0')
+    rs = avg_gain / avg_loss
+    return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + rs))
 
-    def _api_url(self, method: str) -> str:
-        return f"https://api.telegram.org/bot{self.bot_token}/{method}"
-
-    def _send_message(self, chat_id: str, text: str, disable_notification: bool = True) -> Optional[int]:
-        if not self.bot_token or not chat_id:
-            return None
-        if len(text) > 4096:
-            text = text[:4096]
-
-        # --- R16 rate-limit fix: per-chat + global throttling + Retry-After handling ---
-        # Telegram limits: ~30 msg/sec global, ~1 msg/sec per chat, 20 msg/min per group.
-        # On 429, response body contains {"parameters":{"retry_after":X}}
-        max_attempts = 4
-        for attempt in range(max_attempts):
-            # Global + per-chat throttle
-            with self._lock:
-                now = time.time()
-                # honor global backoff from previous 429
-                if hasattr(self, '_global_backoff_until') and now < self._global_backoff_until:
-                    sleep_for = self._global_backoff_until - now
-                    time.sleep(sleep_for)
-                    now = time.time()
-                # per-chat: at least 1.1s between messages to same chat
-                last_chat = self._chat_last_send.get(str(chat_id), 0)
-                if now - last_chat < 1.1:
-                    time.sleep(1.1 - (now - last_chat))
-                # global: at least 0.05s (20/sec) but we use 0.35s to be safe across workers
-                last_global = getattr(self, '_last_global_send', 0)
-                if now - last_global < 0.35:
-                    time.sleep(0.35 - (now - last_global))
-                self._chat_last_send[str(chat_id)] = time.time()
-                self._last_global_send = time.time()
-
-            try:
-                payload = {
-                    "chat_id": chat_id,
-                    "text": text,
-                    "disable_notification": disable_notification,
-                    "disable_web_page_preview": True,
-                }
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(self._api_url("sendMessage"), data=data, headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    body = json.loads(resp.read().decode("utf-8"))
-                    if body.get("ok"):
-                        # success resets consecutive 429 counter
-                        self._consecutive_429 = 0
-                        return body.get("result", {}).get("message_id")
-                    # Telegram returned ok:false with 200 — could be 429 embedded
-                    if body.get("error_code") == 429:
-                        retry_after = int(body.get("parameters", {}).get("retry_after", 5))
-                        logger.warning(f"TelegramChatDB 429 embedded for {chat_id}: retry_after={retry_after}s attempt={attempt+1}")
-                        with self._lock:
-                            self._global_backoff_until = time.time() + retry_after + 1
-                            self._consecutive_429 = getattr(self, '_consecutive_429', 0) + 1
-                        time.sleep(retry_after + 1 + attempt)  # backoff
-                        continue
-            except urllib.error.HTTPError as e:
-                # read Retry-After from body
-                retry_after = 5
-                try:
-                    err_body = e.read().decode("utf-8")
-                    j = json.loads(err_body)
-                    retry_after = int(j.get("parameters", {}).get("retry_after", retry_after))
-                    logger.warning(f"TelegramChatDB send failed to {chat_id}: HTTP Error {e.code} retry_after={retry_after} attempt={attempt+1} body={err_body[:200]}")
-                except Exception:
-                    logger.warning(f"TelegramChatDB send failed to {chat_id}: HTTP Error {e.code} {e.reason} attempt={attempt+1}")
-                if e.code == 429:
-                    with self._lock:
-                        self._global_backoff_until = time.time() + retry_after + 1
-                        self._consecutive_429 = getattr(self, '_consecutive_429', 0) + 1
-                        # circuit breaker: if 3x 429 in row, 30s cooldown
-                        if self._consecutive_429 >= 3:
-                            self._global_backoff_until = max(self._global_backoff_until, time.time() + 30)
-                            logger.warning(f"TelegramChatDB circuit breaker: 3x 429 -> 30s cooldown")
-                    time.sleep(retry_after + 1 + attempt*2)
-                    continue
-                else:
-                    # non-429 HTTP error — don't retry infinitely
-                    if attempt >= 1:
-                        break
-                    time.sleep(1 + attempt)
-                    continue
-            except Exception as e:
-                logger.warning(f"TelegramChatDB send failed to {chat_id}: {e} attempt={attempt+1}")
-                if attempt >= 1:
-                    break
-                time.sleep(1 + attempt)
+def stochastic(high, low, close, k_period=14, d_period=3, slowing=1):
+    if slowing < 1:
+        slowing = 1
+    if len(close) < k_period + slowing - 1 or k_period <= 0:
+        return Decimal('50.0'), Decimal('50.0')
+    raw_k_series = []
+    for i in range(slowing):
+        if len(close) < k_period + i:
+            continue
+        h_i = max(high[-(k_period + i):-i]) if i > 0 else max(high[-k_period:])
+        l_i = min(low[-(k_period + i):-i]) if i > 0 else min(low[-k_period:])
+        r_i = h_i - l_i
+        if r_i == Decimal('0.0'):
+            raw_k_series.append(Decimal('50.0'))
+        else:
+            c_i = close[-1 - i]
+            raw_k_series.append(Decimal('100.0') * (c_i - l_i) / r_i)
+    if not raw_k_series:
+        return Decimal('50.0'), Decimal('50.0')
+    fast_k = sum(raw_k_series) / Decimal(len(raw_k_series))
+    d_series = []
+    for i in range(d_period):
+        if i == 0:
+            d_series.append(fast_k)
+        else:
+            if len(close) < k_period + slowing - 1 + i:
+                d_series.append(fast_k)
                 continue
-        return None
-
-    def _persist_index(self):
-        try:
-            with open(self._index_db_path, "w", encoding="utf-8") as f:
-                json.dump(self._index, f)
-        except Exception:
-            pass
-
-    def save_snapshot(self, key: str, value: Dict[str, Any], force: bool = False) -> bool:
-        """Save a snapshot at bot discretion. Called from SeedWorker and CrawlerWorker.
-        Key examples: 𝒮_STATUS, 𝒜_PRIMES, Λ₂₄_PACK, 𝒯_EVOLUTION, ℋ_LOGIC_CORE, 𝒞_CRAWLER
-        Ed37: channel + central_user_id — central_user is backup mirror, so your chat can be channel ID
-        without mixing with real channel. Supports open + distributed where your chat is channel ID.
-        """
-        if not self.channel_id and not self.central_user_id:
-            # No global targets -> global snapshots disabled, distributed mode uses user shards only
-            return False
-        if not self.bot_token or not ENABLE_TELEGRAM_DB:
-            return False
-        # Throttle: at most 1 save per 4 seconds unless forced (R16 anti-429)
-        # also respect global backoff from 429
-        now = time.time()
-        if time.time() < getattr(self, '_global_backoff_until', 0):
-            return False
-        if not force and (now - self._last_save_ts) < 4.0:
-            return False
-        try:
-            # Ensure all Fractions are strings — exactness preserved
-            safe_value = {}
-            for k, v in value.items():
-                try:
-                    if isinstance(v, (list, tuple)):
-                        safe_value[k] = [str(x)[:800] for x in v][:32]  # R14 truncate
-                    elif isinstance(v, dict):
-                        safe_value[k] = {kk: str(vv)[:800] for kk, vv in list(v.items())[:32]}
-                    else:
-                        s = str(v)
-                        safe_value[k] = s[:2000]  # truncate huge Fractions for Telegram 4096 limit
-                except Exception:
-                    safe_value[k] = str(v)[:500]
-            envelope = {
-                "aei_db": 1,
-                "key": key,
-                "ts": datetime.now().isoformat(),
-                "v": safe_value,
-                "logic_hash": safe_value.get("last_logic_hash") or safe_value.get("logic_hash") or "",
-            }
-            blob = json.dumps(envelope, ensure_ascii=False)
-            # Chunk if needed — Telegram limit 4096
-            chunks = [blob[i:i+self.chunk_size] for i in range(0, len(blob), self.chunk_size)]
-            msg_ids = []
-            # send to channel and/or central_user_id (your chat as backup channel ID)
-            targets = []
-            if self.channel_id:
-                targets.append(("channel", self.channel_id))
-            if self.central_user_id and self.central_user_id != self.channel_id:
-                targets.append(("central", self.central_user_id))
-
-            for idx, chunk in enumerate(chunks):
-                header = f"⟦AEI-DB {key} {idx+1}/{len(chunks)}⟧\n" if len(chunks) > 1 else f"⟦AEI-DB {key}⟧\n"
-                for ttype, tid in targets:
-                    # honor global backoff before each chunk
-                    if time.time() < getattr(self, '_global_backoff_until', 0):
-                        time.sleep(self._global_backoff_until - time.time())
-                    mid = self._send_message(tid, header + chunk, disable_notification=True)
-                    if mid and ttype == "channel":
-                        msg_ids.append(mid)
-                    # For central_user, we don't track msg_ids in index to avoid clutter
-                    time.sleep(0.4)  # R16: 1 msg/sec per chat + 0.35 global = safe
-                if not msg_ids and not self.central_user_id:
-                    # If channel failed and no central, abort
-                    break
-            if msg_ids:
-                with self._lock:
-                    self._index[key] = {"msg_ids": msg_ids, "ts": now, "hash": hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]}
-                self._persist_index()
-                self._last_save_ts = now
-                logger.info(f"TelegramDB saved {key} -> {len(msg_ids)} msgs to {self.channel_id}")
-                return True
-        except Exception as e:
-            logger.warning(f"TelegramDB save_snapshot {key} failed: {e}")
-        return False
-
-    def save_user_shard(self, user_chat_id: int, key: str, value: Dict[str, Any]) -> bool:
-        """Isolated per-user set — only if TELEGRAM_DB_USER_SHARDS=1 and bot discretion says shard."""
-        if not TELEGRAM_DB_USER_SHARDS or not self.bot_token:
-            return False
-        if not self.is_enabled():
-            return False
-        # R16: respect global 429 backoff, don't shard during cooldown
-        if time.time() < getattr(self, '_global_backoff_until', 0):
-            return False
-        try:
-            # Respect user privacy — only store minimal, no URLs unless allowed
-            minimal = {
-                "key": key,
-                "tick": value.get("tick"),
-                "generation": value.get("generation"),
-                "prime_count": value.get("prime_count"),
-                "I": value.get("I"),
-                "state": value.get("state"),
-                "psi_real": value.get("psi_real"),
-                "logic_hash": value.get("logic_hash") or value.get("last_logic_hash"),
-            }
-            blob = json.dumps(minimal, ensure_ascii=False)
-            # Use user's private chat as isolated DB
-            mid = self._send_message(str(user_chat_id), f"⟦AEI-SHARD {key}⟧\n{blob[:3500]}", disable_notification=True)
-            return mid is not None
-        except Exception as e:
-            logger.warning(f"TelegramDB user shard {key} to {user_chat_id} failed: {e}")
-            return False
-
-    def snapshot(self) -> Dict[str, Any]:
-        with self._lock:
-            try:
-                pool = _get_shard_pool()
-            except Exception:
-                pool = set()
-            return {
-                "enabled": self.is_enabled(),
-                "channel_id": self.channel_id or None,
-                "central_user_id": self.central_user_id or None,
-                "channel_optional": True,
-                "central_is_channel_id": bool(self.central_user_id and not self.channel_id),
-                "user_shards": TELEGRAM_DB_USER_SHARDS,
-                "shard_pool": sorted(list(pool))[:10],
-                "shard_pool_size": len(pool),
-                "gate_active": bool(ALLOWED_USER_IDS),
-                "gate_ids": sorted(list(ALLOWED_USER_IDS))[:10] if ALLOWED_USER_IDS else [],
-                "index_keys": list(self._index.keys()),
-                "index_size": len(self._index),
-                "last_save": self._last_save_ts,
-            }
-
-# Global singleton — initialized in main()
-TELEGRAM_DB: Optional[TelegramChatDB] = None
-
-# ============================================================================
-# DAEMON THREAD POOL EXECUTOR
-
-# ============================================================================
-class _DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
-    """A ThreadPoolExecutor whose worker threads are daemon, so the
-    interpreter can exit on SIGTERM even if a worker is still inside a
-    blocking call (e.g. urllib.urlopen on a slow drip). The worker is
-    killed by the OS at process exit; any in-flight work is lost and
-    re-run on the next boot. Safe because both the crawler and the seed
-    worker are idempotent at the transaction boundary (SQLite commits
-    atomically in record_visit; seed.step is pure on the lock)."""
-    def _adjust_thread_count(self) -> None:
-        if self._idle_semaphore.acquire(timeout=0):
-            return
-        def weakref_cb(_, q=self._work_queue):
-            q.put(None)
-        num_threads = len(self._threads)
-        if num_threads < self._max_workers:
-            thread_name = '%s_%d' % (self._thread_name_prefix or self, num_threads)
-            t = threading.Thread(
-                name=thread_name,
-                target=concurrent.futures.thread._worker,
-                args=(weakref.ref(self, weakref_cb), self._work_queue,
-                      self._initializer, self._initargs),
-                daemon=True,
-            )
-            t.start()
-            self._threads.add(t)
-# ============================================================================
-# AEI_SEED — the GAIA seed loop
-# ============================================================================
-class AEI_Seed:
-    """The GAIA/ÆI seed. Faithful to ÆI.md §3–§8.
-    State machine per step:
-    1. Primorial step   — generate the next prime (exact Fraction)
-    2. Lattice step     — stereographic project the prime; add_sphere
-    3. Wavefunction     — integrate ψ over the lattice, blending with
-       the prior rectified ψ so DbZ persists (F5)
-    4. Trajectory       — generate the Natalia-fibrated quaternionic path
-    5. Aetheric gate    — validate s²=r²; compute deviation_sq
-    6. DbZ              — if deviation_sq ≠ 0, rectify ψ
-    7. Execution        — record the intelligence metric I with
-       pi_x = π(p_n) = len(self.primes) (F6)
-    8. Evolution        — SelfEvolutionCore.evolve_step
-    Inputs: the seed's x parameter. In the market bot, x is a price;
-    in the ÆI seed, x is the hash fraction of the most recently crawled
-    document. If the crawler is idle, x defaults to the tick counter.
-    """
-    def __init__(
-        self,
-        processor: SymbolicProcessor,
-        lattice: GeometricLatticeProtocol,
-        monitor: AethericMonitor,
-        renderer: QuaternionicRenderer,
-        linguist: LingosoEncoder,
-    ):
-        self.processor = processor
-        self.lattice = lattice
-        self.monitor = monitor
-        self.renderer = renderer
-        self.linguist = linguist
-        self.primes: List[Fraction] = [Fraction(2), Fraction(3), Fraction(5)]
-        self.phi = SymbolicQuaternion(Fraction.one(), Fraction.zero(),
-                                      Fraction.zero(), Fraction.zero())
-        self.psi = SymbolicWavefunction({(0, 0, 0, 0): Fraction.one()})
-        self.origin = SymbolicQuaternion(Fraction.one(), Fraction.zero(),
-                                         Fraction.zero(), Fraction.zero())
-        self.metrics = IntelligenceMetric()
-        self.evolution = SelfEvolutionCore({"core_axioms": {"s_equals_r": Fraction.one()}})
-        self.consciousness = ConsciousnessOperator(self.psi, self.phi)
-        self.state = "initialized"
-        self.generation = 0
-        self.tick = 0
-        self.last_arc_sq = Fraction.zero()
-        self.last_radius_sq = Fraction.zero()
-        self.last_deviation_sq = Fraction.zero()
-        self.last_I = Fraction.zero()
-        self.last_hopf_base: Tuple[Fraction, Fraction] = (Fraction.zero(), Fraction.zero())
-        self.last_trajectory: List[SymbolicQuaternion] = []
-        self.last_evolution: Optional[Dict[str, Any]] = None
-        self.last_linguistic_trajectory: List[SymbolicQuaternion] = []
-        self.last_logic_hash: str = ""
-        self.history: List[Dict[str, Any]] = []
-        # F5: prior deviation, so DbZ rectification persists across steps.
-        self._prior_deviation_sq: Optional[Fraction] = None
-        self._step_lock = threading.Lock()
-        # Cached light snapshot for H12 coherence path
-        self._cached_snapshot: Optional[Dict[str, Any]] = None
-        self._cached_at: float = 0.0
-        self._cached_light_snapshot: Optional[Dict[str, Any]] = None
-        self._cached_light_at: float = 0.0
-    def _integrate_wavefunction_symbolic(self) -> Dict[Tuple[int, int, int, int], Fraction]:
-        """F5: blend the fresh lattice integration with the prior
-        rectified psi whenever the prior step was non-coherent. This is
-        what makes DbZ persist — otherwise the rectification is
-        overwritten on the next step by a pure lattice read."""
-        coeffs: Dict[Tuple[int, int, int, int], Fraction] = {}
-        points = self.lattice.points()
-        for i, _point in enumerate(points):
-            coeffs[(i, 0, 0, 0)] = Fraction(1, i + 1)
-        if not coeffs:
-            coeffs[(0, 0, 0, 0)] = Fraction.one()
-        if self._prior_deviation_sq is not None and not self._prior_deviation_sq.is_zero():
-            for key, val in self.psi.coeffs.items():
-                blended = coeffs.get(key, Fraction.zero()) + val * Fraction(1, 2)
-                coeffs[key] = blended
-        return coeffs
-    def _generate_trajectory(self, psi: SymbolicWavefunction) -> List[SymbolicQuaternion]:
-        trajectory = []
-        epsilon = Fraction(1, 100)
-        for k in range(10):
-            t = Fraction(k, 10)
-            q = SymbolicQuaternion(t, Fraction.zero(), Fraction.zero(), Fraction.zero())
-            q = q.apply_natalia_fibration(t, epsilon, iterations=15)
-            trajectory.append(q)
-        return trajectory
-    def step(self, x: Fraction) -> Dict[str, Any]:
-        with self._step_lock:
-            x_doc = x
-            x = Fraction.one() + x_doc
-            p_n = self.processor.generate_next_prime(self.primes)
-            if self.processor.validate_indivisibility(p_n, self.primes):
-                self.primes.append(p_n)
-            center = self.lattice.stereographic_project_exact(p_n)
-            self.lattice.add_sphere(center, Fraction.one())
-            coeffs = self._integrate_wavefunction_symbolic()
-            self.psi = SymbolicWavefunction(coeffs)
-            self.consciousness = ConsciousnessOperator(self.psi, self.phi)
-            trajectory = self._generate_trajectory(self.psi)
-            self.last_trajectory = trajectory
-            arc_sq = self.monitor.compute_arc_length_squared(trajectory)
-            radius_sq = (trajectory[-1].magnitude_squared() if trajectory
-                         else Fraction.zero())
-            coherence = (arc_sq == radius_sq)
-            deviation_sq = arc_sq - radius_sq
-            self.last_arc_sq = arc_sq
-            self.last_radius_sq = radius_sq
-            self.last_deviation_sq = deviation_sq
-            self.psi = DbZ.Rectify(self.psi, arc_sq, radius_sq, deviation_sq)
-            # F5: persist the deviation so the NEXT step knows to blend.
-            self._prior_deviation_sq = deviation_sq
-            q_eval = SymbolicQuaternion(p_n, Fraction.zero(), Fraction.zero(), Fraction.zero())
-            # F6: pi_x is the COUNT of primes ≤ p_n, i.e., len(self.primes).
-            # Passing int(p_n.num()) would compare p_n's VALUE to Li(p_n),
-            # which is not the Riemann error.
-            I = self.metrics.compute_metric(
-                valid_pairs=len(self.primes),
-                total_primes=len(self.primes),
-                pi_x=len(self.primes),
-                x=p_n,
-                curl_phi_norm=self.phi.magnitude_squared(),
-                target_arc=arc_sq,
-                target_radius=radius_sq,
-            )
-            self.last_I = I
-            evolution_record = self.evolution.evolve_step(I, self.psi, q_eval, deviation_sq)
-            self.last_evolution = evolution_record
-            self.last_logic_hash = evolution_record.get("logic_hash", "")
-            hopf_base = self.renderer.project_to_hopf_base(self.phi)
-            self.last_hopf_base = hopf_base
-            self.tick += 1
-            self.generation = self.evolution.generation
-            self.state = "coherent" if coherence else "evolving"
-            record = {
-                "tick": self.tick,
-                "generation": self.generation,
-                "prime": str(p_n),
-                "prime_count": len(self.primes),
-                "lattice_points": len(self.lattice.points()),
-                "arc_sq": str(arc_sq),
-                "radius_sq": str(radius_sq),
-                "deviation_sq": str(deviation_sq),
-                "coherence": bool(coherence),
-                "I": str(I),
-                "state": self.state,
-                "hopf_base": [str(hopf_base[0]), str(hopf_base[1])],
-                "evolution": evolution_record,
-                "x_input": str(x),
-                "x_input_raw": str(x_doc),
-                "ts": datetime.now().isoformat(),
-            }
-            self.history.append(record)
-            if len(self.history) > 150:
-                self.history = self.history[-150:]  # R14 memfix: was 1000
-            return record
-    def run_autonomous(self, steps: int, x_fn=None) -> List[Dict[str, Any]]:
-        records = []
-        for i in range(steps):
-            x = x_fn(i) if x_fn else Fraction(i, 1)
-            records.append(self.step(x))
-        return records
-    def snapshot(self, light: bool = False) -> Dict[str, Any]:
-        # ultimate H12 fix — never block, always return <50ms, always truncated
-        import time as _time_mod
-        now = _time_mod.time()
-        # Fast cache path — light 1.0s, full 0.5s
-        if light:
-            if self._cached_light_snapshot is not None and (now - self._cached_light_at) < 1.0:
-                return self._cached_light_snapshot
-        else:
-            if self._cached_snapshot is not None and (now - self._cached_at) < 0.5:
-                if light:
-                    # Derive light from full cache quickly
-                    fc = self._cached_snapshot
-                    lc = {
-                        "state": fc.get("state"),
-                        "tick": fc.get("tick"),
-                        "generation": fc.get("generation"),
-                        "prime_count": fc.get("prime_count"),
-                        "lattice_points": fc.get("lattice_points"),
-                        "primes_tail": fc.get("primes_tail", [])[-4:],
-                        "arc_sq": fc.get("arc_sq"),
-                        "radius_sq": fc.get("radius_sq"),
-                        "deviation_sq": fc.get("deviation_sq"),
-                        "coherence": fc.get("coherence"),
-                        "I": fc.get("I"),
-                        "hopf_base": fc.get("hopf_base"),
-                        "psi_real": fc.get("psi_real"),
-                        "phi": fc.get("phi", {"a": "1/1", "b": "0/1", "c": "0/1", "d": "0/1"}),
-                        "phi_magnitude_sq": fc.get("phi_magnitude_sq", "1/1"),
-                        "trajectory": [],
-                        "evolution": fc.get("evolution"),
-                        "logic_core": fc.get("logic_core", {}),
-                        "history_tail": fc.get("history_tail", []),
-                        "last_logic_hash": fc.get("last_logic_hash"),
-                        "stale": False,
-                    }
-                    return lc
-                return self._cached_snapshot
-
-        def _frac_short(f: Any, max_len: int = 64) -> str:
-            # NEVER call str() on huge Fractions — check bit_length first
-            try:
-                # Fast path for Fraction-like
-                if hasattr(f, 'numerator') and hasattr(f, 'denominator'):
-                    n = f.numerator
-                    d = f.denominator
-                    # bit_length check ~ 800 decimal digits = ~2658 bits, use 2700 as threshold
-                    try:
-                        nb = n.bit_length() if hasattr(n, 'bit_length') else 0
-                        db = d.bit_length() if hasattr(d, 'bit_length') else 0
-                        if nb > 2700 or db > 2700:
-                            # Estimate decimal digits without str()
-                            nd = int(nb * 0.30103) + 1 if nb else 1
-                            dd = int(db * 0.30103) + 1 if db else 1
-                            # Avoid str() entirely — return size placeholder
-                            # For moderate huge (2700-20000 bits) still try to show leading digits via pow10 approx?
-                            return f"HUGE~{nd}d/{dd}d~({nd+dd}ch)"
-                    except Exception:
-                        pass
-                    # For normal size, try str but with guard
-                    try:
-                        # If still huge, this str will be heavy — but we already filtered >800 digits
-                        s = str(f)
-                    except ValueError as ve:
-                        # Python 3.11+ int_max_str_digits guard
-                        if "exceeds the limit" in str(ve) or "conversion" in str(ve).lower():
-                            return f"HUGE({getattr(n,'bit_length',lambda:0)()}bits)"
-                        raise
-                    if len(s) <= max_len:
-                        return s
-                    if '/' in s:
-                        a,b = s.split('/',1)
-                        if len(a) > 20 or len(b) > 20:
-                            return f"{a[:10]}…{a[-3:]}/{b[:10]}…{b[-3:]}…({len(s)}ch)"
-                    return s[:max_len] + f"…({len(s)}ch)"
-                # Non-Fraction fallback
-                s = str(f)
-                if len(s) <= max_len:
-                    return s
-                return s[:max_len] + f"…({len(s)}ch)"
-            except Exception:
-                try:
-                    # Last resort: try repr without huge int str
-                    if hasattr(f, 'numerator'):
-                        try:
-                            nb = f.numerator.bit_length()
-                            return f"~{int(nb*0.30103)}d frac"
-                        except Exception:
-                            pass
-                    return str(f)[:max_len]
-                except Exception:
-                    return "0/1"
-
-
-        lock = self._step_lock
-        acquired = lock.acquire(timeout=0.05)  # 50ms max, was 100ms
-        if not acquired:
-            # Never return seed_busy error that causes H12 — return stale cache or minimal placeholder
-            if light and self._cached_light_snapshot is not None:
-                d = dict(self._cached_light_snapshot)
-                d["stale"] = True
-                d["tick"] = self.tick
-                return d
-            if self._cached_snapshot is not None:
-                d = dict(self._cached_snapshot)
-                d["stale"] = True
-                d["tick"] = self.tick
-                if light:
-                    # Trim to light shape but keep required fields for TWA
-                    return {
-                        "state": d.get("state", "evolving"),
-                        "tick": d.get("tick", self.tick),
-                        "generation": d.get("generation", 0),
-                        "prime_count": d.get("prime_count", 0),
-                        "lattice_points": d.get("lattice_points", 0),
-                        "primes_tail": d.get("primes_tail", [])[-4:],
-                        "arc_sq": d.get("arc_sq", "0/1"),
-                        "radius_sq": d.get("radius_sq", "1/1"),
-                        "deviation_sq": d.get("deviation_sq", "0/1"),
-                        "coherence": d.get("coherence", False),
-                        "I": d.get("I", "0/1"),
-                        "hopf_base": d.get("hopf_base", ["0/1","0/1"]),
-                        "psi_real": d.get("psi_real", "0/1"),
-                        "phi": d.get("phi", {"a": "1/1", "b": "0/1", "c": "0/1", "d": "0/1"}),
-                        "phi_magnitude_sq": d.get("phi_magnitude_sq", "1/1"),
-                        "trajectory": [],
-                        "evolution": d.get("evolution"),
-                        "logic_core": d.get("logic_core", {}),
-                        "history_tail": d.get("history_tail", []),
-                        "last_logic_hash": d.get("last_logic_hash", ""),
-                        "stale": True,
-                    }
-                return d
-            # No cache yet — return minimal placeholder instantly (<1ms) to avoid H12 on boot
-            return {
-                "state": self.state,
-                "tick": self.tick,
-                "generation": self.generation,
-                "prime_count": len(self.primes),
-                "lattice_points": len(self.lattice.points()),
-                "primes_tail": [_frac_short(p, 32) for p in self.primes[-4:]],
-                "arc_sq": _frac_short(self.last_arc_sq, 48),
-                "radius_sq": _frac_short(self.last_radius_sq, 48),
-                "deviation_sq": _frac_short(self.last_deviation_sq, 48),
-                "coherence": self.last_deviation_sq.is_zero(),
-                "I": _frac_short(self.last_I, 48),
-                "hopf_base": [_frac_short(self.last_hopf_base[0], 32), _frac_short(self.last_hopf_base[1], 32)],
-                "psi_real": _frac_short(self.psi.real_part(), 32),
-                "phi": {"a": "1/1", "b": "0/1", "c": "0/1", "d": "0/1"},
-                "phi_magnitude_sq": "1/1",
-                "trajectory": [],
-                "evolution": self.last_evolution,
-                "logic_core": {},
-                "history_tail": self.history[-4:],
-                "last_logic_hash": self.last_logic_hash,
-                "stale": True,
-                "booting": True,
-            }
-        try:
-            # Common short helper for full vs light
-            if light:
-                snap = {
-                    "state": self.state,
-                    "tick": self.tick,
-                    "generation": self.generation,
-                    "prime_count": len(self.primes),
-                    "lattice_points": len(self.lattice.points()),
-                    "primes_tail": [_frac_short(p, 32) for p in self.primes[-4:]],
-                    "arc_sq": _frac_short(self.last_arc_sq, 48),
-                    "radius_sq": _frac_short(self.last_radius_sq, 48),
-                    "deviation_sq": _frac_short(self.last_deviation_sq, 48),
-                    "coherence": self.last_deviation_sq.is_zero(),
-                    "I": _frac_short(self.last_I, 48),
-                    "hopf_base": [_frac_short(self.last_hopf_base[0], 32), _frac_short(self.last_hopf_base[1], 32)],
-                    "psi_real": _frac_short(self.psi.real_part(), 32),
-                    "phi": {
-                        "a": _frac_short(self.phi.a if hasattr(self, 'phi') else "1/1", 32),
-                        "b": _frac_short(self.phi.b if hasattr(self, 'phi') else "0/1", 32),
-                        "c": _frac_short(self.phi.c if hasattr(self, 'phi') else "0/1", 32),
-                        "d": _frac_short(self.phi.d if hasattr(self, 'phi') else "0/1", 32),
-                    } if hasattr(self, 'phi') else {"a": "1/1", "b": "0/1", "c": "0/1", "d": "0/1"},
-                    "phi_magnitude_sq": _frac_short(self.phi.magnitude_squared() if hasattr(self, 'phi') else "1/1", 32),
-                    "trajectory": [],  # omit heavy trajectory in light mode to stay <50ms
-                    "evolution": {"generation": self.last_evolution.get("generation") if self.last_evolution else 0, "logic_hash": self.last_logic_hash} if self.last_evolution else None,
-                    "logic_core": {},
-                    "history_tail": self.history[-4:],
-                    "last_logic_hash": self.last_logic_hash,
-                    "stale": False,
-                }
-                self._cached_light_snapshot = snap
-                self._cached_light_at = now
-                return snap
+            raw_k_i = []
+            for j in range(slowing):
+                idx = -1 - i - j
+                if abs(idx) > len(close) - k_period:
+                    continue
+                h_i = max(high[idx - k_period + 1:idx + 1]) if idx < -1 else max(high[-k_period:])
+                l_i = min(low[idx - k_period + 1:idx + 1]) if idx < -1 else min(low[-k_period:])
+                r_i = h_i - l_i
+                if r_i == Decimal('0.0'):
+                    raw_k_i.append(Decimal('50.0'))
+                else:
+                    raw_k_i.append(Decimal('100.0') * (close[idx] - l_i) / r_i)
+            if raw_k_i:
+                d_series.append(sum(raw_k_i) / Decimal(len(raw_k_i)))
             else:
-                # Full snapshot — still truncated to avoid H12, but includes trajectory (truncated)
-                snap = {
-                    "state": self.state,
-                    "tick": self.tick,
-                    "generation": self.generation,
-                    "primes_tail": [_frac_short(p, 64) for p in self.primes[-8:]],
-                    "prime_count": len(self.primes),
-                    "lattice_points": len(self.lattice.points()),
-                    "arc_sq": _frac_short(self.last_arc_sq, 128),
-                    "radius_sq": _frac_short(self.last_radius_sq, 128),
-                    "deviation_sq": _frac_short(self.last_deviation_sq, 128),
-                    "coherence": self.last_deviation_sq.is_zero(),
-                    "I": _frac_short(self.last_I, 128),
-                    "hopf_base": [_frac_short(self.last_hopf_base[0], 64), _frac_short(self.last_hopf_base[1], 64)],
-                    "evolution": self.last_evolution,
-                    "trajectory": [
-                        {"a": _frac_short(q.a, 48), "b": _frac_short(q.b, 48), "c": _frac_short(q.c, 48), "d": _frac_short(q.d, 48)}
-                        for q in self.last_trajectory[:10]
-                    ],
-                    "linguistic_trajectory": [
-                        {"a": _frac_short(q.a, 48), "b": _frac_short(q.b, 48), "c": _frac_short(q.c, 48), "d": _frac_short(q.d, 48)}
-                        for q in self.last_linguistic_trajectory[:10]
-                    ],
-                    "history_tail": self.history[-10:],
-                    "logic_core": {
-                        k: {kk: _frac_short(vv, 64) for kk, vv in v.items()} if isinstance(v, dict) else _frac_short(v, 64)
-                        for k, v in self.evolution.logic_core.items()
-                    },
-                    "last_logic_hash": self.last_logic_hash,
-                    "psi_real": _frac_short(self.psi.real_part(), 64),
-                    "phi": {
-                        "a": _frac_short(self.phi.a, 64),
-                        "b": _frac_short(self.phi.b, 64),
-                        "c": _frac_short(self.phi.c, 64),
-                        "d": _frac_short(self.phi.d, 64),
-                    } if hasattr(self, 'phi') else {"a": "1/1", "b": "0/1", "c": "0/1", "d": "0/1"},
-                    "phi_magnitude_sq": _frac_short(self.phi.magnitude_squared() if hasattr(self, 'phi') else "1/1", 64),
-                    "stale": False,
-                }
-                self._cached_snapshot = snap
-                self._cached_at = now
-                return snap
-        finally:
-            lock.release()
-    def encode_syllable(self, syllable: str) -> Dict[str, Any]:
-        traj = self.linguist.encode_syllable(syllable)
-        self.last_linguistic_trajectory = traj
-        arc_sq = self.monitor.compute_arc_length_squared(traj)
-        radius_sq = traj[-1].magnitude_squared() if traj else Fraction.zero()
-        return {
-            "syllable": syllable,
-            "length": len(traj),
-            "arc_sq": str(arc_sq),
-            "radius_sq": str(radius_sq),
-            "deviation_sq": str(arc_sq - radius_sq),
-            "coherence": (arc_sq == radius_sq),
-            "trajectory": [
-                {"a": str(q.a), "b": str(q.b), "c": str(q.c), "d": str(q.d)}
-                for q in traj
-            ],
-        }
-# ============================================================================
-# BRIDGE STATE
-# ============================================================================
-class BridgeState:
-    """Holds user-committed quaternionic anchors, webapp sessions, and
-    the crawl queue introspection."""
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._anchors: Dict[int, Dict[str, Any]] = {}
-        self._next_anchor_idx = 0
-        self._webapp_sessions: Dict[int, Dict[str, Any]] = {}
-        self._handshake_lock = threading.Lock()
-    def register_webapp_session(self, user_id: int, username: Optional[str],
-                                chat_id: Optional[int] = None) -> bool:
-        with self._handshake_lock:
-            now = datetime.now().isoformat()
-            existing = self._webapp_sessions.get(user_id, {})
-            is_new = not existing
-            chat_changed = existing.get("chat_id") != chat_id
-            self._webapp_sessions[user_id] = {
-                "user_id": user_id,
-                "username": username,
-                "chat_id": chat_id,
-                "first_seen": existing.get("first_seen", now),
-                "last_seen": now,
-            }
-            if is_new or chat_changed:
-                logger.info(f"🔗 Web App session: user_id={user_id}, username={username}, chat_id={chat_id}")
-            return True
-    def add_anchor(self, q: SymbolicQuaternion, label: str = "") -> int:
-        with self._lock:
-            idx = self._next_anchor_idx
-            self._next_anchor_idx += 1
-            self._anchors[idx] = {
-                "idx": idx,
-                "a": str(q.a), "b": str(q.b), "c": str(q.c), "d": str(q.d),
-                "label": label,
-                "created": datetime.now().isoformat(),
-            }
-            return idx
-    def remove_anchor(self, idx: int) -> bool:
-        with self._lock:
-            return self._anchors.pop(idx, None) is not None
-    def list_anchors(self) -> List[Dict[str, Any]]:
-        with self._lock:
-            return list(self._anchors.values())
-BRIDGE_STATE = BridgeState()
-BRIDGE_ENGINE_REF: Dict[str, Any] = {
-    "seed": None,
-    "bot": None,
-    "public_url": None,
-    "crawler": None,
-    "port": None,
-}
+                d_series.append(fast_k)
+    d = sum(d_series) / Decimal(len(d_series)) if d_series else fast_k
+    return fast_k, d
 
-# global fast cache updated by SeedWorker after each step - no lock needed in handler
-LAST_LIGHT_SNAPSHOT: dict = {}
-LAST_LIGHT_AT: float = 0.0
-LAST_LIGHT_LOCK = threading.Lock()
-# ============================================================================
-# CS-TRANSLATION HELPERS
-# ============================================================================
-def _md_escape(value) -> str:
-    if value is None:
-        return "—"
-    s = str(value)
-    out = []
-    for ch in s:
-        if ch == '\\':
-            out.append('\\\\')
-        elif ch == '*':
-            out.append('\\*')
-        elif ch == '_':
-            out.append('\\_')
-        elif ch == '`':
-            out.append('\\`')
-        elif ch == '[':
-            out.append('\\[')
-        elif ch == ']':
-            out.append('\\]')
-        elif ch == '<':
-            out.append('&lt;')
-        elif ch == '>':
-            out.append('&gt;')
-        else:
-            out.append(ch)
-    return ''.join(out)
-_CS_VALUE_MAP: Dict[str, str] = {
-    "BUY": "↑", "SELL": "↓", "NEUTRAL": "⊙",
-    "ACTIVE": "𝒜₃", "INACTIVE": "𝒜₄",
-    "ON": "𝒜₃", "OFF": "𝒜₄",
-    "UP": "↟", "DOWN": "↡",
-    "LONG": "↑", "SHORT": "↓",
-    "CLOSE": "𝒞_Close", "NONE": "𝒩",
-    "YES": "⟦𝒴⟧", "NO": "⟦𝒩⟧",
-    "TRUE": "⟦𝒯⟧", "FALSE": "⟦ℱ⟧",
-    "STABLE": "𝒮_Stable", "UNKNOWN": "𝒰",
-    "COHERENT": "𝒮_coherent", "EVOLVING": "𝒟_evolving",
-    "INITIALIZED": "𝒮_init",
-}
-# F9: field-label sigils for Telegram message bodies. These are the
-# left-hand strings the user sees; the right-hand strings are the CS
-# plain-text sigils from LOGOS.MD CODEX_SYMBOLICA.
-_CS_LABELS: Dict[str, str] = {
-    "state": "𝒮",
-    "tick": "𝒯",
-    "generation": "𝒯_gen",
-    "prime_count": "𝒜[p]",
-    "lattice_points": "Λ₂₄",
-    "deviation_sq": "δ(s²−r²)",
-    "I": "ℐ",
-    "hopf_base": "𝒮_fib",
-    "evolution": "𝒯_evo",
-    "crawler": "𝒞",
-    "observer": "𝒪[Ψ]",
-    "lingoso": "ℱ",
-    "psi_real": "Re[ψ]",
-    "coherence": "𝒮_coh",
-    "primes_tail": "𝒜[p]_tail",
-    "logic_hash": "ℋ_hash",
-    "frontier": "𝒞_front",
-    "visited": "𝒞_visited",
-}
-_CS_SIGIL_PREFIXES = ("𝒜", "𝒮", "𝒟", "ℐ", "𝒪", "𝒞", "𝒯", "ℱ", "Λ", "Φ", "Ψ", "⟦", "⟧")
-def _cs(value) -> str:
-    if value is None:
-        return "—"
-    s = str(value).strip()
-    if not s:
-        return "—"
-    upper = s.upper()
-    if upper in _CS_VALUE_MAP:
-        return _CS_VALUE_MAP[upper]
-    if "/" in s:
-        stripped = s.replace("/", "").replace("-", "").replace("+", "")
-        if stripped.isdigit():
-            return s
-    if s.startswith(_CS_SIGIL_PREFIXES):
-        return s
-    return "⟦" + s + "⟧"
-def _cs_label(key: str) -> str:
-    """F9: lookup the CS sigil for a field label. Falls back to the
-    original key wrapped in ⟦…⟧ so no information is lost if a new
-    label is introduced without a sigil entry."""
-    return _CS_LABELS.get(key, "⟦" + key + "⟧")
-def _looks_like_reply_error(desc: str) -> bool:
-    if not desc:
-        return False
-    d = desc.lower()
-    return any(k in d for k in ("reply", "message to be replied",
-                                "reply_to_message_id", "reply message not found",
-                                "message_id_invalid"))
-def _looks_like_parse_error(desc: str) -> bool:
-    if not desc:
-        return False
-    d = desc.lower()
-    return any(k in d for k in ("parse", "entities", "entity",
-                                "unsupported start tag", "unsupported end tag",
-                                "unexpected end of", "can't find end",
-                                "can't parse", "markdown"))
-def _looks_like_length_error(desc: str) -> bool:
-    if not desc:
-        return False
-    d = desc.lower()
-    return any(k in d for k in ("too long", "message is too long",
-                                "text is too long", "4096"))
-# ============================================================================
-# ENVIRONMENT / CONFIGURATION
-# ============================================================================
-TELEGRAM_BOT_TOKEN_ENV: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_WEBAPP_URL: str = os.getenv("TELEGRAM_WEBAPP_URL", "").strip()
-BRIDGE_HOST: str = os.getenv("BRIDGE_HOST", "0.0.0.0").strip()
-# F1: on a web dyno, $PORT is Heroku-assigned. We bind to it directly.
-# On a local dev box, BRIDGE_PORT (default 8765) is used.
-_ENV_PORT: Optional[str] = os.getenv("PORT")
-_ENV_BRIDGE_PORT: Optional[str] = os.getenv("BRIDGE_PORT")
-if _ENV_PORT:
-    BRIDGE_PORT: int = int(_ENV_PORT)
-    _SUBSTRATE: str = "web-dyno"
-else:
-    BRIDGE_PORT: int = int(_ENV_BRIDGE_PORT or "8765")
-    _SUBSTRATE: str = "local"
-BRIDGE_USE_TLS: bool = os.getenv("BRIDGE_USE_TLS", "0").strip() in ("1", "true", "yes")
-BRIDGE_TLS_CERT: str = os.getenv("BRIDGE_TLS_CERT", "").strip()
-BRIDGE_TLS_KEY: str = os.getenv("BRIDGE_TLS_KEY", "").strip()
-BRIDGE_PUBLIC_TIMEOUT: int = int(os.getenv("BRIDGE_PUBLIC_TIMEOUT", "45"))
-REQUIRE_AUTH: bool = os.getenv("REQUIRE_AUTH", "1").strip() in ("1", "true", "yes")
-CORS_ORIGIN: str = os.getenv("CORS_ORIGIN", "*").strip()
-RELAY_URL: str = os.getenv("RELAY_URL", "").strip().rstrip("/")
-RELAY_KEY: str = os.getenv("RELAY_KEY", "").strip()
-RELAY_TIMEOUT: int = int(os.getenv("RELAY_TIMEOUT", "15"))
-RELAY_MAX_RETRIES: int = int(os.getenv("RELAY_MAX_RETRIES", "3"))
-SEED_TICK_INTERVAL: int = int(os.getenv("SEED_TICK_INTERVAL", "5"))
-CRAWL_INTERVAL: int = int(os.getenv("CRAWL_INTERVAL", "3"))
-CRAWLER_BLOCKLIST: list = [s.strip() for s in os.getenv("CRAWLER_BLOCKLIST", "meta.wikimedia.org,wikimedia.org/w/api,thumb.wikimedia,upload.wikimedia,featuredfeed").split(",") if s.strip()]
-MAX_CRAWL_DEPTH: int = int(os.getenv("MAX_CRAWL_DEPTH", "3"))
-CRAWL_SEED_URLS: str = os.getenv("CRAWL_SEED_URLS", "").strip()
-CRAWLER_DB_PATH: str = os.getenv("CRAWLER_DB_PATH", "aei_crawler.db")
-# use Telegram as distributed/isolated database at bot discretion
-TELEGRAM_DB_CHANNEL_ID: str = os.getenv("TELEGRAM_DB_CHANNEL_ID", "").strip()  # e.g. -1001234567890 private channel where bot is admin
-ENABLE_TELEGRAM_DB: bool = os.getenv("ENABLE_TELEGRAM_DB", "0").strip() in ("1","true","yes")
-TELEGRAM_DB_USER_SHARDS: bool = os.getenv("TELEGRAM_DB_USER_SHARDS", "0").strip() in ("1","true","yes")  # isolated per-user chat shards
-TELEGRAM_DB_SAVE_INTERVAL: int = int(os.getenv("TELEGRAM_DB_SAVE_INTERVAL", "5"))  # save every N seed ticks
-TELEGRAM_DB_CHUNK_SIZE: int = int(os.getenv("TELEGRAM_DB_CHUNK_SIZE", "3800"))  # 4096 Telegram limit - margin
-TELEGRAM_DB_PIN_INDEX: bool = os.getenv("TELEGRAM_DB_PIN_INDEX", "0").strip() in ("1","true","yes")
-# explicit central user mirror — your chat can be backup central DB without mixing with channel
-TELEGRAM_DB_CENTRAL_USER_ID: str = os.getenv("TELEGRAM_DB_CENTRAL_USER_ID", "").strip()  # e.g. 123456789 your own user_id
-ALLOWED_USER_IDS: set = set()
-_raw_allowed = os.getenv("ALLOWED_USER_IDS", "").strip()
-if _raw_allowed:
-    for tok in _raw_allowed.split(","):
-        tok = tok.strip()
-        if tok.isdigit():
-            ALLOWED_USER_IDS.add(int(tok))
+def bollinger_bands(close, period=20, dev=Decimal('2.0')):
+    if len(close) < period or period <= 0:
+        return Decimal('0.0'), Decimal('0.0'), Decimal('0.0')
+    mid = sma(close, period)
+    variance = sum((x - mid) ** 2 for x in close[-period:]) / Decimal(period)
+    std = variance.sqrt() if variance > Decimal('0.0') else Decimal('0.0')
+    upper = mid + dev * std
+    lower = mid - dev * std
+    return upper, mid, lower
 
-# shard pool independent of gate
-TELEGRAM_DB_SHARD_POOL: set = set()
-_raw_shard_pool = os.getenv("TELEGRAM_DB_SHARD_POOL", "").strip()
-if _raw_shard_pool:
-    for tok in _raw_shard_pool.split(","):
-        tok = tok.strip()
-        if tok.isdigit():
-            TELEGRAM_DB_SHARD_POOL.add(int(tok))
+def true_range(high, low, close, i):
+    if i + 1 >= len(close):
+        return high[i] - low[i]
+    tr1 = high[i] - low[i]
+    tr2 = abs(high[i] - close[i + 1])
+    tr3 = abs(low[i] - close[i + 1])
+    return max(tr1, tr2, tr3)
 
-def _get_shard_pool() -> set:
-    # Decoupled: if SHARD_POOL set, use it; else fallback to ALLOWED_USER_IDS for backward compat
-    if TELEGRAM_DB_SHARD_POOL:
-        return TELEGRAM_DB_SHARD_POOL
-    return ALLOWED_USER_IDS
+def atr(high, low, close, period=14):
+    if len(close) < period + 1 or period <= 0:
+        return Decimal('0.0')
+    trs = []
+    for i in range(period):
+        trs.append(true_range(high, low, close, i))
+    return sum(trs) / Decimal(period)
 
-def _is_allowed_user(user_id) -> bool:
-    if not ALLOWED_USER_IDS:
-        return True
+def stddev(data, period):
+    if len(data) < period or period <= 0:
+        return Decimal('0.0')
+    mean = sum(data[-period:]) / Decimal(period)
+    variance = sum((x - mean) ** 2 for x in data[-period:]) / Decimal(period)
+    return variance.sqrt() if variance > Decimal('0.0') else Decimal('0.0')
+
+def ichimoku(high, low, close, t_period: int, k_period: int, j_period: int):
+    if len(close) < j_period or j_period <= 0 or k_period <= 0 or t_period <= 0:
+        return {"tenkan": Decimal('50.0'), "kijun": Decimal('50.0'),
+                "senkou_a": Decimal('50.0'), "senkou_b": Decimal('50.0')}
+    tenkan = (max(high[-t_period:]) + min(low[-t_period:])) / Decimal('2.0')
+    kijun = (max(high[-k_period:]) + min(low[-k_period:])) / Decimal('2.0')
+    senkou_a = (tenkan + kijun) / Decimal('2.0')
+    senkou_b = (max(high[-j_period:]) + min(low[-j_period:])) / Decimal('2.0')
+    return {"tenkan": tenkan, "kijun": kijun, "senkou_a": senkou_a, "senkou_b": senkou_b}
+
+def to_decimal(value):
     try:
-        return int(user_id) in ALLOWED_USER_IDS
-    except (TypeError, ValueError):
-        return False
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+    except Exception:
+        return Decimal('0.0')
+
+# ============================================================================
+# M-1: SYMBOL POINT-SIZE
+# ============================================================================
+def symbol_point(symbol: str) -> Decimal:
+    digits = _symbol_digits(symbol)
+    return Decimal(10) ** Decimal(-digits)
+
+def _symbol_digits(symbol: str) -> int:
+    try:
+        import MetaTrader5 as _mt5  # type: ignore
+        info = _mt5.symbol_info(symbol)
+        if info is not None and hasattr(info, "digits"):
+            return int(info.digits)
+    except Exception:
+        pass
+    if symbol in SYMBOL_DIGITS:
+        return SYMBOL_DIGITS[symbol]
+    for canonical, chain in SYMBOL_FALLBACKS.items():
+        if symbol in chain:
+            return SYMBOL_DIGITS.get(canonical, SYMBOL_DIGITS_DEFAULT)
+    return SYMBOL_DIGITS_DEFAULT
+
 # ============================================================================
 # TELEGRAM WEB APP AUTHENTICATION
 # ============================================================================
-def verify_telegram_init_data(init_data: str, bot_token: str,
-                              max_age_seconds: int = 86400) -> Optional[Dict[str, Any]]:
+def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> Optional[Dict[str, Any]]:
     if not init_data or not bot_token:
         return None
     try:
@@ -2666,16 +1849,9 @@ def verify_telegram_init_data(init_data: str, bot_token: str,
     if not received_hash:
         return None
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
-    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"),
-                          hashlib.sha256).digest()
-    expected_hash = hmac.new(secret_key, data_check_string.encode("utf-8"),
-                             hashlib.sha256).hexdigest()
-    try:
-        expected_b = expected_hash.encode("ascii")
-        received_b = str(received_hash).encode("ascii")
-        if not hmac.compare_digest(expected_b, received_b):
-            return None
-    except Exception:
+    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
+    expected_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_hash, received_hash):
         return None
     auth_date_raw = parsed.get("auth_date")
     if auth_date_raw is not None:
@@ -2697,6 +1873,7 @@ def verify_telegram_init_data(init_data: str, bot_token: str,
         "auth_date": int(auth_date_raw) if auth_date_raw else None,
         "raw": parsed,
     }
+
 def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Optional[str], bool]:
     raw_init = handler.headers.get("X-Telegram-Init-Data", "").strip()
     if not raw_init:
@@ -2704,313 +1881,4223 @@ def _extract_auth_headers(handler: "BridgeHandler") -> Tuple[Optional[int], Opti
         if auth_hdr.lower().startswith("tma "):
             raw_init = auth_hdr[4:].strip()
     if not raw_init:
-        try:
-            qs = dict(parse_qsl(urlparse(handler.path).query))
-            raw_init = (qs.get("auth_init_data") or "").strip()
-        except Exception:
-            raw_init = ""
-    if not raw_init:
         return (None, None, False)
     verified = verify_telegram_init_data(raw_init, TELEGRAM_BOT_TOKEN_ENV)
     if not verified or not verified.get("user"):
         return (None, None, False)
     u = verified["user"] or {}
     return (u.get("id"), u.get("username"), True)
+
 # ============================================================================
-# CRAWLER WORKER
+# FEED CLIENT — CLOUDFLARE WORKER RELAY
 # ============================================================================
-class CrawlerWorker:
-    """Async crawler loop. Pulls URLs from the frontier, fetches via the
-    relay, records the visit (hash lifted to exact Fraction), enqueues
-    discovered links up to MAX_CRAWL_DEPTH. The seed consumes the latest
-    hash_frac as its x input on each step."""
-    DEFAULT_SEEDS = [
-        "https://en.wikipedia.org/wiki/Riemann_hypothesis",
-        "https://en.wikipedia.org/wiki/Leech_lattice",
-        "https://en.wikipedia.org/wiki/Hopf_fibration",
-        "https://en.wikipedia.org/wiki/Prime_number",
-        "https://en.wikipedia.org/wiki/Quaternion",
-        "https://en.wikipedia.org/wiki/Continued_fraction",
-        "https://en.wikipedia.org/wiki/Chinese_remainder_theorem",
-    ]
-    def __init__(self, state: CrawlerSeedState, relay: CrawlerRelayClient,
-                 seeds: Optional[List[str]] = None):
-        self.state = state
-        self.relay = relay
-        self._running = False
-        self._task: Optional[asyncio.Task] = None
-        self._last_fetch_at: Optional[datetime] = None
-        self._crawl_count = 0
-        self._executor: concurrent.futures.ThreadPoolExecutor = (
-            _DaemonThreadPoolExecutor(
-                max_workers=1,
-                thread_name_prefix="aei-crawl",
-            )
-        )
-        initial = seeds if seeds else self.DEFAULT_SEEDS
-        if CRAWL_SEED_URLS:
-            initial = [u.strip() for u in CRAWL_SEED_URLS.split(",") if u.strip()]
-        for u in initial:
-            self.state.enqueue(u, depth=0, priority=1)
-    async def _loop(self):
-        loop = asyncio.get_running_loop()
-        consecutive_empty = 0
-        while self._running:
+class FeedClient:
+    def __init__(self, symbol: str = "BTC-USD"):
+        self.symbol = symbol
+        chain = SYMBOL_FALLBACKS.get(symbol)
+        if chain is None:
+            if symbol.endswith("-USD"):
+                base = symbol[:-4]
+                chain = [symbol, f"{base}USD=X"]
+            else:
+                chain = [symbol]
+        self._chain: List[str] = list(chain)
+        self._chain_index: int = 0
+        self._last_update: Optional[datetime] = None
+        self._failure_count: int = 0
+        self._fallback_count: int = 0
+        self._last_provider: str = ""
+        self._last_volume: Decimal = Decimal('0.0')
+
+    def active_symbol(self) -> str:
+        return self._chain[self._chain_index]
+
+    def failure_count(self) -> int:
+        return self._failure_count
+
+    def last_update(self) -> Optional[datetime]:
+        return self._last_update
+
+    def last_provider(self) -> str:
+        return self._last_provider
+
+    def last_volume(self) -> Decimal:
+        return self._last_volume
+
+    def _advance_symbol_chain(self) -> None:
+        if len(self._chain) <= 1:
+            return
+        self._chain_index = (self._chain_index + 1) % len(self._chain)
+        logger.warning(f"🔄 FeedClient: rotating symbol chain to '{self.active_symbol()}'")
+        self._fallback_count = 0
+        self._failure_count = 0
+
+    def _rebuild_ticker(self) -> None:
+        logger.info("🔄 FeedClient: rebuild requested (no-op; Worker handles upstream)")
+
+    def _get(self, kind: str, **params) -> Optional[Any]:
+        if not RELAY_URL:
+            logger.error("❌ RELAY_URL not set — cannot fetch price")
+            return None
+        params["symbol"] = self.active_symbol()
+        params["kind"] = kind
+        qs = urllib.parse.urlencode(params)
+        url = f"{RELAY_URL}/?{qs}"
+        last_error = None
+        for attempt in range(RELAY_MAX_RETRIES):
             try:
-                url = await loop.run_in_executor(self._executor, self.state.dequeue)
-                if url is None:
-                    consecutive_empty += 1
-                    # queue starvation guard: if empty for >10 cycles, re-seed from DEFAULT_SEEDS
-                    if consecutive_empty >= 10:
-                        logger.info("crawler queue starvation: re-seeding frontier")
-                        for seed_url in self.DEFAULT_SEEDS[:3]:
-                            self.state.enqueue(seed_url, depth=0, priority=1)
-                        consecutive_empty = 0
-                    await asyncio.sleep(1.0)
+                req_headers = {
+                    "Accept": "application/json",
+                    "User-Agent": "AEI-Bridge/final",
+                    "Cache-Control": "no-cache",
+                }
+                if RELAY_KEY:
+                    req_headers["X-Relay-Key"] = RELAY_KEY
+                req = urllib.request.Request(url, headers=req_headers)
+                with urllib.request.urlopen(req, timeout=RELAY_TIMEOUT) as r:
+                    raw = r.read().decode("utf-8")
+                    payload = json.loads(raw)
+                    if isinstance(payload, dict) and payload.get("error"):
+                        detail_raw = str(payload.get("detail", ""))
+                        detail_short = detail_raw[:200] + ("…" if len(detail_raw) > 200 else "")
+                        logger.warning(
+                            f"Relay returned error for {self.active_symbol()} "
+                            f"(kind={kind}): {payload.get('error')} ({detail_short})"
+                        )
+                        self._failure_count += 1
+                        self._fallback_count += 1
+                        if self._fallback_count >= 5:
+                            self._advance_symbol_chain()
+                        return None
+                    self._failure_count = 0
+                    self._fallback_count = 0
+                    self._last_update = datetime.now()
+                    if isinstance(payload, dict):
+                        if payload.get("provider"):
+                            self._last_provider = str(payload["provider"])
+                        if payload.get("volume") is not None:
+                            try:
+                                self._last_volume = Decimal(str(payload["volume"]))
+                            except Exception:
+                                pass
+                    elif isinstance(payload, list) and payload:
+                        last = payload[-1]
+                        if isinstance(last, dict):
+                            if last.get("provider"):
+                                self._last_provider = str(last["provider"])
+                            if last.get("volume") is not None:
+                                try:
+                                    self._last_volume = Decimal(str(last["volume"]))
+                                except Exception:
+                                    pass
+                    return payload
+            except urllib.error.HTTPError as e:
+                try:
+                    error_body = e.read().decode('utf-8', errors='ignore')
+                except Exception:
+                    error_body = '<unreadable>'
+                last_error = f"HTTP {e.code}: {error_body[:200]}"
+                logger.warning(f"Relay HTTP Error {e.code} for {self.active_symbol()} kind={kind} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {error_body[:200]}")
+                if e.code == 429 and attempt < RELAY_MAX_RETRIES - 1:
+                    time.sleep(1 + attempt * 2)
                     continue
-                consecutive_empty = 0
-                payload = await loop.run_in_executor(self._executor, self.relay.fetch_url, url)
-                if payload and payload.get("ok") and not payload.get("error"):
-                    title = str(payload.get("title", ""))
-                    content_hash = str(payload.get("content_hash", ""))
-                    links = payload.get("links", []) or []
-                    try:
-                        depth = int(payload.get("depth", 0))
-                    except (TypeError, ValueError):
-                        depth = 0
-                    # depth may be missing from relay; infer from stored depth if needed
-                    if depth == 0:
-                        # try to recover depth from queue metadata (not stored) -> keep 0
-                        pass
-                    self.state.record_visit(
-                        url=url, title=title,
-                        content_hash=content_hash,
-                        depth=depth,
-                        link_count=len(links),
-                    )
-                    if depth < MAX_CRAWL_DEPTH:
-                        for link in links[:16]:
-                            if isinstance(link, str) and link.startswith("http"):
-                                # filter out non-wiki cruft, keep http
-                                self.state.enqueue(link, depth=depth + 1, priority=0)
-                    self._last_fetch_at = datetime.now()
-                    self._crawl_count += 1
-                else:
-                    # don't infinite-re-enqueue on relay failure, respect failure_count
-                    if self.relay.failure_count() >= 3:
-                        logger.info(f"crawl skipped: {url} (no payload) — circuit breaker active, not re-enqueueing")
-                    elif "meta.wikimedia.org" in url.lower() or "wikimedia.org" in url.lower():
-                        logger.info(f"crawl skipped: {url} (no payload) — blocked domain, dropping")
-                    else:
-                        logger.info(f"crawl skipped: {url} (no payload) — re-enqueue low priority")
-                        try:
-                            # only retry once, depth+1, low priority
-                            self.state.enqueue(url, depth=1, priority=-1)
-                        except Exception:
-                            pass
-                # backoff when relay unhealthy
-                if self.relay.failure_count() >= 3:
-                    await asyncio.sleep(10.0)
-                else:
-                    await asyncio.sleep(CRAWL_INTERVAL)
-            except asyncio.CancelledError:
+                break
+            except urllib.error.URLError as e:
+                last_error = f"URLError: {e.reason}"
+                logger.warning(f"Relay URLError for {self.active_symbol()} kind={kind} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e.reason}")
+                if attempt < RELAY_MAX_RETRIES - 1:
+                    time.sleep(1 + attempt * 2)
+                    continue
+                break
+            except json.JSONDecodeError as e:
+                last_error = f"JSONDecodeError: {e}"
+                logger.warning(f"Relay returned invalid JSON for {self.active_symbol()} kind={kind}: {e}")
                 break
             except Exception as e:
-                logger.warning(f"crawl loop error: {e}")
-                await asyncio.sleep(2.0)
-    def start(self):
-        if self._running:
-            return
-        self._running = True
-        self._task = asyncio.create_task(self._loop())
-    def stop(self):
-        self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"Relay error ({kind}) for {self.active_symbol()} (attempt {attempt+1}/{RELAY_MAX_RETRIES}): {e}")
+                if attempt < RELAY_MAX_RETRIES - 1:
+                    time.sleep(1 + attempt * 2)
+                    continue
+                break
+        self._failure_count += 1
+        self._fallback_count += 1
+        if self._fallback_count >= 5:
+            self._advance_symbol_chain()
+        if last_error:
+            logger.warning(f"Relay exhausted retries for {kind}: {last_error}")
+        return None
+
+    def get_current_price(self) -> Tuple[Decimal, Decimal]:
+        d = self._get("price")
+        if not d or "close" not in d or d.get("close") is None:
+            return Decimal('0.0'), Decimal('0.0')
         try:
-            self._executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
-    def snapshot(self) -> Dict[str, Any]:
-        snap = self.state.snapshot()
-        snap.update({
-            "running": self._running,
-            "crawl_count": self._crawl_count,
-            "last_fetch_at": self._last_fetch_at.isoformat() if self._last_fetch_at else None,
-            "relay_url": RELAY_URL,
-            "relay_healthy": (self.relay.failure_count() < 3),
-        })
-        return snap
-# ============================================================================
-# SEED WORKER
-# ============================================================================
-class SeedWorker:
-    """Async seed loop. On each tick, reads the latest crawler hash_frac
-    as x; if crawler is idle, defaults to the tick counter. Calls
-    AEI_Seed.step(x). Emits a toast on each step so the TWA updates."""
-    def __init__(self, seed: AEI_Seed, crawler: CrawlerWorker):
-        self.seed = seed
-        self.crawler = crawler
-        self._running = False
-        self._task: Optional[asyncio.Task] = None
-        self._executor: concurrent.futures.ThreadPoolExecutor = (
-            _DaemonThreadPoolExecutor(
-                max_workers=1,
-                thread_name_prefix="aei-seed-step",
-            )
-        )
-    async def _loop(self):
-        # no executor kill loop, GIL-safe timeout handling
-        # gc every 15 ticks to free big-int caches
-        consecutive_timeouts = 0
-        gc_counter = 0
-        while self._running:
-            try:
-                hash_frac = self.crawler.state.latest_hash_fraction()
-                crawler_idle = (self.crawler.state.visited_count() == 0 and self.crawler.state.frontier_size() == 0)
-                if hash_frac == PyFraction(0, 1) or crawler_idle:
-                    x = Fraction(self.seed.tick, 1)
-                else:
-                    x = Fraction(hash_frac)
-                loop = asyncio.get_running_loop()
-                # update global fast cache before heavy step, so miniapp-state never waits
+            c = Decimal(str(d["close"]))
+            if c <= Decimal('0.0'):
+                logger.warning(f"Relay returned non-positive price: {c}")
+                return Decimal('0.0'), Decimal('0.0')
+            bid = Decimal(str(d.get("bid") or d["close"]))
+            ask = Decimal(str(d.get("ask") or d["close"]))
+            if d.get("volume") is not None:
                 try:
-                    # Pre-step cache refresh if seed has cached light snapshot
-                    if getattr(self.seed, '_cached_light_snapshot', None):
-                        with LAST_LIGHT_LOCK:
-                            LAST_LIGHT_SNAPSHOT = dict(self.seed._cached_light_snapshot)
-                            LAST_LIGHT_AT = time.time()
+                    self._last_volume = Decimal(str(d["volume"]))
                 except Exception:
                     pass
-                # 30s timeout, DO NOT destroy executor on timeout (daemon thread keeps GIL)
-                try:
-                    record = await asyncio.wait_for(
-                        loop.run_in_executor(self._executor, self.seed.step, x),
-                        timeout=30.0,
-                    )
-                    consecutive_timeouts = 0
-                    # post-step fast cache update
-                    try:
-                        _snap41 = self.seed.snapshot(light=True)
-                        with LAST_LIGHT_LOCK:
-                            LAST_LIGHT_SNAPSHOT = _snap41
-                            LAST_LIGHT_AT = time.time()
-                    except Exception as _e41:
-                        try:
-                            with LAST_LIGHT_LOCK:
-                                if getattr(self.seed, '_cached_light_snapshot', None):
-                                    LAST_LIGHT_SNAPSHOT = dict(self.seed._cached_light_snapshot)
-                                    LAST_LIGHT_AT = time.time()
-                        except Exception:
-                            pass
-                except asyncio.TimeoutError:
-                    consecutive_timeouts += 1
-                    logger.warning(f"seed loop timeout: step exceeded 30s (tick={self.seed.tick}) consecutive={consecutive_timeouts} — keeping executor, using tick fallback")
-                    # Only recreate executor after 3 consecutive timeouts to recover leaked thread
-                    if consecutive_timeouts >= 3:
-                        logger.warning("seed loop: 3 consecutive timeouts — recycling executor")
-                        try:
-                            self._executor.shutdown(wait=False, cancel_futures=True)
-                        except Exception:
-                            pass
-                        try:
-                            self._executor = _DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix="aei-seed-step")
-                        except Exception:
-                            pass
-                        consecutive_timeouts = 0
-                    await asyncio.sleep(2.0)
+            if d.get("provider"):
+                self._last_provider = str(d["provider"])
+            return bid, ask
+        except Exception as e:
+            logger.warning(f"Failed to parse relay price: {e}")
+            return Decimal('0.0'), Decimal('0.0')
+
+    def get_historical_klines(self, limit: int = 200, interval: str = "1m") -> List[Dict[str, Any]]:
+        d = self._get("history", limit=limit, interval=interval)
+        if not d or not isinstance(d, list):
+            return []
+        out = []
+        for row in d:
+            try:
+                if not isinstance(row, dict):
                     continue
-                _emit_toast("seed", {
-                    "tick": record["tick"],
-                    "generation": record["generation"],
-                    "prime": record["prime"],
-                    "coherence": record["coherence"],
-                    "deviation_sq": record["deviation_sq"],
-                    "I": record["I"],
-                    "state": record["state"],
-                })
-                # LEARNED discretion from SelfEvolutionCore
-                try:
-                    if TELEGRAM_DB and TELEGRAM_DB.is_enabled():
-                        evo = record.get("evolution", {}) or {}
-                        db_disc = evo.get("db_discretion", {}) if isinstance(evo, dict) else {}
-                        # Use learned interval modifier
-                        interval_mod = int(db_disc.get("save_interval_mod", 1) or 1)
-                        should_save = (gc_counter % (TELEGRAM_DB_SAVE_INTERVAL * interval_mod) == 0)
-                        if should_save:
-                            db_key = db_disc.get("db_key", "𝒮_STATUS")
-                            db_key_alt = db_disc.get("db_key_alt")
-                            save_global = bool(db_disc.get("save_global", True))
-                            save_user = bool(db_disc.get("save_user", False))
-                            shard_targets = db_disc.get("shard_targets", []) or []
-                            shard_mode = db_disc.get("shard_mode", "global")
-
-                            if save_global:
-                                TELEGRAM_DB.save_snapshot(db_key, record, force=False)
-                                if db_key_alt:
-                                    # Occasionally also persist lattice as second key
-                                    TELEGRAM_DB.save_snapshot(db_key_alt, {
-                                        "prime_count": record.get("prime_count"),
-                                        "lattice_points": record.get("lattice_points"),
-                                        "generation": record.get("generation"),
-                                        "tick": record.get("tick"),
-                                    }, force=False)
-
-                            if TELEGRAM_DB_USER_SHARDS and save_user and shard_targets:
-                                for uid in shard_targets[:2]:  # cap 2 to avoid spam, learned
-                                    TELEGRAM_DB.save_user_shard(int(uid), db_key, record)
-
-                            # Log discretion for observability
-                            if gc_counter % 20 == 0:
-                                logger.info(f"🧠 DB discretion gen={evo.get('generation')} mode={shard_mode} key={db_key} global={save_global} user={save_user} targets={shard_targets} re_psi={db_disc.get('re_psi_sign')}")
-                except Exception as _edb_e:
-                    logger.warning(f"TelegramDB learned save failed: {_edb_e}")
-                gc_counter += 1
-                if gc_counter % 15 == 0:
+                o = row.get("open")
+                h = row.get("high")
+                l = row.get("low")
+                c = row.get("close")
+                # C-5: every OHLC field must be a real positive price.
+                # A bar with any zero/null OHLC field is not a bar.
+                if o is None or h is None or l is None or c is None:
+                    continue
+                o_d = Decimal(str(o))
+                h_d = Decimal(str(h))
+                l_d = Decimal(str(l))
+                c_d = Decimal(str(c))
+                if o_d <= Decimal('0.0') or h_d <= Decimal('0.0') or l_d <= Decimal('0.0') or c_d <= Decimal('0.0'):
+                    continue
+                if h_d < l_d:
+                    continue
+                if not (o_d.is_finite() and h_d.is_finite() and l_d.is_finite() and c_d.is_finite()):
+                    continue
+                ts_raw = row.get("timestamp")
+                ts = datetime.now()
+                if ts_raw:
                     try:
-                        gc.collect()
+                        ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).replace(tzinfo=None)
                     except Exception:
                         pass
-                await asyncio.sleep(SEED_TICK_INTERVAL)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"seed loop error: {type(e).__name__}: {e}")
-                await asyncio.sleep(2.0)
-    def start(self):
-        if self._running:
+                vol = Decimal(str(row.get("volume") or 0))
+                if vol < Decimal('0.0'):
+                    vol = Decimal('0.0')
+                out.append({
+                    "open": o_d,
+                    "high": h_d,
+                    "low": l_d,
+                    "close": c_d,
+                    "volume": vol,
+                    "timestamp": ts,
+                    "provider": str(row.get("provider", "")),
+                })
+            except Exception:
+                continue
+        if out:
+            last = out[-1]
+            self._last_volume = last.get("volume", Decimal('0.0'))
+            if last.get("provider"):
+                self._last_provider = last["provider"]
+        return out
+
+    def get_intraday(self, interval: str = "1m") -> Dict[str, Any]:
+        d = self._get("intraday", interval=interval)
+        if not d or d.get("close") is None:
+            return {}
+        try:
+            c = Decimal(str(d["close"]))
+            if c <= Decimal('0.0'):
+                logger.warning(f"Relay returned non-positive intraday close: {c}")
+                return {}
+            ts_raw = d.get("timestamp")
+            ts = datetime.now()
+            if ts_raw:
+                try:
+                    ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    pass
+            vol = Decimal(str(d.get("volume") or 0))
+            self._last_volume = vol
+            if d.get("provider"):
+                self._last_provider = str(d["provider"])
+            return {
+                "open": Decimal(str(d["open"])),
+                "high": Decimal(str(d["high"])),
+                "low": Decimal(str(d["low"])),
+                "close": c,
+                "volume": vol,
+                "timestamp": ts,
+                "provider": self._last_provider,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to parse intraday: {e}")
+            return {}
+
+    def get_volume(self) -> Dict[str, Any]:
+        d = self._get("volume")
+        if not d or not isinstance(d, dict):
+            return {}
+        try:
+            vol = Decimal(str(d.get("volume") or 0))
+            vol24 = Decimal(str(d.get("volume_24h") or 0))
+            self._last_volume = vol
+            if d.get("provider"):
+                self._last_provider = str(d["provider"])
+            return {
+                "volume": vol,
+                "volume_24h": vol24,
+                "provider": self._last_provider,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to parse volume: {e}")
+            return {}
+
+    def get_info(self) -> Dict[str, Any]:
+        return {"name": self.active_symbol(), "currency": "USD"}
+
+    def probe(self) -> Dict[str, Any]:
+        d = self._get("price")
+        return {
+            "active_symbol": self.active_symbol(),
+            "primary_symbol": self.symbol,
+            "chain": list(self._chain),
+            "chain_index": self._chain_index,
+            "empty": (d is None or d.get("close") is None),
+            "failure_count": self._failure_count,
+            "fallback_count": self._fallback_count,
+            "last_update": self._last_update.isoformat() if self._last_update else None,
+            "relay_url": RELAY_URL,
+            "provider": self._last_provider,
+            "last_volume": str(self._last_volume),
+        }
+
+# ============================================================================
+# CORE ÆEA ENGINE — Faithful Port of ÆEA.mq4
+# ============================================================================
+class AEEA_Engine:
+    def __init__(self):
+        self.state = AEI_CoreState()
+        self.price_history: List[PriceData] = []
+        self.ohlcv_history: List[Dict[str, Any]] = []
+        self.feed = FeedClient(SYMBOL)
+        self._last_price_update: Optional[datetime] = None
+        self._bar_open: bool = True
+        self._bar_index: int = 0
+        self._running: bool = False
+        self.chat_id: Optional[int] = None
+        self.application = None
+        self._last_signal_time: Optional[datetime] = None
+        self._initialization_attempted: bool = False
+        self._tick_log_counter: int = 0
+        self._price_update_counter: int = 0
+        self._bridge_publish_callback = None
+        self._last_relay_warn: Optional[datetime] = None
+        self._consecutive_zero_prices: int = 0
+        self._indicator_populate_count: int = 0
+        self._imbalance_fire_count: int = 0
+        self._active_trailing_stop: Decimal = Decimal('0.0')
+        self._active_trailing_tp: Decimal = Decimal('0.0')
+        self._last_kronecker_bar: int = -1
+        self._sSL: Decimal = Decimal('0.0')
+        self._bSL: Decimal = Decimal('0.0')
+        self._sTP: Decimal = Decimal('0.0')
+        self._bTP: Decimal = Decimal('0.0')
+        self._point_size: Decimal = symbol_point(SYMBOL)
+        self._com_price_frozen: Decimal = COMMISSION * (self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001'))
+        self.orders: List[Order] = []
+        self._next_ticket: int = 1
+        self._alert_delivery_enabled: bool = True
+        self._last_telegram_toast_seq: int = 0
+        self._last_dispatch_event: str = ""
+        self._last_comment_line: str = ""
+
+    def _com_price(self) -> Decimal:
+        # D-11: the FF computes `com = Commssion * Point` once at OnInit
+        # and reuses the frozen value for the entire session. The port's
+        # dynamic _com_price() is preserved for the probe/diagnostic path
+        # (informational only). The signal-trigger and _S() paths use
+        # self._com_price_frozen, which is set at init and re-frozen on
+        # settings apply and on symbol change.
+        point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        return COMMISSION * point
+
+    def OnInit(self) -> None:
+        logger.info("⚡ OnInit(): EA engine lifecycle beginning")
+        self.OnReInit()
+        logger.info("🟢 OnInit(): state reset to baseline")
+        try:
+            self._project_arc_length(trigger="init")
+        except Exception as e:
+            logger.warning(f"Initial projection seed failed: {e}")
+
+    def OnReInit(self) -> None:
+        with _ENGINE_LOCK:
+            self._OnReInit_locked()
+
+    def _OnReInit_locked(self) -> None:
+        st = self.state
+        saved_ohlcv = self.ohlcv_history.copy()
+        saved_price = st.price
+        saved_Price = st.Price
+        saved_iH = st.iH
+        saved_iL = st.iL
+        saved_tick = st.tick
+        saved_on_track = st.on_track_runs
+        saved_on_stand = st.on_stand_runs
+        saved_signal_history = list(st.signal_history)
+        saved_chat_id = st.chat_id
+        saved_webapp_uid = st.webapp_user_id
+        saved_webapp_uname = st.webapp_username
+        saved_webapp_verified = st.webapp_verified
+        saved_comment = self._last_comment_line
+        saved_provider = st.last_provider
+        saved_volume = st.last_volume
+        saved_inbound_msg = st.last_inbound_message_id
+
+        st.KC = st.invert
+        size = X_PERIOD - Y_START
+        for i in range(13):
+            st.cA[i] = [Decimal('0.0')] * size
+            st.iA[i] = [Decimal('0.0')] * size
+            st.kA[i] = [Decimal('0.0')] * size
+            st.lA[i] = [Decimal('0.0')] * size
+        st.IHKk = []
+        st.IHKt = []
+        st.RSI = []
+        st.CCI = []
+        st.MOM = []
+        st.AD = []
+        st.OBV = []
+        st.Force = []
+        st.MFI = []
+        st.DeM = []
+        st.RVIm = []
+        st.AC = []
+        st.StdDev = []
+        st.ATR = []
+        st.ADX = []
+        st.Regime = ["sRange"] * size
+        st.Premium = [Decimal('0.0')] * size
+        st.Discount = [Decimal('0.0')] * size
+        st.HH = [Decimal('0.0')] * size
+        st.LL = [Decimal('0.0')] * size
+        st.k = [False] * size
+        st.l = [False] * size
+        st.U = []
+        st.R = True
+        st.D = Decimal('0.0')
+        st.E = Decimal('0.0')
+        st.K = False
+        st.Z = Y_START + 1
+        st.z = Y_START + 1
+        st.O = Y_START + 1
+        st.o = Y_START + 1
+        st.r = 0
+        st.W = Y_START + 1
+        st.w = Y_START + 1
+        st.I = 0
+        st.iI = 0
+        st.J = 0
+        st.iJ = 0
+        st.ij = 0
+        st.toll = 0
+        st.tally = "   "
+        st.tick_tock = False
+        st.iZ = Y_START + 1
+        st.iz = Y_START + 1
+        st.iW = Y_START + 1
+        st.iw = Y_START + 1
+        st.iO = Y_START + 1
+        st.io = Y_START + 1
+        st.ir = 0
+        st.S = X_PERIOD
+        st.T = X_PERIOD
+        st.X_scan = Y_START
+        st.Y_scan = Y_START
+        st.FG = False
+        st.signature = False
+        st.signal = Decimal('0.0')
+        st.FVG = -1
+        st.BL = []
+        st.BL_type = []
+        st.bottomLine = "   "
+        st.bL = "   "
+        st.count = 0
+        st.fvg_anchor_map = {}
+        st.lPass = Decimal('0.0')
+        st.ilPass = Decimal('0.0')
+        st.kPass = Decimal('0.0')
+        st.ikPass = Decimal('0.0')
+        st.execution_fired = False
+        st.projection_path = []
+        st.projection_meta = {}
+        st.projection_computed_at = None
+        st.projection_trigger = ""
+
+        self.ohlcv_history = saved_ohlcv
+        st.price = saved_price
+        st.Price = saved_Price
+        st.iH = saved_iH
+        st.iL = saved_iL
+        st.tick = saved_tick
+        st.on_track_runs = saved_on_track
+        st.on_stand_runs = saved_on_stand
+        st.signal_history = saved_signal_history
+        st.chat_id = saved_chat_id
+        st.webapp_user_id = saved_webapp_uid
+        st.webapp_username = saved_webapp_uname
+        st.webapp_verified = saved_webapp_verified
+        st.authoritative_m = 0
+        st.authoritative_n = 0
+        st.authoritative_h = -1
+        st.m_now = 0
+        st.n_now = 0
+        st.last_kronecker_m = 0
+        st.last_kronecker_n = 0
+        st.last_kronecker_h = -1
+        st.last_provider = saved_provider
+        st.last_volume = saved_volume
+        st.last_inbound_message_id = saved_inbound_msg
+        self._last_kronecker_bar = -1
+        self._last_comment_line = saved_comment
+
+        logger.info("ReSet   ")
+
+    def _unify(self, j: int) -> Tuple[Decimal, Decimal]:
+        st = self.state
+        if j < 1 or len(self.ohlcv_history) < j + 1:
+            st.iATR = Decimal('50.0')
+            st.iStdDev = Decimal('50.0')
+            return st.iATR, st.iStdDev
+        end = len(self.ohlcv_history)
+        start = end - (j + 1)
+        window = self.ohlcv_history[start:end]
+        high_prices = [d["high"] for d in window]
+        low_prices = [d["low"] for d in window]
+        close_prices = [d["close"] for d in window]
+
+        atr_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            atr_list.append(atr(sub_high, sub_low, sub_close, j))
+        maxATR = max(atr_list) if atr_list else Decimal('0.0')
+        minATR = min(atr_list) if atr_list else Decimal('0.0')
+        rangeATR = maxATR - minATR
+        if rangeATR != Decimal('0.0'):
+            st.iATR = Decimal('100.0') * ((atr_list[0] - minATR) / rangeATR)
+        else:
+            st.iATR = Decimal('50.0')
+        if len(st.ATR) <= j:
+            st.ATR.extend([Decimal('0.0')] * (j + 1 - len(st.ATR)))
+        st.ATR[j] = atr_list[0] if atr_list else Decimal('0.0')
+
+        sd_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sd_list.append(stddev(sub_close, j))
+        maxSD = max(sd_list) if sd_list else Decimal('0.0')
+        minSD = min(sd_list) if sd_list else Decimal('0.0')
+        rangeSD = maxSD - minSD
+        if rangeSD != Decimal('0.0'):
+            st.iStdDev = Decimal('100.0') * ((sd_list[0] - minSD) / rangeSD)
+        else:
+            st.iStdDev = Decimal('50.0')
+        if len(st.StdDev) <= j:
+            st.StdDev.extend([Decimal('0.0')] * (j + 1 - len(st.StdDev)))
+        st.StdDev[j] = sd_list[0] if sd_list else Decimal('0.0')
+        return st.iATR, st.iStdDev
+
+    def _normalize(self, j: int) -> None:
+        st = self.state
+        y = st.y
+        # M-1: explicit out-of-bounds guard at the top of the function.
+        if j < 1 or len(self.ohlcv_history) < j + 1:
             return
-        self._running = True
-        self._task = asyncio.create_task(self._loop())
-    def stop(self):
-        self._running=False
+        if j < y + 1 or j > X_PERIOD - 1:
+            return
+        col_i = j - (y + 1)
+        if col_i < 0 or col_i >= (X_PERIOD - Y_START):
+            return
+        if col_i >= len(st.iA[0]) or col_i >= len(st.cA[0]):
+            return
+        end = len(self.ohlcv_history)
+        window = self.ohlcv_history[end - (j + 1):end]
+        close_prices = [d["close"] for d in window]
+        open_prices = [d["open"] for d in window]
+        high_prices = [d["high"] for d in window]
+        low_prices = [d["low"] for d in window]
+        volume_data = [d.get("volume", Decimal('0.0')) for d in window]
+
+        if len(close_prices) >= j:
+            upper, _, lower = bollinger_bands(close_prices, j, Decimal('2.0'))
+            st.Suply = upper
+            st.Demand = lower
+        if len(close_prices) >= 2:
+            upper_prev, _, lower_prev = bollinger_bands(close_prices[:-1], j, Decimal('2.0'))
+            st.iSuply = upper_prev
+            st.iDemand = lower_prev
+
+        col_c = col_i
+
+        adx_main_list: List[Decimal] = []
+        plus_di_list: List[Decimal] = []
+        minus_di_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            adx_main_list.append(self._compute_adx(sub_high, sub_low, sub_close, j))
+            pd, md = self._compute_di(sub_high, sub_low, sub_close, j)
+            plus_di_list.append(pd)
+            minus_di_list.append(md)
+        if adx_main_list:
+            all_vals = adx_main_list + plus_di_list + minus_di_list
+            maxADX = max(all_vals)
+            minADX = min(all_vals)
+            rangeADX = maxADX - minADX
+            if rangeADX != Decimal('0.0'):
+                iADX_val = abs(Decimal('100.0') * ((adx_main_list[0] - minADX) / rangeADX))
+                cADX_val = abs(Decimal('100.0') * ((adx_main_list[1] - minADX) / rangeADX)) if len(adx_main_list) > 1 else iADX_val
+                st.iA[0][col_i] = iADX_val
+                st.cA[0][col_c] = cADX_val
+
+        jSO = int(round(j * 3.0 / 5.0))
+        if jSO < 1:
+            jSO = 1
+        k_stoch, d_stoch = stochastic(high_prices, low_prices, close_prices, j, 3, jSO)
+        st.iA[1][col_i] = (k_stoch + d_stoch) / Decimal('2.0')
+        if len(close_prices) > 1:
+            k_p, d_p = stochastic(high_prices[:-1], low_prices[:-1], close_prices[:-1], j, 3, jSO)
+            st.cA[1][col_c] = (k_p + d_p) / Decimal('2.0')
+
+        rvi_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_open = open_prices[:len(open_prices) - i] if i > 0 else open_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            rvi_list.append(self._compute_rvi(sub_open, sub_close, j))
+        if rvi_list:
+            maxRVI = max(rvi_list)
+            minRVI = min(rvi_list)
+            rangeRVI = maxRVI - minRVI
+            if rangeRVI != Decimal('0.0'):
+                st.iA[2][col_i] = Decimal('100.0') * ((rvi_list[0] - minRVI) / rangeRVI)
+                st.cA[2][col_c] = Decimal('100.0') * ((rvi_list[1] - minRVI) / rangeRVI) if len(rvi_list) > 1 else st.iA[2][col_i]
+
+        ac_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            ac_list.append(abs(self._compute_ac(sub_high, sub_low, sub_close, j)))
+        if ac_list:
+            maxAC = max(ac_list)
+            minAC = min(ac_list)
+            rangeAC = maxAC - minAC
+            if rangeAC != Decimal('0.0'):
+                st.iA[3][col_i] = abs(Decimal('100.0') * ((ac_list[0] - minAC) / rangeAC))
+                st.cA[3][col_c] = abs(Decimal('100.0') * ((ac_list[1] - minAC) / rangeAC)) if len(ac_list) > 1 else st.iA[3][col_i]
+
+        force_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
+            force_list.append(self._compute_force(sub_close, sub_vol, j))
+        if force_list:
+            maxForce = max(force_list)
+            minForce = min(force_list)
+            rangeForce = maxForce - minForce
+            if rangeForce != Decimal('0.0'):
+                st.iA[4][col_i] = Decimal('100.0') * ((force_list[0] - minForce) / rangeForce)
+                st.cA[4][col_c] = Decimal('100.0') * ((force_list[1] - minForce) / rangeForce) if len(force_list) > 1 else st.iA[4][col_i]
+
+        obv_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
+            obv_list.append(self._compute_obv(sub_close, sub_vol))
+        if obv_list:
+            maxOBV = max(obv_list)
+            minOBV = min(obv_list)
+            rangeOBV = maxOBV - minOBV
+            if rangeOBV != Decimal('0.0'):
+                st.iA[5][col_i] = Decimal('100.0') * ((obv_list[0] - minOBV) / rangeOBV)
+                st.cA[5][col_c] = Decimal('100.0') * ((obv_list[1] - minOBV) / rangeOBV) if len(obv_list) > 1 else st.iA[5][col_i]
+
+        ad_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
+            ad_list.append(self._compute_ad(sub_high, sub_low, sub_close, sub_vol))
+        if ad_list:
+            maxAD = max(ad_list)
+            minAD = min(ad_list)
+            rangeAD = maxAD - minAD
+            if rangeAD != Decimal('0.0'):
+                st.iA[6][col_i] = Decimal('100.0') * ((ad_list[0] - minAD) / rangeAD)
+                st.cA[6][col_c] = Decimal('100.0') * ((ad_list[1] - minAD) / rangeAD) if len(ad_list) > 1 else st.iA[6][col_i]
+
+        mfi_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            sub_vol = volume_data[:len(volume_data) - i] if i > 0 else volume_data
+            mfi_list.append(self._compute_mfi(sub_high, sub_low, sub_close, sub_vol, j))
+        if mfi_list:
+            maxMFI = max(mfi_list)
+            minMFI = min(mfi_list)
+            rangeMFI = maxMFI - minMFI
+            if rangeMFI != Decimal('0.0'):
+                st.iA[7][col_i] = Decimal('100.0') * ((mfi_list[0] - minMFI) / rangeMFI)
+                st.cA[7][col_c] = Decimal('100.0') * ((mfi_list[1] - minMFI) / rangeMFI) if len(mfi_list) > 1 else st.iA[7][col_i]
+
+        mom_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            mom_list.append(self._compute_momentum(sub_close, j))
+        if mom_list:
+            maxMOM = max(mom_list)
+            minMOM = min(mom_list)
+            rangeMOM = maxMOM - minMOM
+            if rangeMOM != Decimal('0.0'):
+                st.iA[8][col_i] = Decimal('100.0') * ((mom_list[0] - minMOM) / rangeMOM)
+                st.cA[8][col_c] = Decimal('100.0') * ((mom_list[1] - minMOM) / rangeMOM) if len(mom_list) > 1 else st.iA[8][col_i]
+
+        dem_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            dem_list.append(self._compute_demarker(sub_high, sub_low, j))
+        if dem_list:
+            maxDM = max(dem_list)
+            minDM = min(dem_list)
+            rangeDM = maxDM - minDM
+            if rangeDM != Decimal('0.0'):
+                st.iA[9][col_i] = Decimal('100.0') * ((dem_list[0] - minDM) / rangeDM)
+                st.cA[9][col_c] = Decimal('100.0') * ((dem_list[1] - minDM) / rangeDM) if len(dem_list) > 1 else st.iA[9][col_i]
+
+        wpr_now = self._compute_wpr(high_prices, low_prices, close_prices, j) + Decimal('100.0')
+        st.iA[10][col_i] = wpr_now
+        if len(close_prices) > 1:
+            wpr_prev = self._compute_wpr(high_prices[:-1], low_prices[:-1], close_prices[:-1], j) + Decimal('100.0')
+            st.cA[10][col_c] = wpr_prev
+
+        cci_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            cci_list.append(self._compute_cci(sub_high, sub_low, sub_close, j))
+        if cci_list:
+            maxCCI = max(cci_list)
+            minCCI = min(cci_list)
+            rangeCCI = maxCCI - minCCI
+            if rangeCCI != Decimal('0.0'):
+                st.iA[11][col_i] = Decimal('100.0') * ((cci_list[0] - minCCI) / rangeCCI)
+                st.cA[11][col_c] = Decimal('100.0') * ((cci_list[1] - minCCI) / rangeCCI) if len(cci_list) > 1 else st.iA[11][col_i]
+
+        rsi_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            rsi_list.append(rsi(sub_close, j))
+        if rsi_list:
+            maxRSI = max(rsi_list)
+            minRSI = min(rsi_list)
+            rangeRSI = maxRSI - minRSI
+            if rangeRSI != Decimal('0.0'):
+                st.iA[12][col_i] = Decimal('100.0') * ((rsi_list[0] - minRSI) / rangeRSI)
+                st.cA[12][col_c] = Decimal('100.0') * ((rsi_list[1] - minRSI) / rangeRSI) if len(rsi_list) > 1 else st.iA[12][col_i]
+
+        kIHK = int(round(j / 2.0))
+        tIHK = int(round((kIHK + 1.0) / 3.0))
+        if kIHK < 1:
+            kIHK = 1
+        if tIHK < 1:
+            tIHK = 1
+        ihk_curr = ichimoku(high_prices, low_prices, close_prices, tIHK, kIHK, j)
+        ssa: List[Decimal] = []
+        ssb: List[Decimal] = []
+        chikou: List[Decimal] = []
+        tenkan_list: List[Decimal] = []
+        kijun_list: List[Decimal] = []
+        for i in range(j + 1):
+            sub_high = high_prices[:len(high_prices) - i] if i > 0 else high_prices
+            sub_low = low_prices[:len(low_prices) - i] if i > 0 else low_prices
+            sub_close = close_prices[:len(close_prices) - i] if i > 0 else close_prices
+            if len(sub_close) < j:
+                continue
+            ihk_i = ichimoku(sub_high, sub_low, sub_close, tIHK, kIHK, j)
+            ssa.append(ihk_i["senkou_a"])
+            ssb.append(ihk_i["senkou_b"])
+            tenkan_list.append(ihk_i["tenkan"])
+            kijun_list.append(ihk_i["kijun"])
+            c_idx = len(sub_close) - 1 - 26
+            if c_idx >= 0:
+                chikou.append(sub_close[c_idx])
+        all_ihk: List[Decimal] = []
+        all_ihk.extend(ssa)
+        all_ihk.extend(ssb)
+        all_ihk.extend(chikou)
+        all_ihk.extend(tenkan_list)
+        all_ihk.extend(kijun_list)
+        if all_ihk:
+            maxIHK = max(all_ihk)
+            minIHK = min(all_ihk)
+            rangeIHK = maxIHK - minIHK
+            if rangeIHK != Decimal('0.0'):
+                st.iIHKk = Decimal('100.0') * ((ihk_curr["kijun"] - minIHK) / rangeIHK)
+                st.iIHKt = Decimal('100.0') * ((ihk_curr["tenkan"] - minIHK) / rangeIHK)
+        else:
+            st.iIHKk = ihk_curr["kijun"]
+            st.iIHKt = ihk_curr["tenkan"]
+
+    def _compute_adx(self, high, low, close, period: int) -> Decimal:
+        if len(close) < 2 * period + 1 or period <= 0:
+            return Decimal('50.0')
+        n = len(close)
+        trs_fwd: List[Decimal] = []
+        pdm_fwd: List[Decimal] = []
+        mdm_fwd: List[Decimal] = []
+        start = n - 2 * period
+        if start < 1:
+            start = 1
+        for i in range(start, n):
+            tr = max(
+                high[i] - low[i],
+                abs(high[i] - close[i - 1]),
+                abs(low[i] - close[i - 1])
+            )
+            trs_fwd.append(tr)
+            up_move = high[i] - high[i - 1]
+            dn_move = low[i - 1] - low[i]
+            pdm_fwd.append(up_move if up_move > dn_move and up_move > 0 else Decimal('0.0'))
+            mdm_fwd.append(dn_move if dn_move > up_move and dn_move > 0 else Decimal('0.0'))
+        if len(trs_fwd) < 2 * period:
+            return Decimal('50.0')
+        atr_k = sum(trs_fwd[:period]) / Decimal(period)
+        plus_dm_k = sum(pdm_fwd[:period]) / Decimal(period)
+        minus_dm_k = sum(mdm_fwd[:period]) / Decimal(period)
+        dx_series: List[Decimal] = []
+        plus_di = (Decimal('100.0') * plus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+        minus_di = (Decimal('100.0') * minus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+        di_sum = plus_di + minus_di
+        if di_sum == Decimal('0.0'):
+            dx_series.append(Decimal('0.0'))
+        else:
+            dx_series.append(Decimal('100.0') * abs(plus_di - minus_di) / di_sum)
+        for k in range(period, len(trs_fwd)):
+            atr_k = (atr_k * Decimal(period - 1) + trs_fwd[k]) / Decimal(period)
+            plus_dm_k = (plus_dm_k * Decimal(period - 1) + pdm_fwd[k]) / Decimal(period)
+            minus_dm_k = (minus_dm_k * Decimal(period - 1) + mdm_fwd[k]) / Decimal(period)
+            plus_di = (Decimal('100.0') * plus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+            minus_di = (Decimal('100.0') * minus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+            di_sum = plus_di + minus_di
+            if di_sum == Decimal('0.0'):
+                dx_series.append(Decimal('0.0'))
+            else:
+                dx_series.append(Decimal('100.0') * abs(plus_di - minus_di) / di_sum)
+        if len(dx_series) < period:
+            return dx_series[-1] if dx_series else Decimal('50.0')
+        adx_val = sum(dx_series[:period]) / Decimal(period)
+        for k in range(period, len(dx_series)):
+            adx_val = (adx_val * Decimal(period - 1) + dx_series[k]) / Decimal(period)
+        return adx_val
+
+    def _compute_di(self, high, low, close, period: int) -> Tuple[Decimal, Decimal]:
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0'), Decimal('50.0')
+        trs: List[Decimal] = []
+        plus_dm: List[Decimal] = []
+        minus_dm: List[Decimal] = []
+        for i in range(1, period + 1):
+            tr = max(
+                high[-i] - low[-i],
+                abs(high[-i] - close[-i - 1]),
+                abs(low[-i] - close[-i - 1])
+            )
+            trs.append(tr)
+            up_move = high[-i] - high[-i - 1]
+            dn_move = low[-i - 1] - low[-i]
+            plus_dm.append(up_move if up_move > dn_move and up_move > 0 else Decimal('0.0'))
+            minus_dm.append(dn_move if dn_move > up_move and dn_move > 0 else Decimal('0.0'))
+        if len(trs) < period:
+            return Decimal('50.0'), Decimal('50.0')
+        atr_k = sum(trs[:period]) / Decimal(period)
+        plus_dm_k = sum(plus_dm[:period]) / Decimal(period)
+        minus_dm_k = sum(minus_dm[:period]) / Decimal(period)
+        plus_di = (Decimal('100.0') * plus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+        minus_di = (Decimal('100.0') * minus_dm_k / atr_k) if atr_k != Decimal('0.0') else Decimal('0.0')
+        return plus_di, minus_di
+
+    def _compute_rvi(self, open_prices, close_prices, period: int) -> Decimal:
+        if len(close_prices) < period + 3 or period <= 0:
+            return Decimal('50.0')
+        n = len(close_prices)
+        num_series: List[Decimal] = []
+        den_series: List[Decimal] = []
+        for i in range(3, n):
+            num_i = (
+                (close_prices[i] - open_prices[i])
+                + Decimal('2.0') * (close_prices[i - 1] - open_prices[i - 1])
+                + Decimal('2.0') * (close_prices[i - 2] - open_prices[i - 2])
+                + (close_prices[i - 3] - open_prices[i - 3])
+            )
+            den_i = (
+                abs(close_prices[i] - open_prices[i])
+                + Decimal('2.0') * abs(close_prices[i - 1] - open_prices[i - 1])
+                + Decimal('2.0') * abs(close_prices[i - 2] - open_prices[i - 2])
+                + abs(close_prices[i - 3] - open_prices[i - 3])
+            )
+            num_series.append(num_i)
+            den_series.append(den_i)
+        if len(num_series) < period:
+            return Decimal('50.0')
+        num_sma = sum(num_series[-period:]) / Decimal(period)
+        den_sma = sum(den_series[-period:]) / Decimal(period)
+        if den_sma == Decimal('0.0'):
+            return Decimal('50.0')
+        return num_sma / den_sma
+
+    def _compute_ac(self, high, low, close, period: int) -> Decimal:
+        if len(close) < 40 or period <= 0:
+            return Decimal('0.0')
+        window = len(close)
+        if window < 40:
+            return Decimal('0.0')
+        median = [(high[i] + low[i]) / Decimal('2.0') for i in range(window)]
+        def sma_local(data, p):
+            if len(data) < p or p <= 0:
+                return Decimal('0.0')
+            return sum(data[-p:]) / Decimal(p)
+        ao_now = sma_local(median, 5) - sma_local(median, 34)
+        ao_series: List[Decimal] = []
+        for i in range(min(5, len(median))):
+            sub = median[:len(median) - i] if i > 0 else median
+            ao_series.append(sma_local(sub, 5) - sma_local(sub, 34))
+        return ao_now - sma_local(ao_series, 5)
+
+    def _compute_force(self, close, volume, period: int) -> Decimal:
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('0.0')
+        forces = []
+        for i in range(1, period + 1):
+            forces.append(volume[-i] * (close[-i] - close[-i - 1]))
+        return sum(forces) / Decimal(period)
+
+    def _compute_obv(self, close, volume) -> Decimal:
+        if len(close) < 2:
+            return Decimal('0.0')
+        obv = Decimal('0.0')
+        for i in range(1, len(close)):
+            if close[i] > close[i - 1]:
+                obv += volume[i] if i < len(volume) else Decimal('0.0')
+            elif close[i] < close[i - 1]:
+                obv -= volume[i] if i < len(volume) else Decimal('0.0')
+        return obv
+
+    def _compute_ad(self, high, low, close, volume) -> Decimal:
+        if len(close) < 2:
+            return Decimal('0.0')
+        ad = Decimal('0.0')
+        for i in range(len(close)):
+            hl = high[i] - low[i]
+            if hl > Decimal('0.0'):
+                mfv = ((close[i] - low[i]) - (high[i] - close[i])) / hl * (volume[i] if i < len(volume) else Decimal('0.0'))
+                ad += mfv
+        return ad
+
+    def _compute_mfi(self, high, low, close, volume, period: int) -> Decimal:
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('50.0')
+        pos_flow, neg_flow = Decimal('0.0'), Decimal('0.0')
+        for i in range(1, period + 1):
+            tp = (high[-i] + low[-i] + close[-i]) / Decimal('3.0')
+            tp_prev = (high[-i - 1] + low[-i - 1] + close[-i - 1]) / Decimal('3.0')
+            mf = tp * volume[-i]
+            if tp > tp_prev:
+                pos_flow += mf
+            elif tp < tp_prev:
+                neg_flow += mf
+        if neg_flow == Decimal('0.0'):
+            if pos_flow == Decimal('0.0'):
+                return Decimal('50.0')
+            return Decimal('100.0')
+        mr = pos_flow / neg_flow
+        return Decimal('100.0') - (Decimal('100.0') / (Decimal('1.0') + mr))
+
+    def _compute_momentum(self, close, period: int) -> Decimal:
+        if len(close) < period + 1 or period <= 0:
+            return Decimal('0.0')
+        return close[-1] - close[-period - 1]
+
+    def _compute_demarker(self, high, low, period: int) -> Decimal:
+        if len(high) < period + 1 or period <= 0:
+            return Decimal('50.0')
+        demax, demin = Decimal('0.0'), Decimal('0.0')
+        for i in range(1, period + 1):
+            if high[-i] > high[-i - 1]:
+                demax += high[-i] - high[-i - 1]
+            if low[-i] < low[-i - 1]:
+                demin += low[-i - 1] - low[-i]
+        total = demax + demin
+        if total == Decimal('0.0'):
+            return Decimal('50.0')
+        return Decimal('100.0') * demax / total
+
+    def _compute_wpr(self, high, low, close, period: int) -> Decimal:
+        if len(close) < period or period <= 0:
+            return Decimal('0.0')
+        hh = max(high[-period:])
+        ll = min(low[-period:])
+        rng = hh - ll
+        if rng == Decimal('0.0'):
+            return Decimal('0.0')
+        return Decimal('-100.0') * (hh - close[-1]) / rng
+
+    def _compute_cci(self, high, low, close, period: int) -> Decimal:
+        if len(close) < period or period <= 0:
+            return Decimal('0.0')
+        tp = [(high[-i] + low[-i] + close[-i]) / Decimal('3.0') for i in range(1, period + 1)]
+        sma_tp = sum(tp) / Decimal(period)
+        mad = sum(abs(x - sma_tp) for x in tp) / Decimal(period)
+        if mad == Decimal('0.0'):
+            return Decimal('0.0')
+        return (tp[0] - sma_tp) / (Decimal('0.015') * mad)
+
+    # ========================================================================
+    # A-C2: _M() and _N() — ADX COUNTED EXACTLY ONCE
+    # ========================================================================
+    # The FF's M()/N() count ADX (iA[0]) exactly once: inside the
+    # `for i in range(13)` loop. In Edition 2, a follow-up block re-tested
+    # iA[0] with `_cmp_frac`, double-counting ADX and allowing m/n to
+    # reach 14 instead of 13. That double-count is removed here. m and n
+    # can now reach at most 13, exactly matching the FF's counting rule,
+    # and the δ(m−n−2)=1 gate fires exactly when the FF's gate fires.
+    # ========================================================================
+    def _M(self, j: int) -> int:
+        st = self.state
+        y = st.y
+        m = 0
+        idx_i = j - (y + 1)
+        idx_c = idx_i
+        if idx_i < 0 or idx_i >= len(st.iA[0]):
+            return 0
+        if idx_c < 0 or idx_c >= len(st.cA[0]):
+            idx_c = idx_i
+        hh_val = st.HH[idx_i] if idx_i < len(st.HH) else Decimal('0.0')
+        for i in range(13):
+            iA_val = st.iA[i][idx_i]
+            cA_val = st.cA[i][idx_c]
+            kA_val = st.kA[i][idx_c]
+            # C-3: ULP-safe comparison via _cmp_frac (exact rational).
+            if st.Price > hh_val:
+                if (_cmp_frac(iA_val, F_PLUS_GF_FRAC) > 0) or (cA_val < kA_val):
+                    m += 1
+            elif st.price > hh_val:
+                if (_cmp_frac(iA_val, F_PLUS_GF_FRAC) > 0) or (iA_val < kA_val):
+                    m += 1
+            elif _cmp_frac(iA_val, F_PLUS_GF_FRAC) > 0:
+                m += 1
+        if (_cmp_frac(st.iIHKt, F_PLUS_GF_FRAC) > 0) and (_cmp_frac(st.iIHKk, F_PLUS_GF_FRAC) > 0):
+            m += 1
+        if st.Price > hh_val:
+            for i in range(13):
+                if idx_c < len(st.kA[i]) and idx_c < len(st.cA[i]):
+                    st.kA[i][idx_c] = st.cA[i][idx_c]
+            if idx_i < len(st.HH):
+                st.HH[idx_i] = st.Price
+        return m
+
+    def _N(self, j: int) -> int:
+        st = self.state
+        y = st.y
+        n = 0
+        idx_i = j - (y + 1)
+        idx_c = idx_i
+        if idx_i < 0 or idx_i >= len(st.iA[0]):
+            return 0
+        if idx_c < 0 or idx_c >= len(st.cA[0]):
+            idx_c = idx_i
+        ll_val = st.LL[idx_i] if idx_i < len(st.LL) else Decimal('0.0')
+        for i in range(13):
+            iA_val = st.iA[i][idx_i]
+            cA_val = st.cA[i][idx_c]
+            lA_val = st.lA[i][idx_c]
+            # C-3: ULP-safe comparison via _cmp_frac (exact rational).
+            if st.Price < ll_val:
+                if (_cmp_frac(iA_val, G_MINUS_GF_FRAC) < 0) or (cA_val > lA_val):
+                    n += 1
+            elif st.price < ll_val:
+                if (_cmp_frac(iA_val, G_MINUS_GF_FRAC) < 0) or (iA_val > lA_val):
+                    n += 1
+            elif _cmp_frac(iA_val, G_MINUS_GF_FRAC) < 0:
+                n += 1
+        if (_cmp_frac(st.iIHKt, G_MINUS_GF_FRAC) < 0) and (_cmp_frac(st.iIHKk, G_MINUS_GF_FRAC) < 0):
+            n += 1
+        if st.Price < ll_val:
+            for i in range(13):
+                if idx_c < len(st.lA[i]) and idx_c < len(st.cA[i]):
+                    st.lA[i][idx_c] = st.cA[i][idx_c]
+            if idx_i < len(st.LL):
+                st.LL[idx_i] = st.Price
+        return n
+
+    def _H(self, j: int) -> None:
+        st = self.state
+        idx = j - (st.y + 1)
+        if idx < 0 or idx >= len(st.k):
+            return
+        m = self._M(j)
+        st.m = m
+        st.k[idx] = (m >= 12)
+        st.authoritative_m = m
+        st.authoritative_h = j
+        st.last_kronecker_m = m
+        st.last_kronecker_h = j
+        st.m_now = m
+        st.m = 0
+        if st.k[idx]:
+            logger.info(f"🔺 H() set k[{idx}] = True (m={m} >= 12) at bar j={j}")
+
+    def _L(self, j: int) -> None:
+        st = self.state
+        idx = j - (st.y + 1)
+        if idx < 0 or idx >= len(st.l):
+            return
+        n = self._N(j)
+        st.n = n
+        st.l[idx] = (n >= 12)
+        st.authoritative_n = n
+        st.authoritative_h = j
+        st.last_kronecker_n = n
+        st.last_kronecker_h = j
+        st.n_now = n
+        st.n = 0
+        if st.l[idx]:
+            logger.info(f"🔻 L() set l[{idx}] = True (n={n} >= 12) at bar j={j}")
+
+    def _F(self, j: int, iH: Decimal, iL: Decimal) -> None:
+        st = self.state
+        y = st.y
+        idx = j - (y + 1)
+        if idx < 0 or idx >= len(st.k):
+            return
+        self._normalize(j)
+        st.k[idx] = False
+        st.l[idx] = False
+        st.HH[idx] = iH
+        st.LL[idx] = iL
+        st.Premium[idx] = iH
+        st.Discount[idx] = iL
+        idx_c = idx
+        if idx_c < 0 or idx_c >= len(st.cA[0]):
+            idx_c = idx
+        for i in range(13):
+            if idx_c < len(st.kA[i]) and idx_c < len(st.cA[i]):
+                st.kA[i][idx_c] = st.cA[i][idx_c]
+                st.lA[i][idx_c] = st.cA[i][idx_c]
+        if st.R and st.FG:
+            target_size = X_PERIOD - Y_START
+            while len(st.U) < target_size:
+                st.U.append(False)
+            if idx < len(st.U):
+                st.U[idx] = True
+            V = 0
+            for i in range(y + 1, X_PERIOD):
+                ui = i - (y + 1)
+                if 0 <= ui < len(st.U) and st.U[ui]:
+                    V += 1
+            if V == target_size:
+                st.R = False
+
+    def _G(self) -> None:
+        st = self.state
+        y = st.y
+        if len(self.ohlcv_history) < 2:
+            return
+        H = self.ohlcv_history[-2]["high"]
+        L = self.ohlcv_history[-2]["low"]
+        for j in range(y + 1, st.h + 1):
+            if j == X_PERIOD:
+                break
+            idx = j - (y + 1)
+            if idx < 0 or idx >= len(st.k):
+                continue
+            st.k[idx] = False
+            st.l[idx] = False
+            st.HH[idx] = H
+            st.LL[idx] = L
+            st.Premium[idx] = H
+            st.Discount[idx] = L
+            idx_c = idx
+            if idx_c < 0 or idx_c >= len(st.cA[0]):
+                idx_c = idx
+            for i in range(13):
+                if idx_c < len(st.kA[i]) and idx_c < len(st.cA[i]):
+                    st.kA[i][idx_c] = st.cA[i][idx_c]
+                    st.lA[i][idx_c] = st.cA[i][idx_c]
+
+    def _J(self) -> None:
+        st = self.state
+        if st.I == st.iZ:
+            st.J = st.iW
+        elif st.I == st.iW:
+            st.J = st.iZ
+        if st.iI == st.iz:
+            st.iJ = st.iw
+        elif st.iI == st.iw:
+            st.iJ = st.iz
+
+    def _O(self, inp: int, inp0: int, inp1: int, inp2: bool, inp3: bool) -> bool:
+        st = self.state
+        y = st.y
+        idx = inp0 - (y + 1)
+        if idx < 0 or idx >= len(st.Regime):
+            return inp3
+        regime = st.Regime[idx]
+        is_range = (regime == "sRange" or regime == "tRange")
+        if (inp < inp1) and is_range:
+            return inp3
+        if (regime != "sRange") and (regime != "tRange"):
+            return not inp3
+        return not inp3
+
+    def _R(self, j: int) -> None:
+        st = self.state
+        if j <= st.J:
+            st.O = j
+            st.iO = j
+        if (j > st.J) and (j < st.r):
+            st.O = j
+            st.iO = j
+            st.r = j
+        elif j > st.J:
+            st.r = j
+        if j <= st.iJ:
+            st.o = j
+            st.io = j
+        if (j > st.iJ) and (j < st.ir):
+            st.o = j
+            st.io = j
+            st.ir = j
+        elif j > st.iJ:
+            st.ir = j
+
+    def _KC(self) -> None:
+        st = self.state
+        if st.E != Decimal('0.0') and (not st.A) and (not st.B) and st.v and st.signal < st.E:
+            st.invert = not st.KC
+        if st.D != Decimal('0.0') and (not st.B) and (not st.A) and st.u and st.signal > st.D:
+            st.invert = not st.KC
+
+    def _on_hold(self, inp: int, inp0: str, inp1: str) -> bool:
+        st = self.state
+        idx = inp - (st.y + 1)
+        if idx < 0 or idx >= len(st.Regime):
+            return False
+        return st.Regime[idx] == inp0 or st.Regime[idx] == inp1
+
+    def _on_fire(self, inp: int, inp0: str, inp1: str) -> bool:
+        st = self.state
+        idx = inp - (st.y + 1)
+        if idx < 0 or idx >= len(st.Regime):
+            return False
+        return st.Regime[idx] != inp0 and st.Regime[idx] != inp1
+
+    def _on_point(self) -> None:
+        st = self.state
+        y = st.y
+        for j in range(y + 1, X_PERIOD):
+            idx = j - (y + 1)
+            if idx < 0 or idx >= len(st.Regime):
+                break
+            self._unify(j)
+            self._normalize(j)
+            if st.iStdDev < Decimal('50.0') and st.iATR > Decimal('50.0'):
+                if st.Regime[idx] != "Stable":
+                    self._H(j)
+                    self._L(j)
+                    if self._on_fire(j, "sVolatile", "tVolatile"):
+                        st.Regime[idx] = "sVolatile"
+            elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                if st.Regime[idx] != "Stable":
+                    self._R(j)
+                    self._H(j)
+                    self._L(j)
+                    if self._on_fire(j, "sRange", "tRange"):
+                        st.Regime[idx] = "sRange"
+            elif self._on_fire(j, "sTrend", "tTrend"):
+                st.Regime[idx] = "sTrend"
+
+    def _on_bar(self) -> None:
+        st = self.state
+        y = st.y
+        for j in range(y + 1, X_PERIOD):
+            idx = j - (y + 1)
+            if idx < 0 or idx >= len(st.Regime):
+                break
+            self._unify(j)
+            self._normalize(j)
+            if st.iStdDev < Decimal('50.0') and st.iATR > Decimal('50.0'):
+                if st.Regime[idx] != "Stable":
+                    if st.Regime[idx] != "tVolatile":
+                        self._F(j, st.iH, st.iL)
+                        self._H(j)
+                        self._L(j)
+                        st.Regime[idx] = "tVolatile"
+            elif st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                if st.Regime[idx] != "Stable":
+                    self._R(j)
+                    self._H(j)
+                    self._L(j)
+                    if st.Regime[idx] != "tRange":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tRange"
+            elif (st.Regime[idx] != "tTrend" and st.Regime[idx] != "sTrend"
+                  and st.LL[idx] < st.Discount[idx]
+                  and st.HH[idx] > st.Premium[idx]):
+                st.Regime[idx] = "Stable"
+            else:
+                if st.Regime[idx] != "tTrend":
+                    self._F(j, st.iH, st.iL)
+                    st.Regime[idx] = "tTrend"
+
+        if len(self.ohlcv_history) >= y + 1:
+            close_prices = [d["close"] for d in self.ohlcv_history[-y - 1:]]
+            st.Stock, _, st.Sale = bollinger_bands(close_prices, y)
+            if len(close_prices) > 1:
+                st.iStock, _, st.iSale = bollinger_bands(close_prices[:-1], y)
+            else:
+                st.iStock = st.Stock
+                st.iSale = st.Sale
+
+        if len(self.ohlcv_history) >= 3:
+            st.iopen = self.ohlcv_history[-3]["open"]
+            st.iPrice = self.ohlcv_history[-3]["close"]
+        elif len(self.ohlcv_history) >= 2:
+            st.iopen = self.ohlcv_history[-2]["open"]
+            st.iPrice = self.ohlcv_history[-2]["close"]
+        elif len(self.ohlcv_history) >= 1:
+            st.iopen = self.ohlcv_history[-1]["open"]
+            st.iPrice = self.ohlcv_history[-1]["close"]
+
+        st.lPass = st.Price if st.Price < st.open else st.open
+        st.ilPass = st.iPrice if st.iPrice < st.iopen else st.iopen
+        st.kPass = st.Price if st.Price > st.open else st.open
+        st.ikPass = st.iPrice if st.iPrice > st.iopen else st.iopen
+
+        self._execute_kronecker_block()
+
+    # ========================================================================
+    # D-1 / D-2 / D-3 / D-4 / D-11: THE EXECUTION LAYER — FF-EXACT
+    # ========================================================================
+    # The FF's execution layer is the toll-gate and the count-gate in
+    # OnTick(), each running its own independent `if` chain. The port
+    # preserves:
+    #
+    #   (a) The FF's `dime = mem;` pre-stamp at the top of each subblock.
+    #       This is D-1. The `else if((mem==1)||(dime==1))` and
+    #       `else if((mem==0)||(dime==0))` branches READ the pre-stamp.
+    #       Without it, Edition 3 read a stale `dime` left over from the
+    #       previous tick's _on_gaurd(0) — which may not have run at all
+    #       if the previous tick was still in tick_tock.
+    #
+    #   (b) The independence of the toll block and the count block. This
+    #       is D-2. In the FF both are `if` statements in the same tick;
+    #       both fire if both counters are 1. Edition 3 short-circuited
+    #       after the toll block, skipping the count block. The port no
+    #       longer returns early.
+    #
+    #   (c) The FF's reset placement. This is D-3 and D-4. The FF's
+    #       `toll = 0; tally = ""; count = 0; tally = ""; signal = 0;
+    #       GF = true; signature = true;` are on the `signal = 0;` line
+    #       at the end of each subblock. The helpers own the reset. The
+    #       caller does not touch st.toll / st.count / st.signal /
+    #       st.tally / st.GF / st.signature.
+    #
+    #   (d) The frozen commission. This is D-11. The FF computes
+    #       `com = Commssion * Point` once at OnInit. The trigger
+    #       `price >= signal + com` and `price <= signal - com` use the
+    #       frozen value, not a dynamic recomputation.
+    # ========================================================================
+    def _execute_kronecker_block(self) -> None:
+        st = self.state
+        fg = ""
+        if st.signal == Decimal('0.0'):
+            return
+        if st.price <= Decimal('0.0') or st.Price <= Decimal('0.0'):
+            return
+
+        # D-11: frozen commission (FF's `com` constant).
+        com_price = self._com_price_frozen
+
+        if st.price >= st.signal + com_price:
+            # C-A1: FF's Alert("Long:", price) emitted as a UI toast + push.
+            logger.info(f"🔵 Long: {st.price}")
+            _emit_alert("long", {
+                "price": str(st.price),
+                "tick": int(st.tick),
+                "h": int(st.h),
+            })
+            if st.count == 0 and st.tally == "Sell":
+                st.count += 1
+            st.tally = "Buy"
+        if st.price <= st.signal - com_price:
+            # C-A1: FF's Alert("Short:", price) emitted as a UI toast + push.
+            logger.info(f"🔴 Short: {st.price}")
+            _emit_alert("short", {
+                "price": str(st.price),
+                "tick": int(st.tick),
+                "h": int(st.h),
+            })
+            if st.count == 0 and st.tally == "Buy":
+                st.count += 1
+            st.tally = "Sell"
+
+        if st.tick_tock:
+            return
+
+        hh_idx = MIN_PERIOD - (st.y + 1)
+        ll_idx = MIN_PERIOD - (st.y + 1)
+        hh_anchor = st.HH[hh_idx] if 0 <= hh_idx < len(st.HH) else Decimal('0.0')
+        ll_anchor = st.LL[ll_idx] if 0 <= ll_idx < len(st.LL) else Decimal('0.0')
+
+        bullish_coherence = (
+            (
+                (st.Price > st.signal)
+                or (st.Price > st.ikPass)
+                or (st.price > st.kPass)
+            )
+            and (
+                (
+                    st.iC == st.Cc
+                    and st.Price > hh_anchor
+                )
+                or (
+                    st.jC == st.Cc
+                    and st.Price >= ll_anchor
+                    and (
+                        (st.open >= st.Stock)
+                        or (st.Price >= st.Stock)
+                        or (st.open >= st.iStock)
+                        or (st.Price >= st.iStock)
+                    )
+                )
+            )
+        )
+        if bullish_coherence:
+            logger.info(f"🟢 Buy: {st.price}")
+            if st.toll == 0 and st.tally == "Sell":
+                st.toll += 1
+            if st.Price > st.signal:
+                fg = "Up"
+            st.tally = "Buy"
+
+        bearish_coherence = (
+            (
+                (st.Price < st.signal)
+                or (st.Price < st.ilPass)
+                or (st.price < st.lPass)
+            )
+            and (
+                (
+                    st.jC == st.Cc
+                    and st.Price < ll_anchor
+                )
+                or (
+                    st.iC == st.Cc
+                    and st.Price <= hh_anchor
+                    and (
+                        (st.open <= st.Sale)
+                        or (st.Price <= st.Sale)
+                        or (st.open <= st.iSale)
+                        or (st.Price <= st.iSale)
+                    )
+                )
+            )
+        )
+        if bearish_coherence:
+            logger.info(f"🔴 Sell: {st.price}")
+            if st.toll == 0 and st.tally == "Buy":
+                st.toll += 1
+            if st.Price < st.signal:
+                fg = "Down"
+            st.tally = "Sell"
+
+        # D-2: both the toll block and the count block are evaluated in
+        # the same tick. No early return. The FF's `if` order is:
+        #   toll-buy, toll-sell, count-buy, count-sell.
+        # D-3 / D-4: the helpers own the reset of st.toll, st.count,
+        # st.signal, st.tally, st.GF, st.signature, and the subblock body's
+        # own `signal = 0;` line is reproduced inside each helper.
+
+        # --- toll-buy ---
+        if st.toll == 1 and (st.tally == "Buy" or fg == "Up"):
+            # C-A1: FF's Alert("🔷", "Diamond", fg) fires at the TOP of
+            # the subblock, before the branch chain.
+            self._last_dispatch_event = "Diamond"
+            self._emit_execution_toast("Diamond", st.price, "NONE", -1, fg)
+            self._dispatch_diamond_subblock(fg)
+            return
+
+        # --- toll-sell ---
+        if st.toll == 1 and (st.tally == "Sell" or fg == "Down"):
+            self._last_dispatch_event = "Ruby"
+            self._emit_execution_toast("Ruby", st.price, "NONE", -1, fg)
+            self._dispatch_ruby_subblock(fg)
+            return
+
+        # --- count-buy ---
+        if st.count == 1 and (st.tally == "Buy" or fg == "Up"):
+            self._last_dispatch_event = "Hawk"
+            self._emit_execution_toast("Hawk", st.price, "NONE", -1, fg)
+            self._dispatch_hawk_subblock(fg)
+            return
+
+        # --- count-sell ---
+        if st.count == 1 and (st.tally == "Sell" or fg == "Down"):
+            self._last_dispatch_event = "Dove"
+            self._emit_execution_toast("Dove", st.price, "NONE", -1, fg)
+            self._dispatch_dove_subblock(fg)
+            return
+
+    # A-C3: the stale `st.l_order_id if hasattr(st, 'l_order_id') else
+    # st.lOrder_id` guard in the third branch of _dispatch_diamond_subblock
+    # is replaced with the plain st.lOrder_id. The attribute l_order_id
+    # does not exist on AEI_CoreState.
+    #
+    # D-1: the FF's `dime = mem;` pre-stamp is the first statement of the
+    # subblock body. The `else if((mem==1)||(dime==1))` and
+    # `else if((mem==0)||(dime==0))` branches read the pre-stamp.
+    #
+    # D-4: the `signal = 0; toll = 0; tally = ""; GF = true;
+    # signature = true;` reset is at the end of the subblock, not in the
+    # caller. The subblock body reads `signal` at its pre-dispatch value
+    # during the branch chain.
+    def _dispatch_diamond_subblock(self, fg: str) -> None:
+        st = self.state
+        # D-1: FF's `dime = mem;` pre-stamp.
+        st.dime = st.mem
+        if (st.prime == 0 and st.dime == 0) and fg == "Up":
+            st.dime = 0; st.mem = 0
+            self._B(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🐂 Bull")
+            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+        elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
+            st.dime = 0; st.mem = 0
+            self._B(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🐂 Bull")
+            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+        elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
+            st.dime = 0; st.mem = 0
+            self._B(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🐂 Bull")
+            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+        elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
+            st.dime = 0; st.mem = 0
+            self._B(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🐂 Bull")
+            self._emit_execution_toast("Bull", st.price, "BUY", st.lOrder_id, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+        elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
+            if st.safety:
+                self._B(st.price)
+                if st.C: self._P(st.price)
+                else: self._Q(st.price)
+                logger.info("🥃 Whisky")
+                self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
+                self._Top(emit_toast=False)
+                st.E = st.price
+            else:
+                logger.info("🥃 Whisky")
+                self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
+                self._Top(emit_toast=False)
+                st.E = st.price
+                if not st.safety: st.safety = True
+        elif st.mem == 1 or st.dime == 1:
+            self._on_log()
+            if st.safety:
+                self._A(st.price)
+                if not st.C: self._P(st.price)
+                else: self._Q(st.price)
+                logger.info("🍷 Wine")
+                self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
+                self._Bott(emit_toast=False)
+                st.D = st.price
+            else:
+                logger.info("🍷 Wine")
+                self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
+                self._Bott(emit_toast=False)
+                st.D = st.price
+                if not st.safety: st.safety = True
+        else:
+            logger.info("🍷 Wine")
+            self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+            if not st.safety: st.safety = True
+        # D-4: FF's `signal = 0; toll = 0; tally = ""; GF = true;
+        # signature = true;` at the end of the subblock.
+        st.signal = Decimal('0.0')
+        st.toll = 0
+        st.tally = ""
+        st.GF = True
+        st.signature = True
+        st.execution_fired = True
         try:
-            if self._task and not self._task.done():
-                self._task.cancel()
+            self._project_arc_length(trigger="execution")
+        except Exception as e:
+            logger.warning(f"Projection refresh (diamond) failed: {e}")
+
+    def _dispatch_ruby_subblock(self, fg: str) -> None:
+        st = self.state
+        # D-1: FF's `dime = mem;` pre-stamp.
+        st.dime = st.mem
+        if fg == "Down" and (st.prime == 1 and st.dime == 1):
+            st.dime = 1; st.mem = 1
+            self._A(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🐻 Bear")
+            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+        elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
+            st.dime = 1; st.mem = 1
+            self._A(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🐻 Bear")
+            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+        elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
+            st.dime = 1; st.mem = 1
+            self._A(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🐻 Bear")
+            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+        elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
+            st.dime = 1; st.mem = 1
+            self._A(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🐻 Bear")
+            self._emit_execution_toast("Bear", st.price, "SELL", st.kOrder_id, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+        elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
+            if st.safety:
+                self._A(st.price)
+                if not st.C: self._P(st.price)
+                else: self._Q(st.price)
+                logger.info("🍷 Wine")
+                self._emit_execution_toast("Wine", st.price, "SELL", st.kOrder_id, fg)
+                self._Bott(emit_toast=False)
+                st.D = st.price
+            else:
+                logger.info("🍷 Wine")
+                self._emit_execution_toast("Wine", st.price, "NONE", -1, fg)
+                self._Bott(emit_toast=False)
+                st.D = st.price
+                if not st.safety: st.safety = True
+        elif st.mem == 0 or st.dime == 0:
+            self._on_log()
+            if st.safety:
+                self._B(st.price)
+                if st.C: self._P(st.price)
+                else: self._Q(st.price)
+                logger.info("🥃 Whisky")
+                self._emit_execution_toast("Whisky", st.price, "BUY", st.lOrder_id, fg)
+                self._Top(emit_toast=False)
+                st.E = st.price
+            else:
+                logger.info("🥃 Whisky")
+                self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
+                self._Top(emit_toast=False)
+                st.E = st.price
+                if not st.safety: st.safety = True
+        else:
+            logger.info("🥃 Whisky")
+            self._emit_execution_toast("Whisky", st.price, "NONE", -1, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+            if not st.safety: st.safety = True
+        # D-4: FF's reset at the end of the subblock.
+        st.signal = Decimal('0.0')
+        st.toll = 0
+        st.tally = ""
+        st.GF = True
+        st.signature = True
+        st.execution_fired = True
+        try:
+            self._project_arc_length(trigger="execution")
+        except Exception as e:
+            logger.warning(f"Projection refresh (ruby) failed: {e}")
+
+    def _dispatch_hawk_subblock(self, fg: str) -> None:
+        st = self.state
+        # D-1: FF's `dime = mem;` pre-stamp.
+        st.dime = st.mem
+        if (st.prime == 0 and st.dime == 0) and fg == "Up":
+            st.dime = 0; st.mem = 0
+            self._B(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🦅 Hawk")
+            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+        elif ((st.mem == 0 and st.dime == 0) or st.prime == 0) and fg == "" and st.price > st.signal:
+            st.dime = 0; st.mem = 0
+            self._B(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🦅 Hawk")
+            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+        elif (st.prime == 1 or (st.mem == 0 and st.dime == 0)) and fg == "Up" and st.price > st.signal:
+            st.dime = 0; st.mem = 0
+            self._B(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🦅 Hawk")
+            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+        elif ((st.mem == 0 and st.dime == 0) or st.prime == 1) and fg == "" and st.price > st.signal:
+            st.dime = 0; st.mem = 0
+            self._B(st.price)
+            if st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🦅 Hawk")
+            self._emit_execution_toast("Hawk", st.price, "BUY", st.lOrder_id, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+        elif st.Price > st.signal and (st.mem == 0 and st.dime == 0):
+            if st.safety:
+                self._B(st.price)
+                if st.C: self._P(st.price)
+                else: self._Q(st.price)
+                logger.info("💧 Watter")
+                self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
+                self._Top(emit_toast=False)
+                st.E = st.price
+            else:
+                logger.info("💧 Watter")
+                self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
+                self._Top(emit_toast=False)
+                st.E = st.price
+                if not st.safety: st.safety = True
+        elif st.mem == 1 or st.dime == 1:
+            self._on_log()
+            if st.safety:
+                self._A(st.price)
+                if not st.C: self._P(st.price)
+                else: self._Q(st.price)
+                logger.info("🩸 Blood")
+                self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
+                self._Bott(emit_toast=False)
+                st.D = st.price
+            else:
+                logger.info("🩸 Blood")
+                self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
+                self._Bott(emit_toast=False)
+                st.D = st.price
+                if not st.safety: st.safety = True
+        else:
+            logger.info("🩸 Blood")
+            self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+            if not st.safety: st.safety = True
+        # D-4: FF's reset at the end of the subblock.
+        st.signal = Decimal('0.0')
+        st.count = 0
+        st.tally = ""
+        st.GF = True
+        st.signature = True
+        st.execution_fired = True
+        try:
+            self._project_arc_length(trigger="execution")
+        except Exception as e:
+            logger.warning(f"Projection refresh (hawk) failed: {e}")
+
+    def _dispatch_dove_subblock(self, fg: str) -> None:
+        st = self.state
+        # D-1: FF's `dime = mem;` pre-stamp.
+        st.dime = st.mem
+        if fg == "Down" and (st.prime == 1 and st.dime == 1):
+            st.dime = 1; st.mem = 1
+            self._A(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🕊️ Dove")
+            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+        elif ((st.mem == 1 and st.dime == 1) or st.prime == 1) and fg == "" and st.price < st.signal:
+            st.dime = 1; st.mem = 1
+            self._A(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🕊️ Dove")
+            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+        elif st.price < st.signal and fg == "Down" and (st.prime == 0 or (st.mem == 1 and st.dime == 1)):
+            st.dime = 1; st.mem = 1
+            self._A(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🕊️ Dove")
+            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+        elif ((st.mem == 1 and st.dime == 1) or st.prime == 0) and fg == "" and st.price < st.signal:
+            st.dime = 1; st.mem = 1
+            self._A(st.price)
+            if not st.C: self._P(st.price)
+            else: self._Q(st.price)
+            logger.info("🕊️ Dove")
+            self._emit_execution_toast("Dove", st.price, "SELL", st.kOrder_id, fg)
+            self._Bott(emit_toast=False)
+            st.D = st.price
+        elif st.Price < st.signal and (st.mem == 1 and st.dime == 1):
+            if st.safety:
+                self._A(st.price)
+                if not st.C: self._P(st.price)
+                else: self._Q(st.price)
+                logger.info("🩸 Blood")
+                self._emit_execution_toast("Blood", st.price, "SELL", st.kOrder_id, fg)
+                self._Bott(emit_toast=False)
+                st.D = st.price
+            else:
+                logger.info("🩸 Blood")
+                self._emit_execution_toast("Blood", st.price, "NONE", -1, fg)
+                self._Bott(emit_toast=False)
+                st.D = st.price
+                if not st.safety: st.safety = True
+        elif st.mem == 0 or st.dime == 0:
+            self._on_log()
+            if st.safety:
+                self._B(st.price)
+                if st.C: self._P(st.price)
+                else: self._Q(st.price)
+                logger.info("💧 Watter")
+                self._emit_execution_toast("Watter", st.price, "BUY", st.lOrder_id, fg)
+                self._Top(emit_toast=False)
+                st.E = st.price
+            else:
+                logger.info("💧 Watter")
+                self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
+                self._Top(emit_toast=False)
+                st.E = st.price
+                if not st.safety: st.safety = True
+        else:
+            logger.info("💧 Watter")
+            self._emit_execution_toast("Watter", st.price, "NONE", -1, fg)
+            self._Top(emit_toast=False)
+            st.E = st.price
+            if not st.safety: st.safety = True
+        # D-4: FF's reset at the end of the subblock.
+        st.signal = Decimal('0.0')
+        st.count = 0
+        st.tally = ""
+        st.GF = True
+        st.signature = True
+        st.execution_fired = True
+        try:
+            self._project_arc_length(trigger="execution")
+        except Exception as e:
+            logger.warning(f"Projection refresh (dove) failed: {e}")
+
+    def _on_call(self) -> None:
+        st = self.state
+        y = st.y
+        j = y + 1
+        while j < st.X_scan + 2:
+            idx = j - (y + 1)
+            if idx < 0 or idx >= len(st.Regime):
+                break
+            self._unify(j)
+            self._normalize(j)
+            if st.Suply <= st.price or st.iSuply <= st.price or st.iSuply <= st.iH:
+                i = j
+                st.I = st.iW
+                st.iZ = i
+                st.Z = i
+                if st.iw != 0 and st.jC == st.Cc:
+                    st.h = st.I
+                st.iC = st.C
+                st.jC = not st.C
+                if self._on_hold(j, "sTrend", "tTrend"):
+                    st.iz = i
+                    st.z = i
+                    st.iI = st.iw
+                    self._H(j)
+                if st.X_scan != X_PERIOD - 1:
+                    st.X_scan += 1
+            if st.Demand >= st.price or st.iDemand >= st.price or st.iDemand >= st.iL:
+                i = j
+                st.I = st.iZ
+                st.iW = i
+                st.W = i
+                if st.iz != 0 and st.iC == st.Cc:
+                    st.h = st.I
+                st.jC = st.C
+                st.iC = not st.C
+                if self._on_hold(j, "sTrend", "tTrend"):
+                    st.iw = i
+                    st.w = i
+                    st.iI = st.iz
+                    self._L(j)
+                if st.X_scan != X_PERIOD - 1:
+                    st.X_scan += 1
+            j += 1
+        st.X_scan = y
+
+    def _on_track(self) -> None:
+        st = self.state
+        st.on_track_runs += 1
+        y = st.y
+        st.S = X_PERIOD
+        st.T = X_PERIOD
+        st.X_scan = y
+        st.Y_scan = y
+        is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
+        scan_limit = 4 * MAX_PERIOD
+        s = X_PERIOD - 1
+        safety_counter = 0
+        safety_max = scan_limit * 2
+        while s < st.S:
+            safety_counter += 1
+            if safety_counter > safety_max:
+                logger.warning(f"⚠️ OnTrack() safety cap hit at s={s}; aborting scan")
+                break
+            if s >= scan_limit:
+                break
+            if s < 0:
+                s += 1
+                continue
+            idx = s - (y + 1)
+            if idx < 0:
+                s += 1
+                continue
+            if idx >= len(st.Regime):
+                ext = idx - len(st.Regime) + 1
+                st.Regime.extend(["sRange"] * ext)
+                st.k.extend([False] * ext)
+                st.l.extend([False] * ext)
+                st.HH.extend([Decimal('0.0')] * ext)
+                st.LL.extend([Decimal('0.0')] * ext)
+                st.Premium.extend([Decimal('0.0')] * ext)
+                st.Discount.extend([Decimal('0.0')] * ext)
+            j = s
+            self._normalize(j)
+            self._unify(j)
+            if st.Suply <= st.price or st.iSuply <= st.price or st.iSuply <= st.iH:
+                i = s
+                st.I = st.iW
+                st.Z = MAX_PERIOD
+                st.iZ = i
+                st.T += 1
+                st.iC = st.C
+                if st.iw != 0 and st.jC == st.Cc:
+                    st.h = st.I
+                st.jC = not st.C
+                if st.iStdDev > Decimal('50.0'):
+                    st.S += 1
+                    st.iz = i
+                    st.iI = st.iw
+                    self._H(j)
+                elif st.iATR < Decimal('50.0'):
+                    st.S += 1
+                    st.iO = i
+                    st.io = i
+                    self._H(j)
+                else:
+                    self._H(j)
+                    if is_now != st.t:
+                        if self._on_fire(j, "Stable", "tVolatile"):
+                            self._F(j, st.iH, st.iL)
+                            st.Regime[idx] = "tVolatile"
+                        else:
+                            st.Regime[idx] = "sVolatile"
+                    st.S += 1
+            if st.Demand >= st.price or st.iDemand >= st.price or st.iDemand >= st.iL:
+                i = s
+                st.I = st.iZ
+                st.W = MAX_PERIOD
+                st.iW = i
+                st.T += 1
+                st.jC = st.C
+                if st.iz != 0 and st.iC == st.Cc:
+                    st.h = st.I
+                st.iC = not st.C
+                if st.iStdDev > Decimal('50.0'):
+                    st.S += 1
+                    st.iw = i
+                    st.iI = st.iz
+                    self._L(j)
+                elif st.iATR < Decimal('50.0'):
+                    st.S += 1
+                    st.iO = i
+                    st.io = i
+                    self._L(j)
+                else:
+                    self._L(j)
+                    if is_now != st.t:
+                        if self._on_fire(j, "Stable", "tVolatile"):
+                            self._F(j, st.iH, st.iL)
+                            st.Regime[idx] = "tVolatile"
+                        else:
+                            st.Regime[idx] = "sVolatile"
+                    st.S += 1
+            s += 1
+        second_scan_start = X_PERIOD - 1
+        second_scan_end = st.S if st.S > X_PERIOD - 1 else X_PERIOD
+        s = second_scan_start
+        while s < second_scan_end:
+            idx = s - (y + 1)
+            if idx < 0:
+                s += 1
+                continue
+            j = s
+            self._normalize(j)
+            self._unify(j)
+            if st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                self._R(j)
+                self._L(j)
+                self._H(j)
+            s += 1
+        st.S = X_PERIOD
+        st.T = X_PERIOD
+        if st.Z != scan_limit and st.Z >= st.z:
+            j = MAX_PERIOD - 1
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        elif st.Z != scan_limit and st.Z < st.z:
+            j = MAX_PERIOD
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        else:
+            j = X_PERIOD - 1
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        if st.W != scan_limit and st.W >= st.w:
+            j = MAX_PERIOD - 1
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        elif st.W != scan_limit and st.W < st.w:
+            j = MAX_PERIOD
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        else:
+            j = X_PERIOD - 1
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+
+    def _on_stand(self) -> None:
+        st = self.state
+        st.on_stand_runs += 1
+        y = st.y
+        st.S = X_PERIOD
+        st.T = X_PERIOD
+        st.X_scan = y
+        st.Y_scan = y
+        is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
+        s = y + 1
+        while s > st.Y_scan:
+            if s == 1:
+                break
+            if s < 0:
+                break
+            idx = s - (y + 1)
+            if idx < 0:
+                s -= 1
+                continue
+            if idx >= len(st.Regime):
+                ext = idx - len(st.Regime) + 1
+                st.Regime.extend(["sRange"] * ext)
+                st.k.extend([False] * ext)
+                st.l.extend([False] * ext)
+                st.HH.extend([Decimal('0.0')] * ext)
+                st.LL.extend([Decimal('0.0')] * ext)
+                st.Premium.extend([Decimal('0.0')] * ext)
+                st.Discount.extend([Decimal('0.0')] * ext)
+            j = s
+            st.ir = 0
+            st.ij = 0
+            self._normalize(j)
+            self._unify(j)
+            if st.Suply <= st.price or st.iSuply <= st.price or st.iSuply <= st.iH:
+                i = s
+                st.I = st.iW
+                st.Z = MIN_PERIOD + 1
+                st.iZ = i
+                st.T -= 1
+                st.iC = st.C
+                if st.iw != 0 and st.jC == st.Cc:
+                    st.h = st.I
+                st.jC = not st.C
+                if st.X_scan != st.Y_scan and st.iz == 0 and st.iStdDev > Decimal('50.0'):
+                    st.ij = i
+                    st.iz = i
+                    st.iI = st.iw
+                    self._H(j)
+                    if st.ir == 0 and st.Y_scan != 2:
+                        st.Y_scan -= 1
+                elif st.X_scan != st.Y_scan and st.iO == 0 and st.iATR < Decimal('50.0'):
+                    st.iO = i
+                    st.ir = i
+                    self._H(j)
+                    if st.ij == 0 and st.Y_scan != 2:
+                        st.Y_scan -= 1
+                elif st.X_scan == st.Y_scan:
+                    self._H(j)
+                    if is_now != st.t:
+                        if self._on_fire(j, "Stable", "tVolatile"):
+                            self._F(j, st.iH, st.iL)
+                            st.Regime[idx] = "tVolatile"
+                        else:
+                            st.Regime[idx] = "sVolatile"
+                    if st.Y_scan != 2 and st.X_scan != 2:
+                        st.Y_scan -= 1
+                        st.X_scan -= 1
+            if st.Demand >= st.price or st.iDemand >= st.price or st.iDemand >= st.iL:
+                i = s
+                st.I = st.iZ
+                st.W = MIN_PERIOD + 1
+                st.iW = i
+                st.T -= 1
+                st.jC = st.C
+                if st.iz != 0 and st.iC == st.Cc:
+                    st.h = st.I
+                st.iC = not st.C
+                if st.X_scan != st.Y_scan and st.iw == 0 and st.iStdDev > Decimal('50.0'):
+                    st.ij = i
+                    st.iw = i
+                    st.iI = st.iz
+                    self._L(j)
+                    if st.ir == 0 and st.Y_scan != 2:
+                        st.Y_scan -= 1
+                elif st.X_scan != st.Y_scan and st.iO == 0 and st.iATR < Decimal('50.0'):
+                    st.iO = i
+                    st.io = i
+                    st.ir = 0
+                    self._L(j)
+                    if st.ij == 0 and st.Y_scan != 2:
+                        st.Y_scan -= 1
+                elif st.X_scan == st.Y_scan:
+                    self._L(j)
+                    if is_now != st.t:
+                        if self._on_fire(j, "Stable", "tVolatile"):
+                            self._F(j, st.iH, st.iL)
+                            st.Regime[idx] = "tVolatile"
+                        else:
+                            st.Regime[idx] = "sVolatile"
+                    if st.Y_scan != 2 and st.X_scan != 2:
+                        st.Y_scan -= 1
+                        st.X_scan -= 1
+            else:
+                if st.Y_scan != 2 and st.X_scan != 2:
+                    st.Y_scan -= 1
+                    st.X_scan -= 1
+            s -= 1
+        second_scan_start = st.Y_scan + 1
+        second_scan_end = y + 1
+        if second_scan_start < second_scan_end:
+            s = second_scan_start
+            while s < second_scan_end:
+                idx = s - (y + 1)
+                if idx < 0:
+                    s += 1
+                    continue
+                j = s
+                self._normalize(j)
+                self._unify(j)
+                if st.iStdDev < Decimal('50.0') and st.iATR < Decimal('50.0'):
+                    self._R(j)
+                    self._L(j)
+                    self._H(j)
+                s += 1
+        st.X_scan = y
+        st.Y_scan = y
+        if st.Z != 2 and st.Z >= st.z:
+            j = MIN_PERIOD
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        elif st.Z != 2 and st.Z < st.z:
+            j = MIN_PERIOD + 1
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        else:
+            j = y + 1
+            st.z = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        if st.W != 2 and st.W >= st.w:
+            j = MIN_PERIOD
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        elif st.W != 2 and st.W < st.w:
+            j = MIN_PERIOD + 1
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+        else:
+            j = y + 1
+            st.w = j
+            idx = j - (y + 1)
+            if 0 <= idx < len(st.Regime):
+                if is_now != st.t:
+                    if st.Regime[idx] != "tTrend":
+                        self._F(j, st.iH, st.iL)
+                        st.Regime[idx] = "tTrend"
+                    else:
+                        st.Regime[idx] = "sTrend"
+
+    def _on_goe(self) -> None:
+        st = self.state
+        if st.signal != Decimal('0.0'):
+            return
+        if self._on_gaurd(0) and st.KC:
+            if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
+                if (not st.C) and (not st.c):
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
+                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                else:
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
+                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+            elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
+                if (not st.C) and (not st.c):
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
+                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                else:
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
+                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+        elif self._on_gaurd(0) != st.KC:
+            if ((st.h == st.io and st.z > st.o) or (st.h == st.iO and st.Z > st.O) or (st.h == st.iz and st.Z > st.z) or (st.h == st.iZ and st.Z < st.z)):
+                if (not st.C) or (not st.c):
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
+                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                else:
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
+                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+            elif (st.h == st.io) or (st.h == st.iZ) or (st.h == st.iz) or (st.h == st.iO):
+                if (not st.C) or (not st.c):
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
+                    logger.info(f"🟥 Sig. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+                else:
+                    st.prime = 1; self._G(); self._signal(); st.tick_tock = True; st.tag = 1
+                    logger.info(f"🟥 Sign. (Goe) price={st.price} h={st.h} Z={st.iZ} z={st.iz} O={st.iO} o={st.io}")
+            self._KC()
+
+    def _on_toe(self) -> None:
+        st = self.state
+        if st.signal != Decimal('0.0'):
+            return
+        if self._on_gaurd(0) and st.KC:
+            if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
+                if (not st.C) and (not st.c):
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
+                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                else:
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
+                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+            elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
+                if (not st.C) and (not st.c):
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
+                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                else:
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
+                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+        elif self._on_gaurd(0) != st.KC:
+            if ((st.h == st.io and st.w > st.o) or (st.h == st.iO and st.W > st.O) or (st.h == st.iw and st.W > st.w) or (st.h == st.iW and st.W < st.w)):
+                if (not st.C) or (not st.c):
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
+                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                else:
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
+                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+            elif (st.h == st.io) or (st.h == st.iW) or (st.h == st.iw) or (st.h == st.iO):
+                if (not st.C) or (not st.c):
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
+                    logger.info(f"🟩 Sign. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+                else:
+                    st.prime = 0; self._G(); self._signal(); st.tick_tock = True; st.tag = 0
+                    logger.info(f"🟩 Sig. (Toe) price={st.price} h={st.h} W={st.iW} w={st.iw} O={st.iO} o={st.io}")
+            self._KC()
+
+    def _signal(self) -> None:
+        st = self.state
+        if st.price <= Decimal('0.0'):
+            return
+        st.ab = not st.ba
+        st.count = 0
+        st.toll = 0
+        st.tally = " "
+        st.signal = st.price
+
+        m_local = st.authoritative_m
+        n_local = st.authoritative_n
+        self._last_kronecker_bar = st.authoritative_h if st.authoritative_h >= 0 else st.h
+        self._imbalance_fire_count += 1
+        self._last_signal_time = datetime.now()
+
+        if m_local >= 12:
+            signal_type = "BUY"
+        elif n_local >= 12:
+            signal_type = "SELL"
+        else:
+            signal_type = "NEUTRAL"
+
+        regime_idx = st.h - (st.y + 1)
+        regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else "Unknown"
+        bar_timestamp = None
+        if self.ohlcv_history:
+            bar_timestamp = self.ohlcv_history[-1]["timestamp"]
+            if isinstance(bar_timestamp, datetime):
+                bar_timestamp = bar_timestamp.isoformat()
+        signal_record = {
+            "timestamp": datetime.now().isoformat(),
+            "bar_timestamp": bar_timestamp,
+            "type": signal_type,
+            "price": float(st.price),
+            "signal_level": float(st.signal),
+            "regime": regime,
+            "m_count": int(m_local),
+            "n_count": int(n_local),
+            "tick": int(st.tick),
+            "h_bar": int(st.h),
+            "source": "Goe" if st.prime == 1 else ("Toe" if st.prime == 0 else "Kronecker"),
+        }
+        st.signal_history.append(signal_record)
+        if len(st.signal_history) > st.max_signal_history:
+            st.signal_history = st.signal_history[-st.max_signal_history:]
+        st.last_signal_at = signal_record["timestamp"]
+        logger.info(f"🎯 SIGNAL #{self._imbalance_fire_count}: type={signal_type} @ {st.price}, tick={st.tick}, h={st.h}, m={m_local}, n={n_local}, regime={regime}")
+        _emit_toast("signal", {
+            "type": signal_type,
+            "price": str(st.price),
+            "signal_level": str(st.signal),
+            "m": int(m_local),
+            "n": int(n_local),
+            "h": int(st.h),
+            "regime": regime,
+            "tick": int(st.tick),
+            "source": signal_record["source"],
+        })
+        if not PUSH_ON_SIGNAL:
+            self._send_signal_alert()
+
+    def _on_gaurd(self, inp: int) -> bool:
+        """Port of ÆEA.mq4 OnGaurd(inp).
+
+        m-4 NOTE: The FF's `if((price <D) && (D!=0))` branch is
+        unreachable only when E <= D. When D < E, the branch is
+        reachable and the port faithfully mirrors the FF's control
+        flow. The MQL4 source itself writes the branch after an
+        if/else where both paths return, so the branch is dead in
+        the common case E <= D; the port preserves both semantics.
+        """
+        st = self.state
+        if st.price > st.E and st.E != Decimal('0.0'):
+            if st.signature and inp != -1:
+                st.dime = 0
+            return True
+        else:
+            if st.signature and inp != -1:
+                st.dime = 1
+            return False
+        if st.price < st.D and st.D != Decimal('0.0'):
+            if st.signature and inp != -1:
+                st.dime = 1
+            return True
+        else:
+            if st.signature and inp != -1:
+                st.dime = 0
+            return False
+
+    def _on_log(self) -> None:
+        st = self.state
+        if st.dime == 0:
+            logger.info("🕊️ Flying")
+        elif st.dime == 1:
+            logger.info("🔻 Falling")
+        else:
+            logger.info("⏳ Wait/Decern")
+
+    def _A(self, price: Decimal) -> None:
+        st = self.state
+        closed_any = False
+        if st.v and st.lOrder_id != -1:
+            logger.info(f"🔴 A(): Close long #{st.lOrder_id} at {price}")
+            self._close_order(st.lOrder_id, price)
+            st.lOrder_id = -1
+            st.has_open_long = False
+            closed_any = True
+        elif st.v and st.kOrder_id != -1:
+            logger.info(f"🔴 A(): Close short #{st.kOrder_id} at {price}")
+            self._close_order(st.kOrder_id, price)
+            st.kOrder_id = -1
+            st.has_open_short = False
+            closed_any = True
+        st.E = Decimal('0.0')
+        st.A = True
+        st.B = False
+        st.K = False
+        st.Buy = -1
+        st.trailing_stop_active = False
+        st.trailing_stop_price = Decimal('0.0')
+        st.trailing_take_profit = Decimal('0.0')
+        self._emit_execution_toast("A", price, "CLOSE", -1, "A_close" if closed_any else "A_no_position")
+
+    def _B(self, price: Decimal) -> None:
+        st = self.state
+        closed_any = False
+        if st.u and st.kOrder_id != -1:
+            logger.info(f"🔵 B(): Close short #{st.kOrder_id} at {price}")
+            self._close_order(st.kOrder_id, price)
+            st.kOrder_id = -1
+            st.has_open_short = False
+            closed_any = True
+        elif st.u and st.lOrder_id != -1:
+            logger.info(f"🔵 B(): Close long #{st.lOrder_id} at {price}")
+            self._close_order(st.lOrder_id, price)
+            st.lOrder_id = -1
+            st.has_open_long = False
+            closed_any = True
+        st.D = Decimal('0.0')
+        st.A = False
+        st.B = True
+        st.K = False
+        st.Sell = -1
+        st.trailing_stop_active = False
+        st.trailing_stop_price = Decimal('0.0')
+        st.trailing_take_profit = Decimal('0.0')
+        self._emit_execution_toast("B", price, "CLOSE", -1, "B_close" if closed_any else "B_no_position")
+
+    def _open_order(self, side: str, price: Decimal, sl: Decimal, tp: Decimal, lot: Decimal) -> int:
+        ticket = self._next_ticket
+        self._next_ticket += 1
+        order = Order(ticket=ticket, side=side, entry=price, sl=sl, tp=tp, lot=lot)
+        self.orders.append(order)
+        return ticket
+
+    def _close_order(self, ticket: int, price: Decimal) -> bool:
+        for o in self.orders:
+            if o.ticket == ticket and o.closed_at is None:
+                o.closed_at = datetime.now()
+                o.close_price = price
+                return True
+        return False
+
+    def _P(self, price: Decimal) -> None:
+        st = self.state
+        if price <= Decimal('0.0'):
+            return
+        self._S()
+        ask_price = self.price_history[-1].ask if self.price_history else price
+        bid_price = self.price_history[-1].bid if self.price_history else price
+        target = self._get_next_topological_target("BUY", ask_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(ask_price, target, "BUY"):
+            if st.Buy >= 0 and (st.A or not st.B) and (st.u or not st.v):
+                if st.C:
+                    ticket = self._open_order("BUY", ask_price, self._bSL, self._bTP, LOT_SIZE)
+                    st.lOrder_id = ticket
+                    st.has_open_long = True
+                    st.trailing_stop_entry = ask_price
+                    st.trailing_stop_side = "LONG"
+                    st.Buy = 0 if st.Buy == -1 else st.Buy + 1
+                    logger.info(f"🟢 P(): BUY executed #{ticket} at {ask_price}, target={target}")
+        else:
+            self._A(price)
+            logger.info("⚠️ P(): BUY rejected — projected PnL <= spread friction")
+
+        target = self._get_next_topological_target("SELL", bid_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(bid_price, target, "SELL"):
+            if st.Sell >= 0 and (not st.A or st.B) and (not st.u or st.v):
+                if not st.C:
+                    ticket = self._open_order("SELL", bid_price, self._sSL, self._sTP, LOT_SIZE)
+                    st.kOrder_id = ticket
+                    st.has_open_short = True
+                    st.trailing_stop_entry = bid_price
+                    st.trailing_stop_side = "SHORT"
+                    st.Sell = 0 if st.Sell == -1 else st.Sell + 1
+                    logger.info(f"🔴 P(): SELL executed #{ticket} at {bid_price}, target={target}")
+        else:
+            self._B(price)
+            logger.info("⚠️ P(): SELL rejected — projected PnL <= spread friction")
+
+    def _Q(self, price: Decimal) -> None:
+        st = self.state
+        if price <= Decimal('0.0'):
+            return
+        self._S()
+        ask_price = self.price_history[-1].ask if self.price_history else price
+        bid_price = self.price_history[-1].bid if self.price_history else price
+        target = self._get_next_topological_target("SELL", bid_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(bid_price, target, "SELL"):
+            if st.Sell >= 0 and (not st.A or st.B) and (not st.u or st.v):
+                if st.C:
+                    ticket = self._open_order("SELL", bid_price, self._sSL, self._sTP, LOT_SIZE)
+                    st.kOrder_id = ticket
+                    st.has_open_short = True
+                    st.trailing_stop_entry = bid_price
+                    st.trailing_stop_side = "SHORT"
+                    st.Sell = 0 if st.Sell == -1 else st.Sell + 1
+                    logger.info(f"🔴 Q(): SELL executed #{ticket} at {bid_price}, target={target}")
+        else:
+            self._B(price)
+            logger.info("⚠️ Q(): SELL rejected — projected PnL <= spread friction")
+
+        target = self._get_next_topological_target("BUY", ask_price)
+        if target > Decimal('0.0') and self._will_pass_spread_in_pnl(ask_price, target, "BUY"):
+            if st.Buy >= 0 and (st.A or not st.B) and (st.u or not st.v):
+                if not st.C:
+                    ticket = self._open_order("BUY", ask_price, self._bSL, self._bTP, LOT_SIZE)
+                    st.lOrder_id = ticket
+                    st.has_open_long = True
+                    st.trailing_stop_entry = ask_price
+                    st.trailing_stop_side = "LONG"
+                    st.Buy = 0 if st.Buy == -1 else st.Buy + 1
+                    logger.info(f"🟢 Q(): BUY executed #{ticket} at {ask_price}, target={target}")
+        else:
+            self._A(price)
+            logger.info("⚠️ Q(): BUY rejected — projected PnL <= spread friction")
+
+    def _S(self) -> None:
+        st = self.state
+        point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        # D-11: use the frozen commission (FF's `com` constant).
+        com_local = self._com_price_frozen
+        sl_price = STOP_LOSS * point
+        tp_price = TAKE_PROFIT * point
+        bid = st.price
+        ask = st.price
+        if self.price_history:
+            bid = self.price_history[-1].bid
+            ask = self.price_history[-1].ask
+        if STOP_LOSS != Decimal('0.0'):
+            self._sSL = bid + sl_price - com_local
+            self._bSL = ask - sl_price + com_local
+        if TAKE_PROFIT != Decimal('0.0'):
+            self._sTP = bid - tp_price
+            self._bTP = ask + tp_price
+
+    def _execute_trailing_stop(self) -> None:
+        st = self.state
+        has_long = st.has_open_long
+        has_short = st.has_open_short
+        if not (has_long or has_short):
+            if st.trailing_stop_active:
+                logger.info("📉 Trailing stop deactivated — no open orders")
+                st.trailing_stop_active = False
+                st.trailing_stop_price = Decimal('0.0')
+                st.trailing_take_profit = Decimal('0.0')
+                st.trailing_stop_entry = Decimal('0.0')
+                st.trailing_stop_side = ""
+            return
+        regime_col = 0
+        if 0 <= regime_col < len(st.Regime):
+            regime = st.Regime[regime_col]
+            if regime in ("tStable", "tCoherent"):
+                return
+        if st.price <= Decimal('0.0'):
+            return
+        if not st.trailing_stop_active:
+            st.trailing_stop_active = True
+            st.trailing_stop_entry = st.price
+            st.trailing_stop_price = st.price
+            st.trailing_stop_side = "LONG" if has_long else "SHORT"
+            if has_long:
+                st.trailing_take_profit = st.price * Decimal('1.02')
+            else:
+                st.trailing_take_profit = st.price * Decimal('0.98')
+            logger.info(f"🎯 Trailing stop ACTIVATED at {st.trailing_stop_price}, TP={st.trailing_take_profit}, direction={st.trailing_stop_side}")
+            return
+        if len(self.price_history) > 0:
+            last = self.price_history[-1]
+            current_spread = last.ask - last.bid
+        else:
+            current_spread = Decimal('0.0')
+        com_price = self._com_price_frozen
+        point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        friction_points = (current_spread + com_price) / point_size
+        safety_buffer = Decimal('1.0')
+        min_trail_threshold = (friction_points + safety_buffer) * point_size
+        if has_long:
+            pnl_points = (st.price - st.trailing_stop_entry) / point_size
+        else:
+            pnl_points = (st.trailing_stop_entry - st.price) / point_size
+        if pnl_points <= (friction_points + safety_buffer):
+            return
+        trail_step = max(min_trail_threshold, pnl_points * point_size * Decimal('0.3'))
+        new_sl = st.trailing_stop_price
+        topological_target = Decimal('0.0')
+        if has_long:
+            for ji in range(st.y + 1, X_PERIOD):
+                jidx = ji - (st.y + 1)
+                if jidx < len(st.Premium) and st.Premium[jidx] > st.price and st.Premium[jidx] != Decimal('0.0'):
+                    topological_target = st.Premium[jidx]
+                    break
+            slDistance = max(trail_step, STOP_LOSS * point_size)
+            proposedSL = st.price - slDistance
+            if ((proposedSL > st.trailing_stop_price or st.trailing_stop_price == Decimal('0.0')) and (topological_target == Decimal('0.0') or proposedSL < (topological_target - min_trail_threshold))):
+                new_sl = proposedSL
+            tpDistance = Decimal('0.0')
+            if topological_target > Decimal('0.0'):
+                tpDistance = max(topological_target - st.price, TAKE_PROFIT * point_size)
+            else:
+                tpDistance = max(trail_step * Decimal('2.0'), TAKE_PROFIT * point_size)
+            proposedTP = st.price + tpDistance
+            if proposedTP > (st.price + min_trail_threshold):
+                st.trailing_take_profit = proposedTP
+        else:
+            for ji in range(st.y + 1, X_PERIOD):
+                jidx = ji - (st.y + 1)
+                if jidx < len(st.Discount) and st.Discount[jidx] < st.price and st.Discount[jidx] != Decimal('0.0'):
+                    topological_target = st.Discount[jidx]
+                    break
+            slDistance = max(trail_step, STOP_LOSS * point_size)
+            proposedSL = st.price + slDistance
+            if ((st.trailing_stop_price == Decimal('0.0') or proposedSL < st.trailing_stop_price) and (topological_target == Decimal('0.0') or proposedSL > (topological_target + min_trail_threshold))):
+                new_sl = proposedSL
+            tpDistance = Decimal('0.0')
+            if topological_target > Decimal('0.0'):
+                tpDistance = max(st.price - topological_target, TAKE_PROFIT * point_size)
+            else:
+                tpDistance = max(trail_step * Decimal('2.0'), TAKE_PROFIT * point_size)
+            proposedTP = st.price - tpDistance
+            if proposedTP < (st.price - min_trail_threshold):
+                st.trailing_take_profit = proposedTP
+        if new_sl != st.trailing_stop_price:
+            st.trailing_stop_price = new_sl
+            logger.info(f"📈 Trailing stop updated to {st.trailing_stop_price} (PnL={pnl_points}pts, friction={friction_points}pts)")
+        if has_long and st.price >= st.trailing_take_profit:
+            logger.info(f"✅ TP hit (LONG) at {st.price} / TP={st.trailing_take_profit}")
+            if st.lOrder_id != -1:
+                self._close_order(st.lOrder_id, st.price)
+            st.trailing_stop_active = False
+            st.trailing_stop_price = Decimal('0.0')
+            st.trailing_take_profit = Decimal('0.0')
+            st.trailing_stop_entry = Decimal('0.0')
+            st.trailing_stop_side = ""
+            st.has_open_long = False
+            st.lOrder_id = -1
+        elif has_short and st.price <= st.trailing_take_profit:
+            logger.info(f"✅ TP hit (SHORT) at {st.price} / TP={st.trailing_take_profit}")
+            if st.kOrder_id != -1:
+                self._close_order(st.kOrder_id, st.price)
+            st.trailing_stop_active = False
+            st.trailing_stop_price = Decimal('0.0')
+            st.trailing_take_profit = Decimal('0.0')
+            st.trailing_stop_entry = Decimal('0.0')
+            st.trailing_stop_side = ""
+            st.has_open_short = False
+            st.kOrder_id = -1
+
+    def _get_next_topological_target(self, side: str, current_price: Decimal) -> Decimal:
+        st = self.state
+        for ji in range(st.y + 1, X_PERIOD - 1):
+            jidx = ji - (st.y + 1)
+            if side == "BUY":
+                if jidx < len(st.Premium) and st.Premium[jidx] > current_price and st.Premium[jidx] != Decimal('0.0'):
+                    return st.Premium[jidx]
+            elif side == "SELL":
+                if jidx < len(st.Discount) and st.Discount[jidx] < current_price and st.Discount[jidx] != Decimal('0.0'):
+                    return st.Discount[jidx]
+        if side == "BUY" and st.Sale > current_price:
+            return st.Sale
+        if side == "SELL" and st.Stock < current_price:
+            return st.Stock
+        return Decimal('0.0')
+
+    def _will_pass_spread_in_pnl(self, entry_price: Decimal, target_price: Decimal, side: str) -> bool:
+        if len(self.price_history) > 0:
+            last = self.price_history[-1]
+            current_spread = last.ask - last.bid
+        else:
+            current_spread = Decimal('0.0')
+        point_size = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+        if point_size <= Decimal('0.0'):
+            return False
+        com_price = self._com_price_frozen
+        if com_price < Decimal('0.0'):
+            com_price = Decimal('0.0')
+        friction_points = (current_spread + com_price) / point_size
+        projected_distance = abs(target_price - entry_price)
+        projected_pnl_points = projected_distance / point_size
+        safety_buffer = Decimal('1.0')
+        if side == "BUY":
+            if target_price <= entry_price:
+                return False
+            return projected_pnl_points > (friction_points + safety_buffer)
+        if side == "SELL":
+            if target_price >= entry_price:
+                return False
+            return projected_pnl_points > (friction_points + safety_buffer)
+        return False
+
+    def _Top(self, emit_toast: bool = True) -> None:
+        st = self.state
+        _digits = SYMBOL_DIGITS.get(SYMBOL, SYMBOL_DIGITS_DEFAULT)
+        price_str = f"{st.price:.{_digits}f}"
+        created = False
+        if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
+            st.BL.append(st.price)
+            st.BL_type.append("top")
+            st.FVG += 1
+            anchor_idx = len(st.BL) - 1
+            st.bL = price_str
+            logger.info(f"▲ Top(): Blue FVG line at {price_str}, FVG={st.FVG}, idx={anchor_idx}")
+            created = True
+            if self._bridge_publish_callback:
+                try:
+                    self._bridge_publish_callback("top", price_str)
+                except Exception as e:
+                    logger.warning(f"_bridge_publish_callback failed: {e}")
+        _emit_toast("fvg", {
+            "action": "commit" if created else "duplicate",
+            "type": "top",
+            "price": price_str,
+            "idx": int(len(st.BL) - 1) if created else int(st.FVG),
+            "tick": int(st.tick),
+        })
+
+    def _Bott(self, emit_toast: bool = True) -> None:
+        st = self.state
+        _digits = SYMBOL_DIGITS.get(SYMBOL, SYMBOL_DIGITS_DEFAULT)
+        price_str = f"{st.price:.{_digits}f}"
+        created = False
+        if not any(abs(p - st.price) < Decimal('0.00001') for p in st.BL):
+            st.BL.append(st.price)
+            st.BL_type.append("bott")
+            st.FVG += 1
+            anchor_idx = len(st.BL) - 1
+            st.bL = price_str
+            logger.info(f"▼ Bott(): Red FVG line at {price_str}, FVG={st.FVG}, idx={anchor_idx}")
+            created = True
+            if self._bridge_publish_callback:
+                try:
+                    self._bridge_publish_callback("bott", price_str)
+                except Exception as e:
+                    logger.warning(f"_bridge_publish_callback failed: {e}")
+        _emit_toast("fvg", {
+            "action": "commit" if created else "duplicate",
+            "type": "bott",
+            "price": price_str,
+            "idx": int(len(st.BL) - 1) if created else int(st.FVG),
+            "tick": int(st.tick),
+        })
+
+    def _emit_execution_toast(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
+        st = self.state
+        _emit_toast("execution", {
+            "event": event,
+            "price": str(price),
+            "side": side,
+            "ticket": int(ticket),
+            "reason": reason,
+            "tick": int(st.tick),
+        })
+        if not PUSH_ON_EXECUTION:
+            self._send_execution_alert(event, price, side, ticket, reason)
+
+    def _populate_indicator_matrix(self) -> None:
+        with _ENGINE_LOCK:
+            self._populate_indicator_matrix_locked()
+
+    def _populate_indicator_matrix_locked(self) -> None:
+        st = self.state
+        if len(self.ohlcv_history) < MIN_HISTORY_WINDOW:
+            return
+        _X = X_PERIOD
+        _y = st.y
+        size = _X - _y
+        if size <= 0:
+            return
+        end = len(self.ohlcv_history)
+        for j in range(_y + 1, _X):
+            idx = j - (_y + 1)
+            if idx < 0 or idx >= size:
+                continue
+            col_i = j - (_y + 1)
+            if col_i < 0 or col_i >= len(st.iA[0]):
+                continue
+            self._normalize(j)
+            self._unify(j)
+            self._indicator_populate_count += 13
+
+    def _force_initialization(self) -> None:
+        st = self.state
+        if st.FG:
+            return
+        if st.price <= Decimal('0.0'):
+            logger.warning("⏳ Cannot force-init: price not yet available")
+            return
+        logger.info("🚀 First valid tick detected. Forcing engine initialization...")
+        if not st.signature:
+            st.D = st.price
+            st.E = st.price
+        size = X_PERIOD - st.y
+        if size <= 0:
+            size = X_PERIOD - Y_START
+        st.X_scan = st.y
+        st.Y_scan = st.y
+        if len(st.k) != size:
+            st.k = [False] * size
+            st.l = [False] * size
+            st.HH = [Decimal('0.0')] * size
+            st.LL = [Decimal('0.0')] * size
+            st.Premium = [Decimal('0.0')] * size
+            st.Discount = [Decimal('0.0')] * size
+            st.Regime = ["sRange"] * size
+        if len(self.ohlcv_history) >= 2:
+            iH = self.ohlcv_history[-2]["high"]
+            iL = self.ohlcv_history[-2]["low"]
+        elif len(self.ohlcv_history) == 1:
+            iH = self.ohlcv_history[-1]["high"]
+            iL = self.ohlcv_history[-1]["low"]
+        else:
+            iH = st.price
+            iL = st.price
+        for j in range(st.y + 1, X_PERIOD):
+            self._F(j, iH, iL)
+        st.FG = True
+        logger.info(f"✅ Engine initialized on first tick at price={st.price}")
+
+    def _on_tick(self, price_data: PriceData) -> None:
+        with _ENGINE_LOCK:
+            self._on_tick_locked(price_data)
+
+    def _on_tick_locked(self, price_data: PriceData) -> None:
+        st = self.state
+        self._tick_log_counter += 1
+
+        if price_data.bid <= Decimal('0.0'):
+            logger.warning(f"⚠️ Tick #{st.tick} with non-positive bid ({price_data.bid}). Skipping state machine.")
+            return
+        if price_data.ask <= Decimal('0.0'):
+            logger.warning(f"⚠️ Tick #{st.tick} with non-positive ask ({price_data.ask}); repairing ask to bid ({price_data.bid}).")
+            price_data.ask = price_data.bid
+        elif price_data.ask < price_data.bid:
+            logger.warning(f"⚠️ Tick #{st.tick} with inverted spread (bid={price_data.bid}, ask={price_data.ask}); repairing ask to bid.")
+            price_data.ask = price_data.bid
+
+        st.price = price_data.bid
+        if len(self.ohlcv_history) >= 2:
+            st.Price = self.ohlcv_history[-2]["close"]
+            st.iPrice = self.ohlcv_history[-2]["close"]
+            st.open = self.ohlcv_history[-2]["open"]
+            st.iH = self.ohlcv_history[-2]["high"]
+            st.iL = self.ohlcv_history[-2]["low"]
+        elif len(self.ohlcv_history) == 1:
+            st.Price = self.ohlcv_history[-1]["close"]
+            st.iPrice = self.ohlcv_history[-1]["close"]
+            st.open = self.ohlcv_history[-1]["open"]
+            st.iH = self.ohlcv_history[-1]["high"]
+            st.iL = self.ohlcv_history[-1]["low"]
+        else:
+            st.Price = price_data.close
+            st.iPrice = st.price
+            st.open = st.price
+            st.iH = st.price
+            st.iL = st.price
+
+        if st.price <= Decimal('0.0'):
+            logger.warning(f"⚠️ Tick #{st.tick} with non-positive price. Skipping state machine.")
+            return
+
+        is_now = self.ohlcv_history[-1]["timestamp"] if self.ohlcv_history else datetime.now()
+
+        self._maintain_fvg_lines()
+
+        if not st.FG:
+            self._force_initialization()
+
+        self._execute_trailing_stop()
+
+        # M-2: OnPoint / OnBar / OnCall execute BEFORE the tick-log block
+        # so the regime string reported by the log block reflects the
+        # current tick's classification, not the previous tick's.
+        self._on_point()
+        st.C = self._O(st.iO, st.O, st.J, st.C, st.Cc)
+        st.c = self._O(st.io, st.o, st.iJ, st.c, st.cC)
+        self._on_call()
+        self._J()
+
+        if is_now != st.t:
+            self._on_bar()
+            st.C = self._O(st.iO, st.O, st.J, st.C, st.Cc)
+            st.c = self._O(st.io, st.o, st.iJ, st.c, st.cC)
+
+        if st.J == st.y + 1 and st.J != 2:
+            self._on_stand()
+            self._J()
+            st.C = self._O(st.iO, st.O, st.J, st.C, st.Cc)
+            st.c = self._O(st.io, st.o, st.iJ, st.c, st.cC)
+            if st.iO != 2:
+                if st.J >= st.iO:
+                    j = MIN_PERIOD
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                            else:
+                                st.Regime[idx_j] = "sRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+                else:
+                    j = MIN_PERIOD + 1
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                            else:
+                                st.Regime[idx_j] = "sRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+            else:
+                st.O = 2
+            if st.io != 2:
+                if st.iJ >= st.io:
+                    st.o = MIN_PERIOD
+                else:
+                    st.o = MIN_PERIOD + 1
+            else:
+                st.o = 2
+
+        if st.J == X_PERIOD - 1:
+            self._on_track()
+            self._J()
+            st.C = self._O(st.iO, st.O, st.J, st.C, st.Cc)
+            st.c = self._O(st.io, st.o, st.iJ, st.c, st.cC)
+            if st.iO != 4 * MAX_PERIOD:
+                if st.J >= st.iO:
+                    j = MAX_PERIOD - 1
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                            else:
+                                st.Regime[idx_j] = "sRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+                else:
+                    j = MAX_PERIOD
+                    st.O = j
+                    idx_j = j - (st.y + 1)
+                    if 0 <= idx_j < len(st.Regime):
+                        if is_now != st.t:
+                            if self._on_fire(j, "Stable", "tRange"):
+                                self._F(j, st.iH, st.iL)
+                                st.Regime[idx_j] = "tRange"
+                            else:
+                                st.Regime[idx_j] = "sRange"
+                        else:
+                            st.Regime[idx_j] = "sRange"
+            else:
+                st.O = X_PERIOD - 1
+            if st.io != 4 * MAX_PERIOD:
+                if st.iJ >= st.io:
+                    st.o = MAX_PERIOD - 1
+                else:
+                    st.o = MAX_PERIOD
+            else:
+                st.o = X_PERIOD - 1
+
+        if st.Z != X_PERIOD - 1:
+            h_idx = st.iZ - (st.y + 1)
+            if st.Z != st.y + 1 and 0 <= h_idx < len(st.k) and st.k[h_idx]:
+                st.h = st.iZ
+                self._on_goe()
+            else:
+                h_idx = st.iz - (st.y + 1)
+                if (0 <= h_idx < len(st.k) and st.k[h_idx] and st.z != st.y + 1 and st.z != X_PERIOD - 1):
+                    st.h = st.iz
+                    self._on_goe()
+                else:
+                    h_idx = st.io - (st.y + 1)
+                    if (0 <= h_idx < len(st.k) and st.k[h_idx] and st.o != st.y + 1 and st.o != X_PERIOD - 1):
+                        st.h = st.io
+                        self._on_goe()
+                    else:
+                        h_idx = st.iO - (st.y + 1)
+                        if (0 <= h_idx < len(st.k) and st.k[h_idx] and st.O != st.y + 1 and st.O != X_PERIOD - 1):
+                            st.h = st.iO
+                            self._on_goe()
+
+        if st.W != X_PERIOD - 1:
+            h_idx = st.iW - (st.y + 1)
+            if st.W != st.y + 1 and 0 <= h_idx < len(st.l) and st.l[h_idx]:
+                st.h = st.iW
+                self._on_toe()
+            else:
+                h_idx = st.iw - (st.y + 1)
+                if (0 <= h_idx < len(st.l) and st.l[h_idx] and st.w != st.y + 1 and st.w != X_PERIOD - 1):
+                    st.h = st.iw
+                    self._on_toe()
+                else:
+                    h_idx = st.io - (st.y + 1)
+                    if (0 <= h_idx < len(st.l) and st.l[h_idx] and st.o != st.y + 1 and st.o != X_PERIOD - 1):
+                        st.h = st.io
+                        self._on_toe()
+                    else:
+                        h_idx = st.iO - (st.y + 1)
+                        if (0 <= h_idx < len(st.l) and st.l[h_idx] and st.O != st.y + 1 and st.O != X_PERIOD - 1):
+                            st.h = st.iO
+                            self._on_toe()
+
+        if st.GF:
+            self.OnReInit()
+            st.GF = False
+
+        # M-2: tick-log block placed after all state-machine work.
+        if self._tick_log_counter >= 100:
+            self._tick_log_counter = 0
+            idx = st.Z - (st.y + 1)
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "?"
+            logger.info(f"⚡ Tick #{st.tick}: Price={st.price}, Signal={st.signal}, FG={st.FG}, Regime={regime}, X_scan={st.X_scan}, Y_scan={st.Y_scan}, bars={st.bar_close_count}, signals={len(st.signal_history)}, provider={st.last_provider}")
+
+        st.tick += 1
+        if st.ab != st.ba:
+            st.ab = st.ba
+        st.tick_tock = False
+        st.t = is_now
+
+    def _format_comment_line(self) -> str:
+        st = self.state
+        y = st.y
+        def _k(idx):
+            i = idx - (y + 1)
+            return st.k[i] if 0 <= i < len(st.k) else False
+        def _l(idx):
+            i = idx - (y + 1)
+            return st.l[i] if 0 <= i < len(st.l) else False
+        line1 = f"    ^{st.iZ}:{st.Z}|{st.iz}:{st.z}={_k(st.Z)}|{_k(st.z)}                                           <! †, ‡, # — ↑(0)|↓(1): {st.prime} {st.dime}{st.mem} >"
+        line2 = f"\n Lim{st.iO}:{st.O}^{_k(st.O)}_{_l(st.O)}.{st.io}:{st.o}^{_k(st.o)}_{_l(st.o)}={st.h}.{st.C}:{st.c}             <! 100%✓ >"
+        line3 = f"\n    _{st.iW}:{st.W}|{st.iw}:{st.w}={_l(st.W)}|{_l(st.w)}                                                 <! Natalia Tanyatia >"
+        return line1 + line2 + line3
+
+    def _maintain_fvg_lines(self) -> None:
+        st = self.state
+        if st.FVG < 0:
+            return
+        price = st.price
+        i = 0
+        removed_anchors = []
+        while i < len(st.BL):
+            price_line = st.BL[i]
+            line_type = st.BL_type[i] if i < len(st.BL_type) else "top"
+            if price_line <= Decimal('0.0'):
+                i += 1
+                continue
+            if line_type == "top" and (st.A or not st.B) and price_line <= price and st.E != Decimal('0.0'):
+                logger.info(f"🔵 FVG maintenance: remove blue @ {price_line}")
+                removed_anchors.append({"idx": i, "price": price_line, "type": "top"})
+                st.BL.pop(i)
+                if i < len(st.BL_type):
+                    st.BL_type.pop(i)
+                st.FVG -= 1
+                continue
+            if line_type == "bott" and (st.B or not st.A) and price_line >= price and st.D != Decimal('0.0'):
+                logger.info(f"🔴 FVG maintenance: remove red @ {price_line}")
+                removed_anchors.append({"idx": i, "price": price_line, "type": "bott"})
+                st.BL.pop(i)
+                if i < len(st.BL_type):
+                    st.BL_type.pop(i)
+                st.FVG -= 1
+                continue
+            i += 1
+        for anchor in removed_anchors:
+            _emit_toast("fvg", {
+                "action": "remove",
+                "type": anchor["type"],
+                "price": str(anchor["price"]),
+                "idx": int(anchor["idx"]),
+                "tick": int(st.tick),
+            })
+
+    def update_price_from_feed(self) -> None:
+        data = self.feed.get_intraday()
+        if not data:
+            self._consecutive_zero_prices += 1
+            now = datetime.now()
+            if self._last_relay_warn is None or (now - self._last_relay_warn).seconds >= 60:
+                self._last_relay_warn = now
+                logger.warning(f"⚠️ No data from relay for {self.feed.active_symbol()} (consecutive={self._consecutive_zero_prices})")
+            return
+        bid = data["close"]
+        ask = data["close"]
+        if bid <= Decimal('0.0'):
+            self._consecutive_zero_prices += 1
+            return
+        volume = data.get("volume", Decimal('0.0'))
+        timestamp = data.get("timestamp", datetime.now())
+        provider = str(data.get("provider", self.feed.last_provider()))
+        self._consecutive_zero_prices = 0
+        self.update_price(bid, ask, volume, timestamp, provider)
+
+    def update_price(self, bid: Decimal, ask: Decimal, volume: Decimal = Decimal('0.0'), timestamp: Optional[datetime] = None, provider: str = "") -> None:
+        if timestamp is None:
+            timestamp = datetime.now()
+        # C-5: reject zero/negative/invalid bid at the boundary. No bar may
+        # enter ohlcv_history with a placeholder price. This is the single
+        # gate that keeps every bar in ohlcv_history a real observation.
+        if not isinstance(bid, Decimal) or bid <= Decimal('0.0'):
+            logger.warning(f"update_price rejected non-positive bid: {bid}")
+            return
+        if not isinstance(ask, Decimal) or ask <= Decimal('0.0'):
+            logger.warning(f"update_price rejected non-positive ask: {ask}; repairing ask to bid.")
+            ask = bid
+        if ask < bid:
+            logger.warning(f"update_price inverted spread (bid={bid}, ask={ask}); repairing ask to bid.")
+            ask = bid
+        if not isinstance(volume, Decimal) or volume < Decimal('0.0'):
+            volume = Decimal('0.0')
+        self.state.price = bid
+        self.state.Price = (bid + ask) / Decimal('2.0')
+        if volume > Decimal('0.0'):
+            self.state.last_volume = volume
+        if provider:
+            self.state.last_provider = provider
+        self._price_update_counter += 1
+        price_data = PriceData(
+            bid=bid, ask=ask, close=(bid + ask) / Decimal('2.0'),
+            open=bid, high=max(bid, ask), low=min(bid, ask),
+            volume=volume, timestamp=timestamp, provider=provider,
+        )
+        self.price_history.append(price_data)
+        if len(self.price_history) > 1000:
+            self.price_history = self.price_history[-1000:]
+
+        bar_closed = False
+        if self._last_price_update is None:
+            bar_closed = True
+        else:
+            current_min = timestamp.replace(second=0, microsecond=0)
+            prev_min = self._last_price_update.replace(second=0, microsecond=0)
+            if current_min != prev_min:
+                bar_closed = True
+
+        if bar_closed:
+            self._bar_open = True
+            self._last_price_update = timestamp
+            self._bar_index += 1
+            self.state.bar_close_count += 1
+            self.ohlcv_history.append({
+                "open": price_data.open, "high": price_data.high,
+                "low": price_data.low, "close": price_data.close,
+                "volume": price_data.volume, "timestamp": timestamp,
+                "provider": provider,
+            })
+            if len(self.ohlcv_history) > 200:
+                self.ohlcv_history = self.ohlcv_history[-200:]
+            logger.info(f"📊 BAR CLOSE #{self.state.bar_close_count} at {timestamp.isoformat()} close={price_data.close} volume={price_data.volume} provider={provider} (ohlcv={len(self.ohlcv_history)})")
+        else:
+            self._bar_open = False
+            if self.ohlcv_history:
+                last = self.ohlcv_history[-1]
+                # C-5: only update if the existing bar has a real price.
+                if isinstance(last.get("close"), Decimal) and last["close"] > Decimal('0.0'):
+                    last["high"] = max(last["high"], price_data.high)
+                    last["low"] = min(last["low"], price_data.low)
+                    last["close"] = price_data.close
+                    last["volume"] = last.get("volume", Decimal('0.0')) + price_data.volume
+                    if provider:
+                        last["provider"] = provider
+
+        self._on_tick(price_data)
+
+    def _send_signal_alert(self) -> None:
+        st = self.state
+        target_chat = st.chat_id
+        if target_chat is None and st.webapp_user_id is not None:
+            target_chat = st.webapp_user_id
+        if not target_chat or not self.application:
+            return
+        if not self._alert_delivery_enabled:
+            return
+        direction = "↟" if st.price > st.signal else "↡"
+        m_local = st.authoritative_m
+        n_local = st.authoritative_n
+        h_idx = st.h - (st.y + 1)
+        m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
+        n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
+        condition_met = (m_local >= 12) or (n_local >= 12)
+        idx = st.Z - (st.y + 1)
+        regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+        msg = (
+            f"🎯 *ÆEA 𝒮_signal ℰ_alert*\n"
+            f"📊 *𝒮_Direction:* {_md_escape(direction)}\n"
+            f"🎯 *𝒮_Signal_Level:* {_md_escape(st.signal)}\n"
+            f"💰 *Current Price:* {_md_escape(st.price)}\n"
+            f"📊 *ℛ_regime:* {_md_escape(regime)}\n"
+            f"⚖️ *Imbalance @ h={_md_escape(st.h)}:* m={_md_escape(m_at_h)}, n={_md_escape(n_at_h)}\n"
+            f"⚖️ *Local m/n:* {_md_escape(m_local)}/{_md_escape(n_local)}\n"
+            f"✅ *δ(m-n-2)=1:* {'✅ 𝒜₃ MET' if condition_met else '❌ 𝒜₄ NOT MET'}\n"
+            f"🔄 *Tick Count:* {_md_escape(st.tick)}\n"
+            f"💎 Natalia Tanyatia"
+        )
+        bot = BRIDGE_ENGINE_REF.get("bot")
+        if bot is not None and hasattr(bot, "_send_message_sync"):
+            reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+            ok = bot._send_message_sync(
+                chat_id=target_chat,
+                text=msg,
+                parse_mode="Markdown",
+                reply_to_message_id=reply_to,
+            )
+            if ok:
+                logger.info(f"📡 Signal alert sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
+            else:
+                logger.warning(f"❌ Signal alert send failed for {target_chat} (tick={st.tick})")
+            return
+        app = self.application
+        if app is not None and hasattr(app, "_send_message_sync"):
+            reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+            ok = app._send_message_sync(
+                chat_id=target_chat,
+                text=msg,
+                parse_mode="Markdown",
+                reply_to_message_id=reply_to,
+            )
+            if ok:
+                logger.info(f"📡 Signal alert sent via engine.application to {target_chat} reply_to={reply_to} (tick={st.tick})")
+            else:
+                logger.warning(f"❌ Signal alert send via engine.application failed for {target_chat} (tick={st.tick})")
+            return
+        logger.warning("❌ Signal alert skipped: bot reference or _send_message_sync unavailable")
+
+    def _send_execution_alert(self, event: str, price: Decimal, side: str, ticket: int, reason: str) -> None:
+        st = self.state
+        target_chat = st.chat_id
+        if target_chat is None and st.webapp_user_id is not None:
+            target_chat = st.webapp_user_id
+        if not target_chat or not self.application:
+            return
+        if not self._alert_delivery_enabled:
+            return
+        emoji_map = {
+            "Bull": "🐂", "Bear": "🐻", "Whisky": "🥃", "Wine": "🍷",
+            "Watter": "💧", "Blood": "🩸", "Hawk": "🦅", "Dove": "🕊️",
+            "Diamond": "🔷", "Ruby": "🔻", "Top": "▲", "Bott": "▼",
+            "A": "🅰️", "B": "🅱️", "ManualOrder": "📝", "ManualClose": "✂️",
+            "ManualOpen": "➕", "Pending": "⏳",
+        }
+        emoji = emoji_map.get(event, "⚡")
+        cs_event = _cs_exec(event)
+        side_str = side if side else "NONE"
+        ticket_str = f"#{ticket}" if ticket != -1 else "—"
+        reason_str = f" | {_md_escape(reason)}" if reason else ""
+        msg = (
+            f"{emoji} *ÆEA ℰ_exec*\n"
+            f"📛 *Event:* {_md_escape(cs_event)}\n"
+            f"📊 *Side:* {_md_escape(_cs(side_str))}\n"
+            f"🎫 *Ticket:* {_md_escape(ticket_str)}\n"
+            f"💰 *Price:* {_md_escape(price)}{reason_str}\n"
+            f"🔄 *Tick:* {_md_escape(st.tick)}\n"
+            f"💎 Natalia Tanyatia"
+        )
+        bot = BRIDGE_ENGINE_REF.get("bot")
+        if bot is not None and hasattr(bot, "_send_message_sync"):
+            reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+            ok = bot._send_message_sync(
+                chat_id=target_chat,
+                text=msg,
+                parse_mode="Markdown",
+                reply_to_message_id=reply_to,
+            )
+            if ok:
+                logger.info(f"📡 Execution alert ({event}) sent to {target_chat} reply_to={reply_to} (tick={st.tick})")
+            else:
+                logger.warning(f"❌ Execution alert ({event}) send failed (tick={st.tick})")
+            return
+        app = self.application
+        if app is not None and hasattr(app, "_send_message_sync"):
+            reply_to = st.last_inbound_message_id if isinstance(st.last_inbound_message_id, int) else None
+            ok = app._send_message_sync(
+                chat_id=target_chat,
+                text=msg,
+                parse_mode="Markdown",
+                reply_to_message_id=reply_to,
+            )
+            if ok:
+                logger.info(f"📡 Execution alert ({event}) sent via engine.application to {target_chat} reply_to={reply_to} (tick={st.tick})")
+            else:
+                logger.warning(f"❌ Execution alert ({event}) send via engine.application failed (tick={st.tick})")
+            return
+        logger.warning("❌ Execution alert skipped: bot reference or _send_message_sync unavailable")
+
+    def get_signal_status(self) -> Dict[str, Any]:
+        st = self.state
+        h_idx = st.h - (st.y + 1)
+        m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
+        n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
+        m_local = st.authoritative_m
+        n_local = st.authoritative_n
+        condition_met = (m_local >= 12) or (n_local >= 12)
+        idx = st.Z - (st.y + 1)
+        regime = st.Regime[idx] if 0 <= idx < len(st.Regime) and st.Regime[idx] else "Unknown"
+        return {
+            "signal": float(st.signal),
+            "price": float(st.price),
+            "signature": st.signature,
+            "KC": bool(st.KC),
+            "prime": int(st.prime),
+            "dime": int(st.dime),
+            "mem": int(st.mem),
+            "tag": int(st.tag),
+            "invert": bool(st.invert),
+            "safety": bool(st.safety),
+            "m_count": m_local,
+            "n_count": n_local,
+            "m_at_h": m_at_h,
+            "n_at_h": n_at_h,
+            "h_bar": int(st.h),
+            "condition_met": condition_met,
+            "regime": regime,
+            "symbol": SYMBOL,
+            "tick": st.tick,
+            "timestamp": datetime.now().isoformat(),
+            "engine_initialized": st.FG,
+            "indicator_populate_count": int(self._indicator_populate_count),
+            "imbalance_fire_count": int(self._imbalance_fire_count),
+            "trailing_stop_active": st.trailing_stop_active,
+            "trailing_stop_price": str(st.trailing_stop_price),
+            "trailing_take_profit": str(st.trailing_take_profit),
+            "trailing_stop_entry": str(st.trailing_stop_entry),
+            "trailing_stop_side": st.trailing_stop_side,
+            "has_open_long": bool(st.has_open_long),
+            "has_open_short": bool(st.has_open_short),
+            "lOrder_id": int(st.lOrder_id),
+            "kOrder_id": int(st.kOrder_id),
+            "on_track_runs": int(st.on_track_runs),
+            "on_stand_runs": int(st.on_stand_runs),
+            "last_kronecker_bar": int(self._last_kronecker_bar),
+            "last_kronecker_m": int(st.last_kronecker_m),
+            "last_kronecker_n": int(st.last_kronecker_n),
+            "last_kronecker_h": int(st.last_kronecker_h),
+            "authoritative_m": int(st.authoritative_m),
+            "authoritative_n": int(st.authoritative_n),
+            "authoritative_h": int(st.authoritative_h),
+            "X_scan": int(st.X_scan),
+            "Y_scan": int(st.Y_scan),
+            "S": int(st.S),
+            "T": int(st.T),
+            "r": int(st.r),
+            "ir": int(st.ir),
+            "iATR": float(st.iATR),
+            "iStdDev": float(st.iStdDev),
+            "iIHKk": float(st.iIHKk),
+            "iIHKt": float(st.iIHKt),
+            "signal_count": len(st.signal_history),
+            "last_signal_at": st.last_signal_at,
+            "bar_close_count": int(st.bar_close_count),
+            "ohlcv_count": len(self.ohlcv_history),
+            "market_m": int(st.authoritative_m),
+            "market_n": int(st.authoritative_n),
+            "market_imbalance": int(st.authoritative_m) - int(st.authoritative_n) - 2,
+            "market_regime": "BULLISH" if (int(st.authoritative_m) - int(st.authoritative_n) - 2) > 2 else ("BEARISH" if (int(st.authoritative_m) - int(st.authoritative_n) - 2) < -2 else "NEUTRAL"),
+            "A": bool(st.A),
+            "B": bool(st.B),
+            "C": bool(st.C),
+            "c": bool(st.c),
+            "tick_tock": bool(st.tick_tock),
+            "Z": int(st.Z),
+            "z": int(st.z),
+            "O": int(st.O),
+            "o": int(st.o),
+            "W": int(st.W),
+            "w": int(st.w),
+            "I": int(st.I),
+            "iI": int(st.iI),
+            "J": int(st.J),
+            "iJ": int(st.iJ),
+            "iZ": int(st.iZ),
+            "iz": int(st.iz),
+            "iW": int(st.iW),
+            "iw": int(st.iw),
+            "iO": int(st.iO),
+            "io": int(st.io),
+            "lPass": str(st.lPass),
+            "ilPass": str(st.ilPass),
+            "kPass": str(st.kPass),
+            "ikPass": str(st.ikPass),
+            "comment_line": self._format_comment_line(),
+            "last_provider": st.last_provider,
+            "last_volume": str(st.last_volume),
+            "projection_computed_at": st.projection_computed_at,
+            "projection_trigger": st.projection_trigger,
+            "last_inbound_message_id": st.last_inbound_message_id,
+        }
+
+    def get_regime_map(self) -> List[Dict[str, Any]]:
+        st = self.state
+        out = []
+        for i, regime in enumerate(st.Regime):
+            prem = st.Premium[i] if i < len(st.Premium) else Decimal('0.0')
+            disc = st.Discount[i] if i < len(st.Discount) else Decimal('0.0')
+            hh = st.HH[i] if i < len(st.HH) else Decimal('0.0')
+            ll = st.LL[i] if i < len(st.LL) else Decimal('0.0')
+            k_flag = st.k[i] if i < len(st.k) else False
+            l_flag = st.l[i] if i < len(st.l) else False
+            out.append({
+                "index": i,
+                "regime": regime,
+                "k": bool(k_flag),
+                "l": bool(l_flag),
+                "premium": float(prem),
+                "discount": float(disc),
+                "hh": float(hh),
+                "ll": float(ll),
+            })
+        return out
+
+    def get_indicator_series(self, name: str, count: int = 80) -> List[float]:
+        st = self.state
+        idx = INDICATOR_NAMES.index(name) if name in INDICATOR_NAMES else -1
+        if idx < 0:
+            if name == "IchimokuK":
+                return [float(v) for v in st.IHKk[-count:]]
+            if name == "IchimokuT":
+                return [float(v) for v in st.IHKt[-count:]]
+            if name == "ATR":
+                return [float(v) for v in st.ATR[-count:]]
+            if name == "StdDev":
+                return [float(v) for v in st.StdDev[-count:]]
+            return []
+        row = st.iA[idx] if idx < len(st.iA) else []
+        return [float(v) for v in row[-count:]]
+
+    def place_order(self, side: str, lot: Decimal, sl: Decimal, tp: Decimal) -> Dict[str, Any]:
+        st = self.state
+        if st.price <= Decimal('0.0'):
+            return {"error": "no_price"}
+        if side not in ("BUY", "SELL"):
+            return {"error": "invalid_side"}
+        if lot <= Decimal('0.0'):
+            return {"error": "invalid_lot"}
+        entry = st.price
+        if sl <= Decimal('0.0'):
+            sl = Decimal('0.0')
+        if tp <= Decimal('0.0'):
+            tp = Decimal('0.0')
+        ticket = self._open_order(side, entry, sl, tp, lot)
+        if side == "BUY":
+            st.has_open_long = True
+            st.lOrder_id = ticket
+            st.trailing_stop_entry = entry
+            st.trailing_stop_side = "LONG"
+        else:
+            st.has_open_short = True
+            st.kOrder_id = ticket
+            st.trailing_stop_entry = entry
+            st.trailing_stop_side = "SHORT"
+        logger.info(f"📝 place_order: {side} #{ticket} @ {entry}, lot={lot}, sl={sl}, tp={tp}")
+        self._emit_execution_toast("ManualOrder", entry, side, ticket, "manual")
+        return {"ok": True, "ticket": ticket, "side": side, "entry": float(entry), "sl": float(sl), "tp": float(tp)}
+
+    def close_order(self, ticket: int = None, all: bool = False) -> Dict[str, Any]:
+        st = self.state
+        closed = []
+        if all:
+            for o in self.orders:
+                if o.closed_at is None:
+                    o.closed_at = datetime.now()
+                    o.close_price = st.price
+                    closed.append(o.ticket)
+            st.has_open_long = False
+            st.has_open_short = False
+            st.lOrder_id = -1
+            st.kOrder_id = -1
+            st.trailing_stop_active = False
+            st.trailing_stop_price = Decimal('0.0')
+            st.trailing_take_profit = Decimal('0.0')
+            st.trailing_stop_entry = Decimal('0.0')
+            st.trailing_stop_side = ""
+        else:
+            if ticket is None:
+                return {"error": "no_ticket"}
+            for o in self.orders:
+                if o.ticket == ticket and o.closed_at is None:
+                    o.closed_at = datetime.now()
+                    o.close_price = st.price
+                    closed.append(o.ticket)
+                    if o.side == "BUY":
+                        st.has_open_long = False
+                        st.lOrder_id = -1
+                    else:
+                        st.has_open_short = False
+                        st.kOrder_id = -1
+                    break
+        logger.info(f"📝 close_order: closed={closed}")
+        if closed:
+            self._emit_execution_toast("ManualClose", st.price, "CLOSE", closed[0] if len(closed) == 1 else -1, "manual")
+        return {"ok": True, "closed": closed}
+
+    def list_orders(self) -> List[Dict[str, Any]]:
+        st = self.state
+        out = []
+        for o in self.orders:
+            if o.closed_at is not None:
+                continue
+            pnl = o.pnl(st.price) if st.price > Decimal('0.0') else Decimal('0.0')
+            out.append({
+                "ticket": o.ticket,
+                "side": o.side,
+                "entry": float(o.entry),
+                "sl": float(o.sl),
+                "tp": float(o.tp),
+                "lot": float(o.lot),
+                "pnl": float(pnl),
+                "opened_at": o.opened_at.isoformat(),
+            })
+        return out
+
+    def get_settings(self) -> Dict[str, Any]:
+        st = self.state
+        return {
+            "max": int(MAX_PERIOD),
+            "min": int(MIN_PERIOD),
+            "Cc": bool(st.Cc),
+            "cC": bool(st.cC),
+            "Memory": int(Memory),
+            "safetyOffSwitch": bool(st.safety),
+            "StopLoss": str(STOP_LOSS),
+            "TakeProfit": str(TAKE_PROFIT),
+            "lot": str(LOT_SIZE),
+            "slip": int(SLIPPAGE),
+            "Commssion": str(COMMISSION),
+        }
+
+    def apply_settings(self, s: Dict[str, Any]) -> Dict[str, Any]:
+        global MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, COMMISSION, STOP_LOSS, TAKE_PROFIT, LOT_SIZE, SLIPPAGE, Memory
+        st = self.state
+        with _ENGINE_LOCK:
+            return self._apply_settings_locked(s)
+
+    def _apply_settings_locked(self, s: Dict[str, Any]) -> Dict[str, Any]:
+        global MAX_PERIOD, MIN_PERIOD, X_PERIOD, Y_START, COMMISSION, STOP_LOSS, TAKE_PROFIT, LOT_SIZE, SLIPPAGE, Memory
+        st = self.state
+        try:
+            errors = []
+            new_max = MAX_PERIOD
+            new_min = MIN_PERIOD
+            if "max" in s:
+                try:
+                    new_max = int(s["max"])
+                except (TypeError, ValueError):
+                    errors.append("max: must be an integer")
+                else:
+                    if new_max < MAX_PERIOD_MIN:
+                        errors.append(f"max: must be >= {MAX_PERIOD_MIN}")
+                    if new_max > MAX_PERIOD_MAX:
+                        errors.append(f"max: must be <= {MAX_PERIOD_MAX}")
+            if "min" in s:
+                try:
+                    new_min = int(s["min"])
+                except (TypeError, ValueError):
+                    errors.append("min: must be an integer")
+                else:
+                    if new_min < MIN_PERIOD_MIN:
+                        errors.append(f"min: must be >= {MIN_PERIOD_MIN}")
+                    if new_min > MIN_PERIOD_MAX:
+                        errors.append(f"min: must be <= {MIN_PERIOD_MAX}")
+            if new_max < new_min + MAX_MIN_GAP:
+                errors.append(f"max ({new_max}) must be >= min ({new_min}) + {MAX_MIN_GAP}")
+            new_sl = STOP_LOSS
+            new_tp = TAKE_PROFIT
+            new_lot = LOT_SIZE
+            new_com = COMMISSION
+            new_slip = SLIPPAGE
+            if "StopLoss" in s:
+                try:
+                    v = Fraction.from_decimal_string(str(s["StopLoss"])).to_decimal()
+                    if v < Decimal('0.0'):
+                        errors.append("StopLoss: must be >= 0")
+                    else:
+                        new_sl = v
+                except Exception as e:
+                    errors.append(f"StopLoss: {e}")
+            if "TakeProfit" in s:
+                try:
+                    v = Fraction.from_decimal_string(str(s["TakeProfit"])).to_decimal()
+                    if v < Decimal('0.0'):
+                        errors.append("TakeProfit: must be >= 0")
+                    else:
+                        new_tp = v
+                except Exception as e:
+                    errors.append(f"TakeProfit: {e}")
+            if "lot" in s:
+                try:
+                    v = Fraction.from_decimal_string(str(s["lot"])).to_decimal()
+                    if v <= Decimal('0.0'):
+                        errors.append("lot: must be > 0")
+                    else:
+                        new_lot = v
+                except Exception as e:
+                    errors.append(f"lot: {e}")
+            if "Commssion" in s:
+                try:
+                    v = Fraction.from_decimal_string(str(s["Commssion"])).to_decimal()
+                    if v < Decimal('0.0'):
+                        errors.append("Commssion: must be >= 0")
+                    else:
+                        new_com = v
+                except Exception as e:
+                    errors.append(f"Commssion: {e}")
+            if "slip" in s:
+                try:
+                    v = int(s["slip"])
+                    if v < 0:
+                        errors.append("slip: must be >= 0")
+                    else:
+                        new_slip = v
+                except (TypeError, ValueError):
+                    errors.append("slip: must be an integer")
+            if errors:
+                logger.warning(f"apply_settings validation failed: {errors}")
+                return {"error": "validation", "detail": "; ".join(errors)}
+            MAX_PERIOD = new_max
+            MIN_PERIOD = new_min
+            X_PERIOD = MAX_PERIOD + 2
+            Y_START = MIN_PERIOD - 2
+            st.y = Y_START
+            COMMISSION = new_com
+            STOP_LOSS = new_sl
+            TAKE_PROFIT = new_tp
+            LOT_SIZE = new_lot
+            SLIPPAGE = new_slip
+            # D-11: re-freeze the commission after settings apply.
+            _frozen_point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+            self._com_price_frozen = COMMISSION * _frozen_point
+            if "Cc" in s: st.Cc = bool(s["Cc"])
+            if "cC" in s: st.cC = bool(s["cC"])
+            if "Memory" in s:
+                mem_val = s["Memory"]
+                if mem_val is None:
+                    Memory = -1
+                else:
+                    try:
+                        Memory = int(mem_val)
+                    except (TypeError, ValueError):
+                        Memory = -1
+            st.mem = Memory
+            if "safetyOffSwitch" in s: st.safety = bool(s["safetyOffSwitch"])
+            self.OnReInit()
+            logger.info(f"⚙️ Settings applied: max={MAX_PERIOD}, min={MIN_PERIOD}, Cc={st.Cc}, cC={st.cC}, mem={st.mem}, safety={st.safety}, SL={STOP_LOSS}, TP={TAKE_PROFIT}, lot={LOT_SIZE}, slip={SLIPPAGE}, com={COMMISSION}")
+            return {"ok": True}
+        except Exception as e:
+            logger.error(f"apply_settings failed: {e}")
+            return {"error": str(e)}
+
+    def change_symbol(self, new_symbol: str) -> Dict[str, Any]:
+        global SYMBOL
+        with _ENGINE_LOCK:
+            return self._change_symbol_locked(new_symbol)
+
+    def _change_symbol_locked(self, new_symbol: str) -> Dict[str, Any]:
+        global SYMBOL
+        try:
+            if not new_symbol or not isinstance(new_symbol, str):
+                return {"error": "invalid_symbol", "detail": "Symbol must be a non-empty string"}
+            yahoo_symbol = SYMBOL_MAP.get(new_symbol.upper(), new_symbol.upper())
+            test_feed = FeedClient(yahoo_symbol)
+            bid, _ = test_feed.get_current_price()
+            if bid <= Decimal('0.0'):
+                return {
+                    "error": "no_price_for_symbol",
+                    "symbol": yahoo_symbol,
+                    "detail": f"Relay returned no price for '{yahoo_symbol}'. Check RELAY_URL and symbol validity.",
+                }
+            prev_chat = self.state.chat_id
+            prev_on_track = self.state.on_track_runs
+            prev_on_stand = self.state.on_stand_runs
+            prev_signals = self.state.signal_history
+            prev_inbound = self.state.last_inbound_message_id
+            SYMBOL = yahoo_symbol
+            self.feed = FeedClient(yahoo_symbol)
+            self._point_size = symbol_point(yahoo_symbol)
+            # D-11: re-freeze the commission after symbol change.
+            _frozen_point = self._point_size if self._point_size > Decimal('0.0') else Decimal('0.00001')
+            self._com_price_frozen = COMMISSION * _frozen_point
+            self.OnReInit()
+            self.state.chat_id = prev_chat
+            self.state.on_track_runs = prev_on_track
+            self.state.on_stand_runs = prev_on_stand
+            self.state.signal_history = prev_signals
+            self.state.last_inbound_message_id = prev_inbound
+            historical = self.feed.get_historical_klines(limit=200)
+            if historical:
+                self.ohlcv_history = historical
+                self._populate_indicator_matrix_locked()
+                self._force_initialization()
+            self._project_arc_length(trigger="symbol_change")
+            logger.info(f"📈 Symbol changed to {yahoo_symbol} (provider={self.feed.last_provider()})")
+            return {"ok": True, "symbol": yahoo_symbol, "provider": self.feed.last_provider()}
+        except Exception as e:
+            logger.exception("change_symbol failed")
+            return {"error": "change_symbol_exception", "detail": str(e), "symbol": new_symbol}
+
+    def _project_arc_length(self, trigger: str = "manual_refresh") -> None:
+        st = self.state
+        if len(self.ohlcv_history) < min(MIN_HISTORY_WINDOW, 20):
+            st.projection_path = []
+            st.projection_meta = {"reason": "insufficient_history"}
+            st.projection_computed_at = datetime.now().isoformat()
+            st.projection_trigger = trigger
+            return
+        horizon = max(4, min(120, ARC_PROJECTION_HORIZON))
+        price_now = st.price if st.price > Decimal('0.0') else self.ohlcv_history[-1]["close"]
+        signal_now = st.signal if st.signal != Decimal('0.0') else price_now
+        regime_idx = st.Z - (st.y + 1)
+        regime = st.Regime[regime_idx] if 0 <= regime_idx < len(st.Regime) else "Unknown"
+        projection_kind = "range"
+        if regime in ("sTrend", "tTrend"):
+            projection_kind = "trend"
+        elif regime in ("sVolatile", "tVolatile"):
+            projection_kind = "volatile"
+        elif regime in ("sRange", "tRange", "Stable"):
+            projection_kind = "range"
+        slope = Decimal('0.0')
+        if projection_kind == "trend":
+            window = self.ohlcv_history[-min(10, len(self.ohlcv_history)):]
+            if len(window) >= 2:
+                first_close = window[0]["close"]
+                last_close = window[-1]["close"]
+                n_minus_1 = Decimal(len(window) - 1)
+                slope = (last_close - first_close) / n_minus_1
+        amplitude = Decimal('0.0')
+        center = price_now
+        if projection_kind == "volatile":
+            prem = Decimal('0.0')
+            disc = Decimal('0.0')
+            for i in range(len(st.Premium) - 1, -1, -1):
+                if st.Premium[i] > Decimal('0.0'):
+                    prem = st.Premium[i]
+                    break
+            for i in range(len(st.Discount) - 1, -1, -1):
+                if st.Discount[i] > Decimal('0.0'):
+                    disc = st.Discount[i]
+                    break
+            if prem > Decimal('0.0') and disc > Decimal('0.0') and prem > disc:
+                center = (prem + disc) / Decimal('2.0')
+                amplitude = (prem - disc) / Decimal('2.0')
+            else:
+                atr_val = st.ATR[st.y] if st.y < len(st.ATR) else Decimal('0.0')
+                if atr_val > Decimal('0.0'):
+                    amplitude = atr_val
+                    center = price_now
+        damping = ARC_PROJECTION_DAMPING_D
+        path: List[Dict[str, Any]] = []
+        half_period_frac = PyFraction(horizon, 2)
+        price_now_frac = PyFraction(str(price_now))
+        signal_now_frac = PyFraction(str(signal_now))
+        center_frac = PyFraction(str(center))
+        amplitude_frac = PyFraction(str(amplitude))
+        slope_frac = PyFraction(str(slope))
+        damping_frac = PyFraction(str(damping))
+        delta_frac = price_now_frac - signal_now_frac
+        for k in range(1, horizon + 1):
+            if projection_kind == "trend":
+                future_price_frac = price_now_frac + slope_frac * PyFraction(k, 1)
+            elif projection_kind == "volatile":
+                ratio_frac = PyFraction(k, horizon)
+                omega_t_frac = PyFraction(2) * _PI_FRAC * ratio_frac
+                cos_frac = self._rational_cos(omega_t_frac)
+                decay_frac = damping_frac ** k
+                future_price_frac = center_frac + amplitude_frac * cos_frac * decay_frac
+            else:
+                ratio_frac = PyFraction(k, 1) / half_period_frac
+                omega_t_frac = _PI_FRAC * ratio_frac
+                cos_frac = self._rational_cos(omega_t_frac)
+                future_price_frac = signal_now_frac + delta_frac * cos_frac
+            future_price_d = Decimal(future_price_frac.numerator) / Decimal(future_price_frac.denominator)
+            path.append({
+                "step": k,
+                "price": str(future_price_d.quantize(Decimal('0.00001'))),
+                "t": float(k),
+            })
+        st.projection_path = path
+        st.projection_meta = {
+            "kind": projection_kind,
+            "horizon": horizon,
+            "price_now": str(price_now),
+            "signal_now": str(signal_now),
+            "regime": regime,
+            "slope": str(slope),
+            "amplitude": str(amplitude),
+            "center": str(center),
+            "damping": str(damping),
+            "provider": st.last_provider,
+        }
+        st.projection_computed_at = datetime.now().isoformat()
+        st.projection_trigger = trigger
+        logger.info(f"🌌 Projection recomputed (trigger={trigger}, kind={projection_kind}, horizon={horizon})")
+
+    @staticmethod
+    def _rational_cos(x) -> PyFraction:
+        """A-m1: 15-digit Taylor series cosine with π = _PI_FRAC
+        (3141592653589793/1000000000000000). The argument is reduced
+        modulo 2π exactly, then the Taylor expansion is summed to 40
+        terms or until the term underflows to zero. The result is an
+        exact PyFraction; the caller converts to Decimal only at the
+        final quantization step."""
+        if isinstance(x, PyFraction):
+            x_frac = x
+        elif isinstance(x, Decimal):
+            if x == Decimal('0.0'):
+                return PyFraction(1, 1)
+            sign_x = -1 if x < Decimal('0.0') else 1
+            ax = x if sign_x > 0 else -x
+            _sign_t, digits, exp = ax.as_tuple()
+            if not isinstance(exp, int):
+                return PyFraction(1, 1)
+            int_val = 0
+            for d in digits:
+                int_val = int_val * 10 + d
+            if exp < 0:
+                x_frac = PyFraction(int_val, 10 ** (-exp))
+            else:
+                x_frac = PyFraction(int_val * (10 ** exp), 1)
+            if sign_x < 0:
+                x_frac = -x_frac
+        elif isinstance(x, int):
+            x_frac = PyFraction(x, 1)
+        else:
+            x_frac = PyFraction(str(x))
+        two_pi_frac = PyFraction(2) * _PI_FRAC
+        n_periods = int(x_frac / two_pi_frac)
+        x_reduced = x_frac - two_pi_frac * n_periods
+        pi_frac = _PI_FRAC
+        if x_reduced > pi_frac:
+            x_reduced = x_reduced - two_pi_frac
+        elif x_reduced < -pi_frac:
+            x_reduced = x_reduced + two_pi_frac
+        x2 = x_reduced * x_reduced
+        term = PyFraction(1, 1)
+        result = PyFraction(1, 1)
+        sign = -1
+        for n in range(1, 40):
+            denom = PyFraction((2 * n - 1) * (2 * n), 1)
+            term = term * x2 / denom
+            result = result + PyFraction(sign, 1) * term
+            sign = -sign
+            if term == PyFraction(0, 1):
+                break
+        return result
+
+    def get_projection(self) -> Dict[str, Any]:
+        st = self.state
+        if not st.projection_path:
+            self._project_arc_length(trigger="manual_refresh")
+        return {
+            "symbol": SYMBOL,
+            "path": st.projection_path,
+            "meta": st.projection_meta,
+            "computed_at": st.projection_computed_at,
+            "current_price": str(st.price),
+            "signal_level": str(st.signal),
+            "regime": st.projection_meta.get("regime") if st.projection_meta else "Unknown",
+            "trigger": st.projection_trigger,
+        }
+
+# ============================================================================
+# BRIDGE STATE
+# ============================================================================
+class BridgeState:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._fvgs: Dict[int, Dict[str, Any]] = {}
+        self._next_fvg_idx = 0
+        self._webapp_sessions: Dict[int, Dict[str, Any]] = {}
+        self._handshake_lock = threading.Lock()
+
+    def register_webapp_session(self, user_id: int, username: Optional[str], chat_id: Optional[int] = None) -> bool:
+        with self._handshake_lock:
+            self._webapp_sessions[user_id] = {
+                "user_id": user_id, "username": username, "chat_id": chat_id,
+                "first_seen": self._webapp_sessions.get(user_id, {}).get("first_seen", datetime.now().isoformat()),
+                "last_seen": datetime.now().isoformat(),
+            }
+        engine = BRIDGE_ENGINE_REF.get("engine")
+        if engine is not None:
+            try:
+                engine.state.webapp_user_id = user_id
+                engine.state.webapp_username = username
+                engine.state.webapp_verified = True
+                engine.state.webapp_last_seen = datetime.now()
+                if chat_id is not None:
+                    engine.state.chat_id = chat_id
+            except Exception as e:
+                logger.warning(f"register_webapp_session → engine map failed: {e}")
+        logger.info(f"🔗 Web App session registered: user_id={user_id}, username={username}")
+        return True
+
+    def add_fvg(self, fvg_type: str, price_str: str, user_id: Optional[int] = None, requested_idx: Optional[int] = None) -> int:
+        if fvg_type not in ("top", "bott"):
+            raise ValueError("fvg_type must be 'top' or 'bott'")
+        try:
+            price_dec = Decimal(str(price_str))
+        except Exception:
+            raise ValueError("price must be a decimal string")
+        if price_dec <= Decimal('0.0'):
+            raise ValueError("price must be > 0")
+        with self._lock:
+            if requested_idx is not None and isinstance(requested_idx, int) and requested_idx >= 0:
+                idx = requested_idx
+                if idx >= self._next_fvg_idx:
+                    self._next_fvg_idx = idx + 1
+            else:
+                if self._next_fvg_idx < 1000000:
+                    self._next_fvg_idx = 1000000
+                idx = self._next_fvg_idx
+                self._next_fvg_idx += 1
+            self._fvgs[idx] = {
+                "type": fvg_type, "price": str(price_dec), "idx": idx,
+                "created": datetime.now().isoformat(), "user_id": user_id,
+            }
+        engine = BRIDGE_ENGINE_REF.get("engine")
+        if engine is not None:
+            engine.state.fvg_anchor_map[idx] = {
+                "idx": idx, "type": fvg_type, "price": str(price_dec),
+                "created": datetime.now().isoformat(),
+            }
+        _emit_toast("fvg", {
+            "action": "commit",
+            "type": fvg_type,
+            "price": str(price_dec),
+            "idx": idx,
+            "tick": int(engine.state.tick) if engine is not None else 0,
+        })
+        return idx
+
+    def remove_fvg(self, idx: int) -> bool:
+        with self._lock:
+            if idx in self._fvgs:
+                removed_record = self._fvgs.pop(idx)
+                removed = True
+            else:
+                removed_record = None
+                removed = False
+        engine = BRIDGE_ENGINE_REF.get("engine")
+        if engine is not None:
+            engine.state.fvg_anchor_map.pop(idx, None)
+        if removed and removed_record is not None:
+            _emit_toast("fvg", {
+                "action": "remove",
+                "type": removed_record.get("type", "top"),
+                "price": removed_record.get("price", "0"),
+                "idx": idx,
+                "tick": int(engine.state.tick) if engine is not None else 0,
+            })
+        return removed
+
+    def list_fvgs(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            return list(self._fvgs.values())
+
+BRIDGE_STATE = BridgeState()
+BRIDGE_ENGINE_REF: Dict[str, Any] = {"engine": None, "bot": None, "public_url": None}
+
+def _require_auth(handler: "BridgeHandler") -> bool:
+    if not REQUIRE_AUTH or not TELEGRAM_BOT_TOKEN_ENV:
+        return True
+    raw_init = handler.headers.get("X-Telegram-Init-Data", "").strip()
+    if not raw_init:
+        auth_hdr = handler.headers.get("Authorization", "").strip()
+        if auth_hdr.lower().startswith("tma "):
+            raw_init = auth_hdr[4:].strip()
+    if not raw_init:
+        return False
+    verified = verify_telegram_init_data(raw_init, TELEGRAM_BOT_TOKEN_ENV)
+    if not verified or not verified.get("user"):
+        return False
+    user = verified.get("user") or {}
+    user_id = user.get("id")
+    if not _is_allowed_user(user_id):
+        logger.warning(f"🚫 Bridge auth rejected: unauthorized user_id={user_id}")
+        return False
+    return True
+
+# ============================================================================
+# TUNNEL MANAGER
+# ============================================================================
+class TunnelManager:
+    URL_RE_CLOUDFLARED = _re_bridge.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
+    URL_RE_NGROK = _re_bridge.compile(r"https://[a-z0-9\-]+\.ngrok(?:-free)?\.app")
+    URL_RE_SERVEO = _re_bridge.compile(r"https://[a-z0-9\-]+\.serveo\.net")
+
+    def __init__(self, port: int, prefer: str = "cloudflared", timeout: int = 45):
+        self.port = port
+        self.prefer = prefer
+        self.timeout = timeout
+        self.process: Optional[subprocess.Popen] = None
+        self.public_url: Optional[str] = None
+        self.provider: Optional[str] = None
+
+    def _which(self, name: str) -> Optional[str]:
+        from shutil import which
+        return which(name)
+
+    def _spawn(self, cmd: List[str]) -> subprocess.Popen:
+        logger.info(f"🌐 Spawning tunnel: {' '.join(cmd)}")
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1, universal_newlines=True)
+
+    def _scan_for_url(self, proc: subprocess.Popen, regex: "_re_bridge.Pattern[str]", deadline: float) -> Optional[str]:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            if line:
+                logger.debug(f"[tunnel] {line}")
+            m = regex.search(line)
+            if m:
+                return m.group(0)
+            if time.time() > deadline:
+                return None
+        return None
+
+    def _try_cloudflared(self) -> Optional[str]:
+        if not self._which("cloudflared"):
+            return None
+        try:
+            proc = self._spawn(["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{self.port}", "--no-autoupdate"])
+        except Exception as e:
+            logger.warning(f"cloudflared spawn failed: {e}")
+            return None
+        deadline = time.time() + self.timeout
+        url = self._scan_for_url(proc, self.URL_RE_CLOUDFLARED, deadline)
+        if url:
+            self.process = proc
+            self.public_url = url
+            self.provider = "cloudflared"
+            return url
+        try:
+            proc.terminate()
         except Exception:
             pass
+        return None
+
+    def _try_ngrok(self) -> Optional[str]:
+        if not self._which("ngrok"):
+            return None
         try:
-            self._executor.shutdown(wait=False, cancel_futures=True)
+            proc = self._spawn(["ngrok", "http", str(self.port), "--log=stdout"])
+        except Exception as e:
+            logger.warning(f"ngrok spawn failed: {e}")
+            return None
+        deadline = time.time() + self.timeout
+        url = self._scan_for_url(proc, self.URL_RE_NGROK, deadline)
+        if url:
+            self.process = proc
+            self.public_url = url
+            self.provider = "ngrok"
+            return url
+        try:
+            proc.terminate()
         except Exception:
             pass
-# ============================================================================
-# FQDN FAST-PATH
-# ============================================================================
-def _fqdn_fast(host: str) -> str:
-    return host
+        return None
+
+    def _try_serveo(self) -> Optional[str]:
+        if not self._which("ssh"):
+            return None
+        try:
+            proc = self._spawn(["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-R", f"80:127.0.0.1:{self.port}", "serveo.net"])
+        except Exception as e:
+            logger.warning(f"serveo spawn failed: {e}")
+            return None
+        deadline = time.time() + self.timeout
+        url = self._scan_for_url(proc, self.URL_RE_SERVEO, deadline)
+        if url:
+            self.process = proc
+            self.public_url = url
+            self.provider = "serveo"
+            return url
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        return None
+
+    def start(self) -> Optional[str]:
+        if TELEGRAM_WEBAPP_URL:
+            self.public_url = TELEGRAM_WEBAPP_URL
+            self.provider = "explicit"
+            BRIDGE_ENGINE_REF["public_url"] = self.public_url
+            logger.info(f"🌐 Using explicit TELEGRAM_WEBAPP_URL: {self.public_url}")
+            return self.public_url
+        order = [self.prefer] + [p for p in ("cloudflared", "ngrok", "serveo") if p != self.prefer]
+        for provider in order:
+            method = getattr(self, f"_try_{provider}", None)
+            if method is None:
+                continue
+            try:
+                url = method()
+            except Exception as e:
+                logger.warning(f"Tunnel provider {provider} raised: {e}")
+                url = None
+            if url:
+                BRIDGE_ENGINE_REF["public_url"] = url
+                logger.info(f"🌐 Tunnel established via {provider}: {url}")
+                return url
+        logger.warning("⚠️ No tunnel available. Telegram Mini App will require manual TELEGRAM_WEBAPP_URL.")
+        return None
+
+    def stop(self) -> None:
+        if self.process is None:
+            return
+        try:
+            self.process.terminate()
+            self.process.wait(timeout=5)
+        except Exception:
+            try:
+                self.process.kill()
+            except Exception:
+                pass
+        self.process = None
+        logger.info("🌐 Tunnel stopped")
+
 # ============================================================================
 # BRIDGE HANDLER
 # ============================================================================
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "AEI-Seed-Bridge/final-ed37-telegram-db-central-r14"
-    timeout = 10
-    protocol_version = "HTTP/1.1"
+    server_version = "AEI-Bridge/final"
+
     def log_message(self, fmt, *args):
         return
+
     def _set_cors(self) -> None:
         origin = CORS_ORIGIN
         request_origin = self.headers.get("Origin", "").strip()
         if origin == "*":
+            # C-1 (Connection Audit): reflect the actual Origin when it
+            # is present and not the sandboxed-iframe sentinel "null".
+            # The Telegram WebView sometimes sends Origin: null for the
+            # TWA's same-origin sub-resources. Chromium rejects a
+            # cross-origin fetch that carries a custom header
+            # (X-Telegram-Init-Data) when the response echoes "*" for a
+            # non-null Origin. Reflecting the real GitHub Pages origin
+            # is accepted; reflecting the literal "null" is accepted for
+            # the TWA's same-origin sub-resources; falling back to "*"
+            # is accepted only for the null case.
             if request_origin and request_origin != "null":
                 self.send_header("Access-Control-Allow-Origin", request_origin)
                 self.send_header("Vary", "Origin")
@@ -3020,10 +6107,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers",
-                         "Content-Type, Accept, Authorization, X-Telegram-Init-Data, "
-                         "X-Relay-Key, X-Limit, X-Since")
+        # C-1: X-Since must be in Allow-Headers because /toasts and
+        # /signals send it. It was already present in the prior edition;
+        # this line is preserved verbatim.
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Telegram-Init-Data, X-Relay-Key, X-Limit, X-Since")
         self.send_header("Access-Control-Max-Age", "86400")
+
     def _send_json(self, code: int, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, default=str).encode("utf-8")
         self.send_response(code)
@@ -3033,6 +6122,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self._set_cors()
         self.end_headers()
         self.wfile.write(body)
+
     def _send_html(self, code: int, html: str) -> None:
         body = html.encode("utf-8")
         self.send_response(code)
@@ -3042,11 +6132,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self._set_cors()
         self.end_headers()
         self.wfile.write(body)
+
     def _read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length <= 0:
             return b""
         return self.rfile.read(length)
+
     def _read_json(self) -> Dict[str, Any]:
         raw = self._read_body()
         if not raw:
@@ -3055,288 +6147,82 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return json.loads(raw.decode("utf-8"))
         except Exception:
             return {}
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self._set_cors()
         self.send_header("Content-Length", "0")
         self.end_headers()
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         query = dict(parse_qsl(urlparse(self.path).query))
+
         if path == "/health":
-            seed = BRIDGE_ENGINE_REF.get("seed")
-            crawler = BRIDGE_ENGINE_REF.get("crawler")
-            raw_state = seed.state if seed else "uninitialized"
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            last = None
+            stale = True
+            age_seconds = None
+            if engine is not None:
+                lu = engine.feed.last_update()
+                if lu:
+                    last = lu.isoformat()
+                    age_seconds = (datetime.now() - lu).total_seconds()
+                    stale = age_seconds > 60
             self._send_json(200, {
-                "ok": True,
-                "service": "aei-seed-bridge",
-                "version": "final-ed37-telegram-db-central-r14",
-                "substrate": _SUBSTRATE,
-                "seed_initialized": seed is not None,
-                "crawler_running": (crawler._running if crawler else False),
-                "seed_tick": (seed.tick if seed else 0),
-                "seed_generation": (seed.generation if seed else 0),
-                "seed_state": _cs(raw_state),
-                "prime_count": (len(seed.primes) if seed else 0),
-                "lattice_points": (len(seed.lattice.points()) if seed else 0),
-                "crawler_frontier": (crawler.state.frontier_size() if crawler else 0),
-                "crawler_visited": (crawler.state.visited_count() if crawler else 0),
-                "relay_url": RELAY_URL,
-                "relay_healthy": (crawler.relay.failure_count() < 3 if crawler else False),
-                "require_auth": REQUIRE_AUTH,
-                "telegram_db": (TELEGRAM_DB.snapshot() if TELEGRAM_DB else {"enabled": False}),
+                "ok": not stale, "service": "aei-bridge", "version": "final",
+                "last_price_update": last,
+                "age_seconds": age_seconds, "stale": stale,
+                "engine_initialized": bool(engine.state.FG) if engine else False,
+                "indicator_populate_count": int(engine._indicator_populate_count) if engine else 0,
+                "imbalance_fire_count": int(engine._imbalance_fire_count) if engine else 0,
+                "ohlcv_count": len(engine.ohlcv_history) if engine else 0,
+                "signal_count": len(engine.state.signal_history) if engine else 0,
+                "bar_close_count": int(engine.state.bar_close_count) if engine else 0,
+                "relay_healthy": (engine.feed.failure_count() < 3) if engine else True,
+                "provider": engine.feed.last_provider() if engine else "",
+                "projection_computed_at": engine.state.projection_computed_at if engine else None,
+                "projection_trigger": engine.state.projection_trigger if engine else "",
+                "symbol_class_counts": {
+                    "crypto_pairs": 0,
+                    "futures_symbols": 0,
+                    "equities_symbols": 0,
+                    "forex_pairs": 0,
+                    "indices_symbols": 0,
+                },
             })
             return
+
+        if not _require_auth(self):
+            self._send_json(401, {"error": "unauthorized", "detail": "Missing or invalid X-Telegram-Init-Data"})
+            return
+
         if path == "/config":
             self._send_json(200, {
-                "public_url": BRIDGE_ENGINE_REF.get("public_url"),
-                "substrate": _SUBSTRATE,
-                "tls": BRIDGE_USE_TLS,
-                "port": BRIDGE_PORT,
-                "host": BRIDGE_HOST,
+                "public_url": BRIDGE_ENGINE_REF.get("public_url"), "tls": BRIDGE_USE_TLS,
+                "port": BRIDGE_PORT, "host": BRIDGE_HOST, "symbol": SYMBOL,
+                "webapp_enabled": True, "cors_origin": CORS_ORIGIN,
+                "relay_url": RELAY_URL, "relay_gated": bool(RELAY_KEY),
+                "x_period_constant": X_PERIOD, "y_start_constant": Y_START,
                 "require_auth": REQUIRE_AUTH,
-                "cors_origin": CORS_ORIGIN,
-                "relay_url": RELAY_URL,
-                "relay_gated": _cs(bool(RELAY_KEY)),
-                "seed_tick_interval": SEED_TICK_INTERVAL,
-                "crawl_interval": CRAWL_INTERVAL,
-                "max_crawl_depth": MAX_CRAWL_DEPTH,
-                "telegram_db_channel": TELEGRAM_DB_CHANNEL_ID or None,
-                "telegram_db_central_user_id": TELEGRAM_DB_CENTRAL_USER_ID or None,
-                "telegram_db_enabled": ENABLE_TELEGRAM_DB,
-                "telegram_db_user_shards": TELEGRAM_DB_USER_SHARDS,
-                "telegram_db_save_interval": TELEGRAM_DB_SAVE_INTERVAL,
-                "telegram_db_shard_pool": sorted(list(_get_shard_pool()))[:20],
-                "allowed_user_ids_gate": sorted(list(ALLOWED_USER_IDS))[:20] if ALLOWED_USER_IDS else [],
-                "gate_active": bool(ALLOWED_USER_IDS),
-                "channel_optional": True,
-                "open_and_distributed_with_my_chat_as_channel": bool(TELEGRAM_DB_CENTRAL_USER_ID and not TELEGRAM_DB_CHANNEL_ID),
+                "push_on_signal": PUSH_ON_SIGNAL,
+                "push_on_execution": PUSH_ON_EXECUTION,
+                "push_on_fvg": PUSH_ON_FVG,
+                "push_on_close": PUSH_ON_CLOSE,
+                "arc_projection_horizon": ARC_PROJECTION_HORIZON,
+                "arc_projection_step": ARC_PROJECTION_STEP,
+                "arc_projection_damping": str(ARC_PROJECTION_DAMPING_D),
             })
             return
-        if path == "/" or path == "/index.html":
-            try:
-                base = os.path.dirname(os.path.abspath(__file__))
-                html_path = os.path.join(base, "index.html")
-                if os.path.isfile(html_path):
-                    with open(html_path, "r", encoding="utf-8") as f:
-                        self._send_html(200, f.read())
-                else:
-                    self._send_html(200, "<!DOCTYPE html><html><body style='font-family:monospace;"
-                                    "background:#050510;color:#aaccff;padding:40px;'>"
-                                    "<h2>⚡ ÆI Seed Bridge Online (Ed.13)</h2>"
-                                    "<p>index.html not found in <code>"
-                                    + base + "</code>.</p></body></html>")
-            except Exception as e:
-                self._send_json(500, {"error": "read_index_failed", "detail": str(e)})
-            return
-        if not _require_auth(self):
-            self._send_json(401, {"error": "unauthorized",
-                                  "detail": "Missing or invalid X-Telegram-Init-Data"})
-            return
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        crawler = BRIDGE_ENGINE_REF.get("crawler")
-        if path == "/miniapp-state":
-            # instant return - never block on seed lock, never compute in request thread
-            # This is the H12 killer fix
-            import time as _t41
-            _start41 = _t41.time()
-            try:
-                # Fast path: use global snapshot updated by SeedWorker
-                global LAST_LIGHT_SNAPSHOT, LAST_LIGHT_AT
-                with LAST_LIGHT_LOCK:
-                    cached = LAST_LIGHT_SNAPSHOT
-                    cached_at = LAST_LIGHT_AT
-                if cached and (_t41.time() - cached_at) < 5.0:
-                    # Return cached copy instantly (<1ms)
-                    snap = dict(cached)
-                    # Add tick from live seed if available without lock
-                    try:
-                        if seed is not None:
-                            snap["tick"] = getattr(seed, 'tick', snap.get("tick", 0))
-                    except Exception:
-                        pass
-                    self._send_json(200, snap)
-                    return
-                # Fallback: try seed's own cache (also <1ms, no lock if recent)
-                if seed is not None:
-                    try:
-                        if getattr(seed, '_cached_light_snapshot', None) and (_t41.time() - getattr(seed, '_cached_light_at', 0)) < 2.0:
-                            snap = dict(seed._cached_light_snapshot)
-                            snap["stale"] = False
-                            self._send_json(200, snap)
-                            return
-                    except Exception:
-                        pass
-                # Last resort: static placeholder - ZERO computation, ZERO lock, ZERO big-int str()
-                # This guarantees <5ms even if SeedWorker holds GIL with huge Fractions
-                placeholder = {
-                    "state": getattr(seed, 'state', 'evolving') if seed else 'initializing',
-                    "tick": getattr(seed, 'tick', 0) if seed else 0,
-                    "generation": getattr(seed, 'generation', 0) if seed else 0,
-                    "prime_count": len(getattr(seed, 'primes', [])) if seed else 0,
-                    "lattice_points": 0,  # avoid len(lattice.points()) which may be heavy
-                    "primes_tail": [],
-                    "arc_sq": "0/1",
-                    "radius_sq": "1/1",
-                    "deviation_sq": "0/1",
-                    "coherence": False,
-                    "I": "0/1",
-                    "hopf_base": ["0/1","0/1"],
-                    "psi_real": "0/1",
-                    "phi": {"a": "1/1", "b": "0/1", "c": "0/1", "d": "0/1"},
-                    "phi_magnitude_sq": "1/1",
-                    "trajectory": [],
-                    "evolution": None,
-                    "logic_core": {},
-                    "history_tail": [],
-                    "last_logic_hash": getattr(seed, 'last_logic_hash', '') if seed else '',
-                    "stale": True,
-                    "booting": (cached_at == 0),
-                    "ed41": True,
-                    "elapsed_ms": int((_t41.time() - _start41)*1000)
-                }
-                # Optional: add lightweight crawler stats without acquiring crawler lock if possible
-                if crawler is not None:
-                    try:
-                        # Use direct attributes, not snapshot() which acquires lock
-                        cs = getattr(crawler, 'state', None)
-                        if cs is not None:
-                            placeholder["crawler"] = {
-                                "frontier_size": getattr(cs, '_frontier', []) and len(cs._frontier) or 0,
-                                "visited_count": 0,
-                                "running": getattr(crawler, '_running', False)
-                            }
-                        else:
-                            placeholder["crawler"] = {"frontier_size": 0, "running": False}
-                    except Exception:
-                        placeholder["crawler"] = {"frontier_size": 0, "running": False}
-                self._send_json(200, placeholder)
+
+        if path == "/settings":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
                 return
-            except Exception as e:
-                # Absolute last resort - never H12
-                try:
-                    self._send_json(200, {"state": "evolving", "tick": 0, "generation": 0, "prime_count": 0, "lattice_points": 0, "deviation_sq": "0/1", "coherence": False, "stale": True, "ed41_error": str(e)[:100]})
-                except Exception:
-                    # If even _send_json fails, try raw write
-                    try:
-                        body = b'{"state":"evolving","stale":true}'
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
-                    except Exception:
-                        pass
-                return
-        if path == "/state":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            self._send_json(200, seed.snapshot())
+            self._send_json(200, engine.get_settings())
             return
-        if path == "/crawler-state":
-            if crawler is None:
-                self._send_json(503, {"error": "crawler_not_ready"})
-                return
-            self._send_json(200, crawler.snapshot())
-            return
-        if path == "/crawler-queue":
-            if crawler is None:
-                self._send_json(503, {"error": "crawler_not_ready"})
-                return
-            queue_snap = crawler.state.snapshot()
-            self._send_json(200, {
-                "frontier_size": queue_snap.get("frontier_size", 0),
-                "frontier_preview": queue_snap.get("frontier_preview", []),
-                "visited_count": queue_snap.get("visited_count", 0),
-            })
-            return
-        if path == "/symbolic-state":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            self._send_json(200, {
-                "primes_tail": [str(p) for p in seed.primes[-32:]],
-                "prime_count": len(seed.primes),
-                "psi_coeffs_count": len(seed.psi.coeffs),
-                "psi_real": str(seed.psi.real_part()),
-                "logic_core": {
-                    k: {kk: str(vv) for kk, vv in v.items()} if isinstance(v, dict) else str(v)
-                    for k, v in seed.evolution.logic_core.items()
-                },
-            })
-            return
-        if path == "/lattice-state":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            points = seed.lattice.points()
-            self._send_json(200, {
-                "dimension": seed.lattice.dimension,
-                "point_count": len(points),
-                "preview": [
-                    [str(c) for c in p] for p in points[-8:]
-                ],
-            })
-            return
-        if path == "/fibration-state":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            hopf = seed.last_hopf_base
-            self._send_json(200, {
-                "hopf_base_z": str(hopf[0]),
-                "hopf_base_w": str(hopf[1]),
-                "phi": {
-                    "a": str(seed.phi.a), "b": str(seed.phi.b),
-                    "c": str(seed.phi.c), "d": str(seed.phi.d),
-                },
-                "phi_magnitude_sq": str(seed.phi.magnitude_squared()),
-                "trajectory": [
-                    {"a": str(q.a), "b": str(q.b), "c": str(q.c), "d": str(q.d)}
-                    for q in seed.last_trajectory
-                ],
-                "linguistic_trajectory": [
-                    {"a": str(q.a), "b": str(q.b), "c": str(q.c), "d": str(q.d)}
-                    for q in seed.last_linguistic_trajectory
-                ],
-            })
-            return
-        if path == "/observer-integral":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            bounds = (
-                (Fraction(0), Fraction(1)),
-                (Fraction(0), Fraction(1)),
-                (Fraction(0), Fraction(1)),
-                (Fraction(0), Fraction(1)),
-            )
-            integral = seed.consciousness.compute_integral_exact(bounds, steps=4)
-            self._send_json(200, {
-                "integral": {
-                    "a": str(integral.a), "b": str(integral.b),
-                    "c": str(integral.c), "d": str(integral.d),
-                },
-                "magnitude_sq": str(integral.magnitude_squared()),
-                "steps": 4,
-                "bounds": [[str(b[0]), str(b[1])] for b in bounds],
-            })
-            return
-        if path == "/evolution-state":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            self._send_json(200, {
-                "generation": seed.evolution.generation,
-                "history_tail": seed.evolution.history[-20:],
-                "logic_core": {
-                    k: {kk: str(vv) for kk, vv in v.items()} if isinstance(v, dict) else str(v)
-                    for k, v in seed.evolution.logic_core.items()
-                },
-                "last_logic_hash": seed.last_logic_hash,
-            })
-            return
+
         if path == "/toasts":
             try:
                 since = int(self.headers.get("X-Since", query.get("since", "0")))
@@ -3353,184 +6239,600 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "first_available_seq": first_available,
             })
             return
-        if path == "/anchors":
-            self._send_json(200, {"anchors": BRIDGE_STATE.list_anchors()})
+
+        if path == "/projection":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            self._send_json(200, engine.get_projection())
             return
+
+        if path == "/state":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready", "detail": "Engine hasn't started. Use /start_feed in the bot."})
+                return
+            st = engine.state
+            public = BRIDGE_ENGINE_REF.get("public_url")
+            if public:
+                endpoint = public
+            else:
+                host = self.headers.get("Host", f"{BRIDGE_HOST}:{BRIDGE_PORT}")
+                scheme = "https" if BRIDGE_USE_TLS else "http"
+                endpoint = f"{scheme}://{host}"
+            idx = st.Z - (st.y + 1)
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+            self._send_json(200, {
+                "symbol": SYMBOL,
+                "price": str(st.price),
+                "bid": str(engine.price_history[-1].bid) if engine.price_history else "0.0",
+                "ask": str(engine.price_history[-1].ask) if engine.price_history else "0.0",
+                "signal": str(st.signal),
+                "regime": regime,
+                "tick": int(st.tick),
+                "m_count": int(st.authoritative_m),
+                "n_count": int(st.authoritative_n),
+                "m_at_h": int(st.last_kronecker_m),
+                "n_at_h": int(st.last_kronecker_n),
+                "h_bar": int(st.h),
+                "timestamp": datetime.now().isoformat(),
+                "endpoint": endpoint,
+                "webapp_user_id": st.webapp_user_id,
+                "webapp_username": st.webapp_username,
+                "last_price_update": engine.feed.last_update().isoformat() if engine.feed.last_update() else None,
+                "engine_initialized": bool(st.FG),
+                "consecutive_zero_prices": int(engine._consecutive_zero_prices),
+                "relay_url": RELAY_URL,
+                "relay_healthy": (engine.feed.failure_count() < 3),
+                "indicator_populate_count": int(engine._indicator_populate_count),
+                "imbalance_fire_count": int(engine._imbalance_fire_count),
+                "comment_line": engine._format_comment_line(),
+                "provider": st.last_provider,
+                "last_volume": str(st.last_volume),
+            })
+            return
+
+        if path == "/miniapp-state":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready", "detail": "Engine hasn't started. Use /start_feed in the bot."})
+                return
+            st = engine.state
+            idx = st.Z - (st.y + 1)
+            regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+            fvg_anchors = []
+            for idx_i, p in enumerate(st.Premium):
+                if p > Decimal('0.0'):
+                    fvg_anchors.append({"idx": idx_i, "type": "top", "price": str(p)})
+            for idx_i, p in enumerate(st.Discount):
+                if p > Decimal('0.0'):
+                    fvg_anchors.append({"idx": idx_i, "type": "bottom", "price": str(p)})
+            for bridge_idx, rec in BRIDGE_STATE._fvgs.items():
+                fvg_anchors.append({
+                    "idx": bridge_idx,
+                    "type": "top" if rec["type"] == "top" else "bottom",
+                    "price": rec["price"],
+                })
+            h_idx = st.h - (st.y + 1)
+            m_at_h = 1 if (0 <= h_idx < len(st.k) and st.k[h_idx]) else 0
+            n_at_h = 1 if (0 <= h_idx < len(st.l) and st.l[h_idx]) else 0
+            market_m = int(st.authoritative_m)
+            market_n = int(st.authoritative_n)
+            market_imbalance = market_m - market_n - 2
+            if market_imbalance > 2:
+                market_regime = "BULLISH"
+            elif market_imbalance < -2:
+                market_regime = "BEARISH"
+            else:
+                market_regime = "NEUTRAL"
+            premium_series = [str(p) for p in st.Premium]
+            discount_series = [str(p) for p in st.Discount]
+            payload = {
+                "symbol": SYMBOL,
+                "price": str(st.price),
+                "regime": regime,
+                "tick": int(st.tick),
+                "m_count": market_m,
+                "n_count": market_n,
+                "m_at_h": m_at_h,
+                "n_at_h": n_at_h,
+                "h_bar": int(st.h),
+                "market_m": market_m,
+                "market_n": market_n,
+                "market_imbalance": market_imbalance,
+                "market_regime": market_regime,
+                "last_price_update": datetime.now().isoformat(),
+                "relay_healthy": (engine.feed.failure_count() < 3),
+                "X_PERIOD": X_PERIOD,
+                "Y_START": Y_START,
+                "fvg_anchors": fvg_anchors,
+                "premium_series": premium_series,
+                "discount_series": discount_series,
+                "recent_signals": st.signal_history[-20:],
+                "ohlcv_count": len(engine.ohlcv_history),
+                "signal_count": len(st.signal_history),
+                "last_signal_at": st.last_signal_at,
+                "bar_close_count": int(st.bar_close_count),
+                "engine_initialized": bool(st.FG),
+                "KC": bool(st.KC),
+                "invert": bool(st.invert),
+                "tag": int(st.tag),
+                "prime": int(st.prime),
+                "dime": int(st.dime),
+                "mem": int(st.mem),
+                "A": bool(st.A),
+                "B": bool(st.B),
+                "C": bool(st.C),
+                "c": bool(st.c),
+                "tick_tock": bool(st.tick_tock),
+                "signature": bool(st.signature),
+                "safety": bool(st.safety),
+                "trailing_stop_active": bool(st.trailing_stop_active),
+                "trailing_stop_price": str(st.trailing_stop_price),
+                "trailing_take_profit": str(st.trailing_take_profit),
+                "trailing_stop_entry": str(st.trailing_stop_entry),
+                "trailing_stop_side": st.trailing_stop_side,
+                "has_open_long": bool(st.has_open_long),
+                "has_open_short": bool(st.has_open_short),
+                "lOrder_id": int(st.lOrder_id),
+                "kOrder_id": int(st.kOrder_id),
+                "on_track_runs": int(st.on_track_runs),
+                "on_stand_runs": int(st.on_stand_runs),
+                "last_kronecker_bar": int(engine._last_kronecker_bar),
+                "last_kronecker_m": int(st.last_kronecker_m),
+                "last_kronecker_n": int(st.last_kronecker_n),
+                "last_kronecker_h": int(st.last_kronecker_h),
+                "authoritative_m": int(st.authoritative_m),
+                "authoritative_n": int(st.authoritative_n),
+                "authoritative_h": int(st.authoritative_h),
+                "X_scan": int(st.X_scan),
+                "Y_scan": int(st.Y_scan),
+                "S": int(st.S),
+                "T": int(st.T),
+                "r": int(st.r),
+                "ir": int(st.ir),
+                "Z": int(st.Z),
+                "z": int(st.z),
+                "O": int(st.O),
+                "o": int(st.o),
+                "W": int(st.W),
+                "w": int(st.w),
+                "I": int(st.I),
+                "iI": int(st.iI),
+                "J": int(st.J),
+                "iJ": int(st.iJ),
+                "iZ": int(st.iZ),
+                "iz": int(st.iz),
+                "iW": int(st.iW),
+                "iw": int(st.iw),
+                "iO": int(st.iO),
+                "io": int(st.io),
+                "iATR": float(st.iATR),
+                "iStdDev": float(st.iStdDev),
+                "iIHKk": float(st.iIHKk),
+                "iIHKt": float(st.iIHKt),
+                "indicator_populate_count": int(engine._indicator_populate_count),
+                "imbalance_fire_count": int(engine._imbalance_fire_count),
+                "lPass": str(st.lPass),
+                "ilPass": str(st.ilPass),
+                "kPass": str(st.kPass),
+                "ikPass": str(st.ikPass),
+                "comment_line": engine._format_comment_line(),
+                "provider": st.last_provider,
+                "last_volume": str(st.last_volume),
+                "projection_meta": st.projection_meta,
+                "projection_computed_at": st.projection_computed_at,
+                "projection_trigger": st.projection_trigger,
+                "last_inbound_message_id": st.last_inbound_message_id,
+            }
+            self._send_json(200, payload)
+            return
+
+        if path == "/ohlcv":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            limit = 200
+            try:
+                limit = int(self.headers.get("X-Limit", query.get("limit", "200")))
+            except Exception:
+                pass
+            bars = engine.ohlcv_history[-limit:]
+            ohlcv_data = []
+            last_ts = None
+            # C-5: emit null for absent fields, keep genuine zeros. A bar is
+            # only admitted if its close is a real positive Decimal. This is
+            # the single gate that keeps the TWA cursor readout honest: a
+            # null field renders as "—", a genuine zero renders as "0.00000".
+            def _emit_decimal(v, allow_zero):
+                if v is None:
+                    return None
+                if isinstance(v, Decimal):
+                    if not v.is_finite():
+                        return None
+                    if v == Decimal('0.0') and not allow_zero:
+                        return None
+                    return float(v)
+                try:
+                    f = float(v)
+                except Exception:
+                    return None
+                if not math.isfinite(f):
+                    return None
+                if f == 0.0 and not allow_zero:
+                    return None
+                return f
+            for bar in bars:
+                close_v = bar.get("close")
+                if close_v is None:
+                    continue
+                if isinstance(close_v, Decimal):
+                    if not close_v.is_finite() or close_v <= Decimal('0.0'):
+                        continue
+                else:
+                    try:
+                        if float(close_v) <= 0.0:
+                            continue
+                    except Exception:
+                        continue
+                ts = bar.get("timestamp")
+                if isinstance(ts, datetime):
+                    ts_str = ts.isoformat()
+                else:
+                    ts_str = str(ts)
+                last_ts = ts_str
+                ohlcv_data.append({
+                    "timestamp": ts_str,
+                    "open": _emit_decimal(bar.get("open"), allow_zero=False),
+                    "high": _emit_decimal(bar.get("high"), allow_zero=False),
+                    "low": _emit_decimal(bar.get("low"), allow_zero=False),
+                    "close": _emit_decimal(close_v, allow_zero=False),
+                    "volume": _emit_decimal(bar.get("volume"), allow_zero=True),
+                    "provider": str(bar.get("provider", "")),
+                })
+            self._send_json(200, {
+                "symbol": SYMBOL,
+                "bars": ohlcv_data,
+                "count": len(ohlcv_data),
+                "last_bar_timestamp": last_ts,
+                "signal_count": len(engine.state.signal_history),
+                "provider": engine.state.last_provider,
+            })
+            return
+
+        if path == "/signals":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            limit = 50
+            try:
+                limit = int(self.headers.get("X-Limit", query.get("limit", "50")))
+            except Exception:
+                pass
+            since = self.headers.get("X-Since", query.get("since", ""))
+            all_signals = engine.state.signal_history
+            if since:
+                all_signals = [s for s in all_signals if s.get("timestamp", "") > since]
+            signals = all_signals[-limit:]
+            self._send_json(200, {
+                "symbol": SYMBOL,
+                "signals": signals,
+                "count": len(signals),
+                "last_signal_at": engine.state.last_signal_at,
+            })
+            return
+
+        if path == "/fvg":
+            self._send_json(200, {"fvgs": BRIDGE_STATE.list_fvgs()})
+            return
+
+        if path == "/probe":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            probe_data = engine.feed.probe()
+            try:
+                probe_data["signal_status"] = engine.get_signal_status()
+                probe_data["relay_healthy"] = (engine.feed.failure_count() < 3)
+            except Exception:
+                pass
+            self._send_json(200, probe_data)
+            return
+
+        if path == "/diagnostics":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            try:
+                diag = engine.get_signal_status()
+                diag["ohlcv_history_depth"] = len(engine.ohlcv_history)
+                current_col = engine.state.Z - (engine.state.y + 1)
+                if current_col < 0:
+                    current_col = 0
+                diag["indicator_col_index"] = [current_col, max(0, current_col - 1)]
+                diag["indicator_sample_col0"] = [
+                    str(engine.state.iA[i][current_col]) if current_col < len(engine.state.iA[i]) else "50"
+                    for i in range(13)
+                ]
+                prev_col = max(0, current_col - 1)
+                diag["indicator_sample_col1"] = [
+                    str(engine.state.cA[i][prev_col]) if prev_col < len(engine.state.cA[i]) else "50"
+                    for i in range(13)
+                ]
+                diag["x_period_constant"] = X_PERIOD
+                diag["y_start_constant"] = Y_START
+                diag["consecutive_zero_prices"] = engine._consecutive_zero_prices
+                diag["relay_healthy"] = (engine.feed.failure_count() < 3)
+                diag["active_symbol"] = engine.feed.active_symbol()
+                diag["last_bar_close"] = engine.state.bar_close_count
+                diag["recent_signals"] = engine.state.signal_history[-10:]
+                diag["provider"] = engine.state.last_provider
+                diag["projection_meta"] = engine.state.projection_meta
+                diag["projection_trigger"] = engine.state.projection_trigger
+                self._send_json(200, diag)
+            except Exception as e:
+                self._send_json(500, {"error": "diagnostics_failed", "detail": str(e)})
+            return
+
+        if path == "/orders":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            self._send_json(200, {"orders": engine.list_orders()})
+            return
+
+        if path == "/regime-map":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            self._send_json(200, {
+                "regime_map": engine.get_regime_map(),
+                "size": len(engine.state.Regime),
+            })
+            return
+
+        if path == "/indicators":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            name = query.get("name", "RSI")
+            try:
+                count = int(query.get("count", "80"))
+            except Exception:
+                count = 80
+            series = engine.get_indicator_series(name, count)
+            self._send_json(200, {"name": name, "series": series, "count": len(series)})
+            return
+
         if path == "/log":
             try:
                 limit = int(query.get("limit", "50"))
-            except (TypeError, ValueError):
+            except Exception:
                 limit = 50
             with _LOG_LOCK:
                 logs = list(_LOG_BUFFER)[-limit:]
             self._send_json(200, {"logs": logs, "count": len(logs)})
             return
-        if path == "/seeds":
-            if crawler is None:
-                self._send_json(503, {"error": "crawler_not_ready"})
-                return
-            self._send_json(200, {
-                "seed_urls": crawler.state.snapshot().get("frontier_preview", []),
-            })
+
+        if path == "/" or path == "/index.html":
+            try:
+                base = os.path.dirname(os.path.abspath(__file__))
+                html_path = os.path.join(base, "index.html")
+                if os.path.isfile(html_path):
+                    with open(html_path, "r", encoding="utf-8") as f:
+                        self._send_html(200, f.read())
+                else:
+                    self._send_html(200, "<!DOCTYPE html><html><body style='font-family:monospace;background:#050510;color:#aaccff;padding:40px;'><h2>⚡ ÆEA Mini App Bridge Online</h2><p>index.html not found in <code>" + base + "</code>.</p></body></html>")
+            except Exception as e:
+                self._send_json(500, {"error": "read_index_failed", "detail": str(e)})
             return
+
         self._send_json(404, {"error": "not_found", "path": path})
+
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+
         if path == "/handshake":
             try:
                 data = self._read_json()
                 init_data = data.get("initData", "").strip()
                 chat_id = data.get("chat_id")
                 if not init_data:
-                    self._send_json(400, {"error": "missing_init_data"})
+                    self._send_json(400, {"error": "missing_init_data", "detail": "Provide initData from Telegram.WebApp.initData"})
                     return
                 verified = verify_telegram_init_data(init_data, TELEGRAM_BOT_TOKEN_ENV)
                 if not verified or not verified.get("user"):
-                    self._send_json(403, {"error": "invalid_init_data"})
+                    logger.warning("🚫 Handshake rejected: initData verification failed")
+                    self._send_json(403, {"error": "invalid_init_data", "detail": "Telegram initData HMAC verification failed. Ensure TELEGRAM_BOT_TOKEN matches the bot that issued initData."})
                     return
                 u = verified["user"] or {}
                 user_id = u.get("id")
                 username = u.get("username")
                 if not _is_allowed_user(user_id):
-                    self._send_json(403, {"error": "unauthorized_user"})
+                    logger.warning(f"🚫 Handshake rejected: unauthorized user_id={user_id}")
+                    self._send_json(403, {"error": "unauthorized_user", "detail": "This Mini App is private. Your Telegram user ID is not on the allowlist."})
                     return
                 BRIDGE_STATE.register_webapp_session(user_id, username, chat_id=chat_id)
+                logger.info(f"🤝 Handshake OK: user_id={user_id}, username={username}, chat_id={chat_id}")
                 self._send_json(200, {
                     "ok": True, "user_id": user_id, "username": username,
                     "public_url": BRIDGE_ENGINE_REF.get("public_url"),
                 })
             except Exception as e:
+                logger.error(f"Handshake error: {e}")
                 self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
         if not _require_auth(self):
-            self._send_json(401, {"error": "unauthorized"})
+            self._send_json(401, {"error": "unauthorized", "detail": "Missing or invalid X-Telegram-Init-Data"})
             return
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        crawler = BRIDGE_ENGINE_REF.get("crawler")
-        if path == "/step":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            data = self._read_json()
+
+        if path == "/fvg":
+            user_id, username, verified = _extract_auth_headers(self)
             try:
-                x_num = int(data.get("x_num", seed.tick + 1))
-                x_den = int(data.get("x_den", 1))
-                x = Fraction(x_num, x_den)
-            except Exception:
-                x = Fraction(seed.tick + 1, 1)
-            record = seed.step(x)
-            _emit_toast("seed", {
-                "tick": record["tick"],
-                "generation": record["generation"],
-                "prime": record["prime"],
-                "coherence": record["coherence"],
-                "deviation_sq": record["deviation_sq"],
-                "I": record["I"],
-                "state": record["state"],
-            })
-            self._send_json(200, {"ok": True, "record": record})
-            return
-        if path == "/reset":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            seed.primes = [Fraction(2), Fraction(3), Fraction(5)]
-            seed.phi = SymbolicQuaternion(Fraction.one(), Fraction.zero(),
-                                          Fraction.zero(), Fraction.zero())
-            seed.psi = SymbolicWavefunction({(0, 0, 0, 0): Fraction.one()})
-            seed.consciousness = ConsciousnessOperator(seed.psi, seed.phi)
-            seed.state = "initialized"
-            seed.tick = 0
-            seed.generation = 0
-            seed.history = []
-            seed._prior_deviation_sq = None
-            self._send_json(200, {"ok": True, "state": seed.snapshot()})
-            return
-        if path == "/crawler-enqueue":
-            if crawler is None:
-                self._send_json(503, {"error": "crawler_not_ready"})
-                return
-            data = self._read_json()
-            url = str(data.get("url", "")).strip()
-            if not url.startswith("http"):
-                self._send_json(400, {"error": "invalid_url"})
-                return
-            depth = int(data.get("depth", 0))
-            crawler.state.enqueue(url, depth=depth, priority=10)
-            self._send_json(200, {"ok": True, "url": url, "depth": depth,
-                                  "frontier_size": crawler.state.frontier_size()})
-            return
-        if path == "/encode-syllable":
-            if seed is None:
-                self._send_json(503, {"error": "seed_not_ready"})
-                return
-            data = self._read_json()
-            syllable = str(data.get("syllable", "A"))
-            result = seed.encode_syllable(syllable)
-            self._send_json(200, {"ok": True, "result": result})
-            return
-        if path == "/anchor":
-            data = self._read_json()
-            try:
-                q = SymbolicQuaternion(
-                    Fraction.from_string(str(data.get("a", "1"))),
-                    Fraction.from_string(str(data.get("b", "0"))),
-                    Fraction.from_string(str(data.get("c", "0"))),
-                    Fraction.from_string(str(data.get("d", "0"))),
-                )
+                data = self._read_json()
+                fvg_type = data.get("type")
+                price_str = data.get("price")
+                num = data.get("num")
+                den = data.get("den")
+                requested_idx = data.get("idx")
+                if fvg_type is None:
+                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price"]})
+                    return
+                try:
+                    requested_idx_int = int(requested_idx) if requested_idx is not None else None
+                except (TypeError, ValueError):
+                    requested_idx_int = None
+                if num is not None and den is not None:
+                    price_label = f"{int(num)}/{int(den)}"
+                    price_dec = Decimal(int(num)) / Decimal(int(den))
+                elif price_str is not None:
+                    price_label = str(price_str)
+                    price_dec = Decimal(str(price_str))
+                else:
+                    self._send_json(400, {"error": "missing_fields", "need": ["type", "price"]})
+                    return
+                idx = BRIDGE_STATE.add_fvg(fvg_type, str(price_dec), user_id=user_id, requested_idx=requested_idx_int)
+                anchor_info = {}
+                engine = BRIDGE_ENGINE_REF.get("engine")
+                if engine is not None and idx in engine.state.fvg_anchor_map:
+                    anchor_info = engine.state.fvg_anchor_map[idx]
+                logger.info(f"📐 FVG committed: type={fvg_type} price={price_label} idx={idx} verified={verified} user={username}")
+                self._send_json(201, {"ok": True, "idx": idx, "type": fvg_type, "price": price_label, "verified": verified, "anchor": anchor_info})
+            except ValueError as ve:
+                logger.warning(f"FVG rejected: {ve}")
+                self._send_json(422, {"error": "validation", "detail": str(ve)})
             except Exception as e:
-                self._send_json(400, {"error": "invalid_quaternion", "detail": str(e)})
-                return
-            label = str(data.get("label", ""))
-            idx = BRIDGE_STATE.add_anchor(q, label=label)
-            self._send_json(200, {"ok": True, "idx": idx})
+                logger.error(f"FVG POST error: {e}")
+                self._send_json(500, {"error": "internal", "detail": str(e)})
             return
+
+        if path == "/reset":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            try:
+                engine.feed._rebuild_ticker()
+                engine.feed._fallback_count = 0
+                engine._consecutive_zero_prices = 0
+                engine.OnReInit()
+                engine._project_arc_length(trigger="manual_refresh")
+                logger.info("🔄 Manual reset requested via /reset")
+                self._send_json(200, {"ok": True, "active_symbol": engine.feed.active_symbol()})
+            except Exception as e:
+                logger.error(f"/reset error: {e}")
+                self._send_json(500, {"error": "internal", "detail": str(e)})
+            return
+
+        if path == "/settings":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            data = self._read_json()
+            result = engine.apply_settings(data)
+            code = 200 if result.get("ok") else (422 if result.get("error") == "validation" else 400)
+            self._send_json(code, result)
+            return
+
+        if path == "/symbol":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            data = self._read_json()
+            sym = data.get("symbol")
+            if not sym:
+                self._send_json(400, {"error": "missing_symbol", "detail": "Provide 'symbol' in JSON body"})
+                return
+            result = engine.change_symbol(sym)
+            code = 200 if result.get("ok") else 400
+            self._send_json(code, result)
+            return
+
+        if path == "/order":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            data = self._read_json()
+            side = (data.get("side") or "").upper()
+            try:
+                lot = Fraction.from_decimal_string(str(data.get("lot", "0.01"))).to_decimal()
+                sl = Fraction.from_decimal_string(str(data.get("sl", "0"))).to_decimal()
+                tp = Fraction.from_decimal_string(str(data.get("tp", "0"))).to_decimal()
+            except Exception as e:
+                self._send_json(400, {"error": "invalid_numbers", "detail": str(e)})
+                return
+            result = engine.place_order(side, lot, sl, tp)
+            code = 200 if result.get("ok") else 400
+            self._send_json(code, result)
+            return
+
+        if path == "/order/close":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            data = self._read_json()
+            if data.get("all"):
+                result = engine.close_order(all=True)
+            else:
+                ticket = data.get("ticket")
+                if ticket is None:
+                    self._send_json(400, {"error": "missing_ticket"})
+                    return
+                try:
+                    ticket = int(ticket)
+                except Exception:
+                    self._send_json(400, {"error": "invalid_ticket"})
+                    return
+                result = engine.close_order(ticket=ticket)
+            code = 200 if result.get("ok") else 400
+            self._send_json(code, result)
+            return
+
+        if path == "/projection/refresh":
+            engine = BRIDGE_ENGINE_REF.get("engine")
+            if engine is None:
+                self._send_json(503, {"error": "engine_not_ready"})
+                return
+            try:
+                engine._project_arc_length(trigger="manual_refresh")
+                self._send_json(200, engine.get_projection())
+            except Exception as e:
+                logger.error(f"/projection/refresh error: {e}")
+                self._send_json(500, {"error": "internal", "detail": str(e)})
+            return
+
         self._send_json(404, {"error": "not_found", "path": path})
+
     def do_DELETE(self) -> None:
         path = urlparse(self.path).path
         if not _require_auth(self):
-            self._send_json(401, {"error": "unauthorized"})
+            self._send_json(401, {"error": "unauthorized", "detail": "Missing or invalid X-Telegram-Init-Data"})
             return
-        m = _re_bridge.match(r"^/anchor/(\d+)$", path)
+        m = _re_bridge.match(r"^/fvg/(\d+)$", path)
         if m:
             idx = int(m.group(1))
-            ok = BRIDGE_STATE.remove_anchor(idx)
+            ok = BRIDGE_STATE.remove_fvg(idx)
             if ok:
+                logger.info(f"🔻 FVG removed: idx={idx}")
                 self._send_json(200, {"ok": True, "idx": idx})
             else:
-                self._send_json(404, {"error": "anchor_not_found", "idx": idx})
+                self._send_json(404, {"error": "fvg_not_found", "idx": idx})
             return
         self._send_json(404, {"error": "not_found", "path": path})
-def _require_auth(handler: "BridgeHandler") -> bool:
-    try:
-        p=urlparse(handler.path).path
-        if p in ("/health","/","/favicon.ico"):
-            return True
-    except Exception:
-        pass
-    if not REQUIRE_AUTH or not TELEGRAM_BOT_TOKEN_ENV:
-        return True
-    raw_init = handler.headers.get("X-Telegram-Init-Data", "").strip()
-    if not raw_init:
-        auth_hdr = handler.headers.get("Authorization", "").strip()
-        if auth_hdr.lower().startswith("tma "):
-            raw_init = auth_hdr[4:].strip()
-    if not raw_init:
-        try:
-            qs = dict(parse_qsl(urlparse(handler.path).query))
-            raw_init = (qs.get("auth_init_data") or "").strip()
-        except Exception:
-            raw_init = ""
-    if not raw_init:
-        return False
-    verified = verify_telegram_init_data(raw_init, TELEGRAM_BOT_TOKEN_ENV)
-    if not verified or not verified.get("user"):
-        return False
-    user = verified.get("user") or {}
-    user_id = user.get("id")
-    if not _is_allowed_user(user_id):
-        return False
-    return True
+
 # ============================================================================
 # BRIDGE SERVER
 # ============================================================================
@@ -3540,9 +6842,9 @@ class BridgeServer:
         self.port = int(port)
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
+        self._tunnel: Optional[TunnelManager] = None
         self._ssl_context: Optional[ssl.SSLContext] = None
-        self._listen_ready: threading.Event = threading.Event()
-        self._listen_ok: bool = False
+
     def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
         if not BRIDGE_USE_TLS:
             return None
@@ -3560,164 +6862,135 @@ class BridgeServer:
         except Exception as e:
             logger.error(f"❌ Failed to load TLS context: {e}")
             return None
+
     def start(self) -> None:
         if self._thread is not None:
             return
-        # F1: on a web dyno, $PORT is Heroku-assigned. We bind to it
-        # directly. On a local dev box, BRIDGE_PORT (default 8765) is used.
-        bind_port = BRIDGE_PORT
-        if _ENV_PORT:
-            logger.info(f"🌐 Web-dyno substrate: binding to $PORT={bind_port}")
-        else:
-            logger.info(f"🌐 Local substrate: binding to BRIDGE_PORT={bind_port}")
-        import socket as _socket_mod
-        _orig_getfqdn = _socket_mod.getfqdn
         try:
-            _socket_mod.getfqdn = _fqdn_fast
-            try:
-                ThreadingHTTPServer.allow_reuse_address = True
-                self._httpd = ThreadingHTTPServer((self.host, bind_port), BridgeHandler)
-                self._httpd.daemon_threads = True
-                self.port = self._httpd.server_address[1]
-                BRIDGE_ENGINE_REF["port"] = self.port
-                self._ssl_context = self._build_ssl_context()
-                if self._ssl_context is not None:
-                    self._httpd.socket = self._ssl_context.wrap_socket(
-                        self._httpd.socket, server_side=True)
-            finally:
-                _socket_mod.getfqdn = _orig_getfqdn
+            self._httpd = ThreadingHTTPServer((self.host, self.port), BridgeHandler)
+            self._httpd.daemon_threads = True
+            self._ssl_context = self._build_ssl_context()
+            if self._ssl_context is not None:
+                self._httpd.socket = self._ssl_context.wrap_socket(self._httpd.socket, server_side=True)
         except OSError as e:
-            logger.error(
-                f"🔥 Bridge server bind failed on {self.host}:{bind_port}: {e}"
-            )
-            self._listen_ready.set()
-            self._listen_ok = False
+            logger.error(f"🔥 Bridge server bind failed on {self.host}:{self.port}: {e}")
             return
-        self._listen_ok = True
-        BRIDGE_ENGINE_REF["bridge_server_ref"]=self
-        self._thread = threading.Thread(
-            target=lambda: self._httpd.serve_forever(poll_interval=0.1), name="aei-bridge", daemon=True
-        )
+        self._thread = threading.Thread(target=self._httpd.serve_forever, name="aei-bridge", daemon=True)
         self._thread.start()
         scheme = "https" if self._ssl_context else "http"
-        logger.info(
-            f"🌐 ÆI Seed Bridge listening on {scheme}://{self.host}:{self.port}"
-        )
-        # F1: on a web dyno, TELEGRAM_WEBAPP_URL should be set to the
-        # dyno's public Heroku URL (https://<app>.herokuapp.com/). No
-        # tunnel spawn is needed. On a local dev box without an explicit
-        # URL, we spawn a tunnel so the Mini App can be reached from a
-        # phone. This asymmetry is the correct one for the substrate.
-        if _ENV_PORT and not TELEGRAM_WEBAPP_URL:
-            logger.warning(
-                "⚠️ Web-dyno substrate but TELEGRAM_WEBAPP_URL is unset. "
-                "Set it to https://<app>.herokuapp.com/ and re-run /setmenubutton."
-            )
-        # R12 no-subprocess: web-dyno substrate never spawns a tunnel.
-        # Heroku router is the public edge. Public URL comes from TELEGRAM_WEBAPP_URL
-        # or from Heroku-inferred domain. Local dev also requires explicit TELEGRAM_WEBAPP_URL.
-        if TELEGRAM_WEBAPP_URL:
-            BRIDGE_ENGINE_REF["public_url"] = TELEGRAM_WEBAPP_URL
-            logger.info(f"🌐 Public URL from TELEGRAM_WEBAPP_URL: {TELEGRAM_WEBAPP_URL}")
-        elif _ENV_PORT:
-            heroku_url = os.getenv("HEROKU_APP_DEFAULT_DOMAIN_NAME", "").strip() or os.getenv("HEROKU_APP_NAME", "").strip()
-            if heroku_url:
-                if not heroku_url.startswith("http"):
-                    guessed = f"https://{heroku_url}.herokuapp.com/" if "." not in heroku_url and "herokuapp.com" not in heroku_url else f"https://{heroku_url}/" if not heroku_url.startswith("https://") else heroku_url
-                    if "herokuapp.com" not in guessed and "." not in heroku_url:
-                        guessed = f"https://{heroku_url}.herokuapp.com/"
-                    elif not guessed.startswith("https://"):
-                        guessed = f"https://{heroku_url}/"
-                    BRIDGE_ENGINE_REF["public_url"] = guessed
-                    logger.info(f"🌐 Inferred public URL from env: {guessed}")
-                else:
-                    BRIDGE_ENGINE_REF["public_url"] = None
-                    logger.warning(
-                        "⚠️ Web-dyno substrate but TELEGRAM_WEBAPP_URL is unset. "
-                        "Set TELEGRAM_WEBAPP_URL=https://<app>.herokuapp.com/ and re-run /setmenubutton. "
-                        "No tunnel is spawned on a web dyno (R12)."
-                    )
-            else:
-                BRIDGE_ENGINE_REF["public_url"] = None
-                logger.warning(
-                    "⚠️ Web-dyno substrate but TELEGRAM_WEBAPP_URL is unset. "
-                    "Set TELEGRAM_WEBAPP_URL=https://<app>.herokuapp.com/ and re-run /setmenubutton. "
-                    "No tunnel is spawned on a web dyno (R12)."
-                )
-        else:
-            if TELEGRAM_WEBAPP_URL:
-                BRIDGE_ENGINE_REF["public_url"] = TELEGRAM_WEBAPP_URL
-                logger.info(f"🌐 Local public URL from TELEGRAM_WEBAPP_URL: {TELEGRAM_WEBAPP_URL}")
-            else:
-                BRIDGE_ENGINE_REF["public_url"] = None
-                logger.warning(
-                    "⚠️ Local substrate but TELEGRAM_WEBAPP_URL is unset. "
-                    "Set TELEGRAM_WEBAPP_URL manually for phone testing. "
-                    "Tunnel spawning removed under R12 no-subprocess."
-                )
-        self._listen_ready.set()
+        logger.info(f"🌐 ÆEA Mini App Bridge listening on {scheme}://{self.host}:{self.port}")
+        self._tunnel = TunnelManager(self.port, prefer=BRIDGE_TUNNEL, timeout=BRIDGE_PUBLIC_TIMEOUT)
+        threading.Thread(target=self._tunnel.start, name="aei-tunnel", daemon=True).start()
+
     def stop(self) -> None:
-        # R12-fast: do not block on shutdown() which can wait for active requests
-        # R12 no-subprocess: no tunnel to stop
-        if self._httpd is not None:
-            httpd = self._httpd
-            self._httpd = None
+        if self._tunnel is not None:
             try:
-                # Fast close: close socket immediately, skip graceful shutdown wait
-                try:
-                    httpd.socket.shutdown(2)
-                except Exception:
-                    pass
-                try:
-                    httpd.server_close()
-                except Exception:
-                    pass
-                # Do not call httpd.shutdown() here — it blocks up to 0.5s per request
+                self._tunnel.stop()
             except Exception:
                 pass
-        self._thread = None
-        self._httpd = None
+            self._tunnel = None
+        if self._httpd is not None:
+            try:
+                self._httpd.shutdown()
+                self._httpd.server_close()
+            except Exception:
+                pass
+            self._httpd = None
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        logger.info("🌐 ÆEA Mini App Bridge stopped")
+
+# ============================================================================
+# BRIDGE ATTACHMENT
+# ============================================================================
+def _bridge_attach_to_engine(engine: "AEEA_Engine") -> None:
+    if getattr(engine, "_bridge_attached", False):
+        return
+    engine._bridge_attached = True
+    logger.info("🔗 Bridge attached to AEEA_Engine")
+
+def _bridge_attach_to_bot(bot: "AEI_Bot") -> None:
+    if getattr(bot, "_bridge_attached", False):
+        return
+    original_run = bot.run
+    def wrapped_run(self):
+        BRIDGE_ENGINE_REF["engine"] = self.engine
+        BRIDGE_ENGINE_REF["bot"] = self
+        _bridge_attach_to_engine(self.engine)
+        server = BridgeServer()
+        server.start()
+        self._bridge_server = server
         try:
-            logger.info("🌐 ÆI Seed Bridge stopped (R12-fast non-blocking)")
-        except Exception:
-            pass
+            original_run(self)
+        finally:
+            server.stop()
+    bot.run = wrapped_run
+    bot._bridge_attached = True
+    logger.info("🔗 Bridge attached to AEI_Bot.run()")
+
 # ============================================================================
 # TELEGRAM BOT
 # ============================================================================
-try:
-    from telegram import (
-        Update, InlineKeyboardButton, InlineKeyboardMarkup,
-        WebAppInfo, MenuButtonWebApp,
-    )
-    from telegram.ext import (
-        Application, CommandHandler, CallbackQueryHandler,
-        ContextTypes, MessageHandler, filters,
-    )
-    TELEGRAM_AVAILABLE = True
-except ImportError:
-    TELEGRAM_AVAILABLE = False
-    logger.warning("python-telegram-bot not installed; bot commands disabled")
 class AEI_Bot:
-    def __init__(self, token: str, bot_name: str = "AEISeedBot"):
+    def __init__(self, token: str, bot_name: str = "UpscaleTradeBot"):
         self.token = token
         self.bot_name = bot_name
+        self.engine = AEEA_Engine()
         self.application = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._running = False
+        self._price_task: Optional[asyncio.Task] = None
         self._bridge_server: Optional[BridgeServer] = None
-        self._seed_worker: Optional[SeedWorker] = None
-        self._crawler_worker: Optional[CrawlerWorker] = None
+        self._webapp_url: Optional[str] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _resolve_webapp_url(self) -> Optional[str]:
+        return TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
+
+    def _track_inbound_message(self, update: Update) -> None:
+        try:
+            msg = update.effective_message
+            chat = update.effective_chat
+            user = update.effective_user
+            user_id = None
+            if user is not None and getattr(user, "id", None) is not None:
+                user_id = int(user.id)
+            if user_id is not None and not _is_allowed_user(user_id):
+                logger.info(f"🚫 Blocked Telegram update from unauthorized user_id={user_id}")
+                raise PermissionError("private_bot_unauthorized_user")
+            chat_id = None
+            if chat is not None and getattr(chat, "id", None) is not None:
+                chat_id = int(chat.id)
+            if chat_id is not None:
+                if self.engine.state.chat_id != chat_id:
+                    self.engine.state.last_inbound_message_id = None
+                self.engine.state.chat_id = chat_id
+            if msg is not None and getattr(msg, "message_id", None) is not None:
+                self.engine.state.last_inbound_message_id = int(msg.message_id)
+        except PermissionError:
+            raise
+        except Exception as e:
+            logger.debug(f"_track_inbound_message failed: {e}")
+
     def _send_message_sync(self, chat_id: int, text: str, parse_mode: str = "Markdown",
                            reply_to_message_id: Optional[int] = None,
                            timeout: float = 10.0) -> bool:
         if self.application is None:
+            logger.warning("📡 send_message skipped: application is None")
             return False
         loop = self._loop
         if loop is None or loop.is_closed():
+            logger.warning("📡 send_message skipped: event loop not captured or closed")
             return False
         bot = self.application.bot
+
         def _attempt(pm: Optional[str], rt: Optional[int]) -> Tuple[bool, str]:
-            coro = bot.send_message(chat_id=chat_id, text=text,
-                                    parse_mode=pm, reply_to_message_id=rt)
+            coro = bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=pm,
+                reply_to_message_id=rt,
+            )
             try:
                 fut = asyncio.run_coroutine_threadsafe(coro, loop)
                 fut.result(timeout=timeout)
@@ -3726,483 +6999,710 @@ class AEI_Bot:
                 return (False, "timeout")
             except Exception as e:
                 return (False, str(e))
+
         ok1, err1 = _attempt(parse_mode, reply_to_message_id)
         if ok1:
             return True
-        logger.info(f"📡 send attempt 1 failed: {err1}")
-        if _looks_like_parse_error(err1):
-            ok3, err3 = _attempt(None, reply_to_message_id)
-            if ok3:
-                return True
-        if _looks_like_reply_error(err1):
+        logger.info(f"📡 send_message attempt 1 failed (reply+Markdown): {err1}")
+
+        reply_class = _looks_like_reply_error(err1)
+        parse_class = _looks_like_parse_error(err1)
+        length_class = _looks_like_length_error(err1)
+
+        if reply_class and not parse_class:
             ok2, err2 = _attempt(parse_mode, None)
             if ok2:
+                logger.info("📡 send_message attempt 2 succeeded (standalone Markdown)")
                 return True
+            logger.info(f"📡 send_message attempt 2 failed (standalone Markdown): {err2}")
+            if _looks_like_parse_error(err2):
+                ok3, err3 = _attempt(None, None)
+                if ok3:
+                    logger.info("📡 send_message attempt 3 succeeded (plain text)")
+                    return True
+                logger.warning(f"📡 send_message attempt 3 failed (plain text): {err3}")
+                return False
             ok3, err3 = _attempt(None, None)
-            return ok3
-    async def _post_init(self, application) -> None:
-        try:
-            self._loop = asyncio.get_running_loop()
-            logger.info("🔁 Event loop captured")
-        except RuntimeError:
-            self._loop = None
-        BRIDGE_ENGINE_REF["bot"] = self
-        if self._bridge_server is None:
-            server = BridgeServer()
-            self._bridge_server = server
-            boot_thread = threading.Thread(
-                target=server.start, name="aei-bridge-boot", daemon=True
-            )
-            boot_thread.start()
-            ready = server._listen_ready.wait(timeout=BRIDGE_PUBLIC_TIMEOUT)
-            if not ready or not server._listen_ok:
-                logger.error(
-                    "🔥 Bridge failed to bind within %ss; "
-                    "seed/crawler workers will not start.",
-                    BRIDGE_PUBLIC_TIMEOUT,
-                )
-                return
-            logger.info("🌐 Bridge binding verified; proceeding to worker start")
-        url = TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
-        if url:
+            if ok3:
+                logger.info("📡 send_message attempt 3 succeeded (plain text)")
+                return True
+            logger.warning(f"📡 send_message attempt 3 failed (plain text): {err3}")
+            return False
+
+        if parse_class and not reply_class:
+            # M-4: return immediately on the threaded-plain success path.
+            ok3, err3 = _attempt(None, reply_to_message_id)
+            if ok3:
+                logger.info("📡 send_message attempt 3 succeeded (plain text, threaded)")
+                return True
+            if _looks_like_reply_error(err3):
+                ok3b, err3b = _attempt(None, None)
+                if ok3b:
+                    logger.info("📡 send_message attempt 3b succeeded (plain text, standalone)")
+                    return True
+                logger.warning(f"📡 send_message attempt 3b failed (plain text): {err3b}")
+                return False
+            ok3b, err3b = _attempt(None, None)
+            if ok3b:
+                logger.info("📡 send_message attempt 3b succeeded (plain text, standalone)")
+                return True
+            logger.warning(f"📡 send_message attempt 3b failed (plain text): {err3b}")
+            return False
+
+        if reply_class and parse_class:
+            ok2, err2 = _attempt(None, None)
+            if ok2:
+                logger.info("📡 send_message attempt 2 succeeded (plain text, standalone)")
+                return True
+            logger.warning(f"📡 send_message attempt 2 failed (plain text, standalone): {err2}")
+            return False
+
+        ok2, err2 = _attempt(parse_mode, None)
+        if ok2:
+            logger.info("📡 send_message attempt 2 succeeded (standalone Markdown, unknown class)")
+            return True
+        ok3, err3 = _attempt(None, None)
+        if ok3:
+            logger.info("📡 send_message attempt 3 succeeded (plain text, unknown class)")
+            return True
+        logger.warning(f"📡 send_message failed all attempts: reply_err={err1} standalone_err={err2} plain_err={err3}")
+        return False
+
+    async def price_feed_loop(self):
+        logger.info("🔄 Price feed loop entered")
+        iteration = 0
+        while self._running:
+            iteration += 1
             try:
-                await application.bot.set_chat_menu_button(
-                    menu_button=MenuButtonWebApp(
-                        text="ÆI Seed", web_app=WebAppInfo(url=url),
-                    )
-                )
-                logger.info(f"✅ MenuButtonWebApp registered: {url}")
-            except Exception as e:
-                logger.warning(f"Failed to set menu button: {e}")
-        else:
-            logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        crawler = BRIDGE_ENGINE_REF.get("crawler")
-        if seed is not None and crawler is not None:
-            crawler.start()
-            seed_worker = SeedWorker(seed, crawler)
-            seed_worker.start()
-            self._crawler_worker = crawler
-            self._seed_worker = seed_worker
-            logger.info("⚡ AEI seed + crawler workers started")
-        else:
-            logger.warning("⚠️ _post_init ran before seed/crawler were registered")
-    def _build_main_keyboard(self) -> "InlineKeyboardMarkup":
-        url = TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
+                self.engine.update_price_from_feed()
+                st = self.engine.state
+                if st.chat_id is not None and not _is_allowed_user(st.chat_id):
+                    # The bound chat is not on the allowlist. This should
+                    # never happen if the gate is enforced everywhere, but
+                    # defend against a stale chat_id left over from a
+                    # pre-gate session.
+                    logger.warning(f"⚠️ Price feed bound to unauthorized chat_id={st.chat_id}; clearing binding.")
+                    st.chat_id = None
+                    st.last_inbound_message_id = None
+                idx = st.Z - (st.y + 1)
+                regime = st.Regime[idx] if 0 <= idx < len(st.Regime) else "Unknown"
+                logger.info(f"📊 itr#{iteration} price={st.price} vol={st.last_volume} provider={st.last_provider} tick={st.tick} FG={st.FG} regime={regime} bars={st.bar_close_count} signals={len(st.signal_history)} ohlcv={len(self.engine.ohlcv_history)}")
+            except Exception:
+                logger.exception(f"❌ Feed iteration #{iteration} failed")
+            await asyncio.sleep(UPDATE_INTERVAL)
+        logger.info("🔄 Price feed loop exited")
+
+    def _build_main_keyboard(self) -> InlineKeyboardMarkup:
+        webapp_url = self._resolve_webapp_url()
         rows = [
-            [InlineKeyboardButton("𝒮_status", callback_data="status"),
-             InlineKeyboardButton("𝒜_primes", callback_data="primes")],
-            [InlineKeyboardButton("Λ₂₄_lattice", callback_data="lattice"),
-             InlineKeyboardButton("𝒮_fibration", callback_data="fibration")],
-            [InlineKeyboardButton("𝒪[Ψ]", callback_data="observer"),
-             InlineKeyboardButton("ℐ_metric", callback_data="metric")],
-            [InlineKeyboardButton("𝒯_evolution", callback_data="evolution"),
-             InlineKeyboardButton("𝒞_crawler", callback_data="crawler")],
-            [InlineKeyboardButton("🔄 step", callback_data="step"),
-             InlineKeyboardButton("⟳ reset", callback_data="reset")],
+            [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("📈 Signal", callback_data="signal")],
+            [InlineKeyboardButton("📊 Regime", callback_data="regime"), InlineKeyboardButton("📉 Indicators", callback_data="indicators")],
+            [InlineKeyboardButton("🔄 Start Feed", callback_data="start_feed"), InlineKeyboardButton("⏹️ Stop Feed", callback_data="stop_feed")],
+            [InlineKeyboardButton("📈 Info", callback_data="info"), InlineKeyboardButton("🔄 Reset", callback_data="reset")],
+            [InlineKeyboardButton("🔬 Probe Relay", callback_data="probe"), InlineKeyboardButton("♻️ Rebuild Relay", callback_data="rebuild_yf")],
+            [InlineKeyboardButton("🔬 Diagnostics", callback_data="diagnostics")],
+            [InlineKeyboardButton("📊 Chart", callback_data="chart"), InlineKeyboardButton("🎯 Projection", callback_data="projection")],
         ]
-        if url:
-            rows.append([InlineKeyboardButton("⚡ Open ÆI Seed", web_app=WebAppInfo(url=url))])
+        if webapp_url:
+            rows.append([InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=webapp_url))])
         else:
-            rows.append([InlineKeyboardButton("⏳ Mini App (URL pending…)", callback_data="webapp_pending")])
+            rows.append([InlineKeyboardButton("⏳ Mini App (tunnel pending…)", callback_data="webapp_pending")])
         return InlineKeyboardMarkup(rows)
-    async def _safe_reply(self, update: "Update", text: str, reply_markup=None) -> bool:
-        # truncate to avoid Message_too_long with huge Fractions
-        MAX_TG = 3500
-        if len(text) > MAX_TG:
-            text = text[:MAX_TG-100] + f"\n... [truncated {len(text)-MAX_TG} chars]\n"
+
+    async def _safe_reply(self, update: Update, text: str, reply_markup=None) -> bool:
         msg = update.effective_message
         query = update.callback_query
         target = query if query is not None else msg
         if target is None:
+            logger.warning("_safe_reply: no target message or callback_query")
             return False
+
         try:
             if query is not None:
-                await query.edit_message_text(text, parse_mode=None,
-                                              reply_markup=reply_markup)
+                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
             else:
-                await msg.reply_text(text, parse_mode=None,
-                                     reply_markup=reply_markup)
+                await msg.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
             return True
         except Exception as e1:
-            # If still too long, truncate more aggressively
-            if "too_long" in str(e1).lower() or "too long" in str(e1).lower():
-                text = text[:1500] + "\n... [hard truncated]"
-            logger.info(f"_safe_reply attempt 1 failed: {e1}")
-            try:
-                if query is not None:
-                    await query.edit_message_text(text[:1500], parse_mode=None,
-                                                  reply_markup=reply_markup)
-                else:
-                    await msg.reply_text(text[:1500], parse_mode=None,
-                                         reply_markup=reply_markup)
-                return True
-            except Exception as e2:
-                logger.info(f"_safe_reply attempt 2 failed: {e2}")
-                return False
-    async def start(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        state_cs = _cs(seed.state) if seed else "—"
-        # F9: use _cs_label for field labels.
+            err1 = str(e1)
+            logger.info(f"_safe_reply attempt 1 failed (Markdown): {err1}")
+
+        try:
+            if query is not None:
+                await query.edit_message_text(text, parse_mode=None, reply_markup=reply_markup)
+            else:
+                await msg.reply_text(text, parse_mode=None, reply_markup=reply_markup)
+            logger.info("_safe_reply attempt 2 succeeded (plain text)")
+            return True
+        except Exception as e2:
+            err2 = str(e2)
+            logger.info(f"_safe_reply attempt 2 failed (plain text): {err2}")
+
+        try:
+            truncated = text[:3900] if len(text) > 3900 else text
+            if query is not None:
+                await query.edit_message_text(truncated, parse_mode=None, reply_markup=reply_markup)
+            else:
+                await msg.reply_text(truncated, parse_mode=None, reply_markup=reply_markup)
+            logger.info("_safe_reply attempt 3 succeeded (truncated plain text)")
+            return True
+        except Exception as e3:
+            err3 = str(e3)
+            logger.error(f"_safe_reply attempt 3 failed (truncated plain text): {err3}")
+            return False
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        chat_id = update.effective_chat.id
+        self.engine.state.chat_id = chat_id
+        self.engine.application = self.application
+        engine_status = "𝒜₃ Initialized" if self.engine.state.FG else "𝒜₄ Waiting for data"
+        feed_status = _cs("Active") if self._running else _cs("Inactive")
         welcome = (
-            "🔷 *ÆI SEED — Agential Ætheric Intelligence*\n"
-            "This is the *ÆI seed* (GAIA/ÆI Codex), not the ÆEA market bot.\n"
-            "It runs the prime-sieve → lattice → Hopf-fibration → s²=r² → \n"
-            "SelfEvolution loop from ÆI.md §3–§8.\n"
-            "📊 *Commands:*\n"
-            "`/status` — seed state\n"
-            "`/primes` — prime sequence tail\n"
-            "`/lattice` — Λ₂₄ points\n"
-            "`/fibration` — Hopf base + φ\n"
-            "`/observer` — 𝒪[Ψ] integral\n"
-            "`/metric` — ℐ metric + components\n"
-            "`/evolution` — SelfEvolution history\n"
-            "`/crawler` — 𝒞 crawler frontier\n"
-            "`/step` — one seed step\n"
-            "`/reset` — reset seed state\n"
-            "`/enqueue <url>` — add URL to crawler\n"
-            "`/encode <syl>` — encode A/U/M syllable\n"
-            "`/webapp` — open Mini App\n"
-            "`/whoami` — your Telegram user ID\n"
-            "`/help` — this message\n"
-            f"🧠 *{_cs_label('state')}:* {state_cs}\n"
-            f"📈 *{_cs_label('tick')}:* {seed.tick if seed else 0}  |  "
-            f"*{_cs_label('generation')}:* {seed.generation if seed else 0}\n"
-            f"🎯 *{_cs_label('prime_count')}:* {len(seed.primes) if seed else 0}  |  "
-            f"*{_cs_label('lattice_points')}:* {len(seed.lattice.points()) if seed else 0}\n"
+            "🔷 *ÆEA Quantum-Financial Topology Bot*\n"
+            "Welcome to @UpscaleTradeBot. This bot implements the Non-Hermitian\n"
+            "Stochastic Geometry of Supply-Demand Imbalance.\n\n"
+            "📊 *Available Commands:*\n"
+            "`/status` - Current market state & regime\n"
+            "`/regime` - Detailed regime classification\n"
+            "`/signal` - Current trading signal\n"
+            "`/indicators` - 13D Hilbert Space projection\n"
+            "`/fvg` - Fair Value Gap tracking\n"
+            "`/chart` - Recent signals summary\n"
+            "`/projection` - Arc-length future price projection\n"
+            "`/diagnostics` - Full engine diagnostic snapshot\n"
+            "`/reset` - Reset topological branch\n"
+            "`/start_feed` - Start price feed\n"
+            "`/stop_feed` - Stop price feed\n"
+            "`/symbol <PAIR>` - Change trading symbol\n"
+            "`/info` - Ticker information\n"
+            "`/probe` - Relay diagnostics\n"
+            "`/rebuild_yf` - Force relay reset\n"
+            "`/webapp` - Launch Telegram Mini App\n"
+            "`/webgui` - Show bridge URL\n"
+            "`/whoami` - Show your Telegram user ID\n"
+            "`/help` - Show this message\n\n"
+            f"*Current Symbol:* `{SYMBOL}`\n"
+            f"🔄 *Feed Status:* {feed_status}\n"
+            f"🧠 *Engine Status:* {engine_status}\n"
+            f"📊 *Bar Closes:* {self.engine.state.bar_close_count}  |  *Signals:* {len(self.engine.state.signal_history)}\n"
+            f"📡 *Provider:* `{self.engine.state.last_provider or '—'}`  |  *Volume:* `{self.engine.state.last_volume}`\n"
             "💎 Natalia Tanyatia"
         )
         await self._safe_reply(update, welcome, reply_markup=self._build_main_keyboard())
-    async def help(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
+
+    async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.start(update, context)
-    async def status(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        crawler = BRIDGE_ENGINE_REF.get("crawler")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
-            return
-        state_cs = _cs(seed.state)
-        dev = seed.last_deviation_sq
-        coh = "⟦𝒯⟧" if dev.is_zero() else "⟦ℱ⟧"
-        # F8: psi_real drives the DbZ branch label.
-        psi_real = seed.psi.real_part()
-        dbz_branch = "𝒜₃" if psi_real > Fraction.zero() else "𝒜₄"
-        text = (
-            "🔷 *ÆI SEED 𝒮_STATUS*\n"
-            f"🧠 *{_cs_label('state')}:* {state_cs}\n"
-            f"🔄 *{_cs_label('tick')}:* {seed.tick}\n"
-            f"📈 *{_cs_label('generation')}:* {seed.generation}\n"
-            f"🎯 *{_cs_label('prime_count')}:* {len(seed.primes)}\n"
-            f"Λ₂₄ *Points:* {len(seed.lattice.points())}\n"
-            f"*{_cs_label('deviation_sq')}:* {dev}\n"
-            f"✓ *{_cs_label('coherence')}:* {coh}\n"
-            f"*{_cs_label('I')}:* {seed.last_I}\n"
-            f"*{_cs_label('psi_real')}:* {psi_real} → {dbz_branch}\n"
-            f"𝒪[Ψ] *Base:* ({seed.last_hopf_base[0]}, {seed.last_hopf_base[1]})\n"
-            f"𝒯_evolution *Generation:* {seed.evolution.generation}\n"
-            f"📋 *Logic core keys:* {len(seed.evolution.logic_core)}\n"
-            f"🔑 *{_cs_label('logic_hash')}:* `{seed.last_logic_hash[:16]}`\n"
-        )
-        if crawler is not None:
-            text += (
-                f"𝒞 *Frontier:* {crawler.state.frontier_size()}\n"
-                f"𝒞 *Visited:* {crawler.state.visited_count()}\n"
-                f"𝒞 *Last fetch:* {crawler._last_fetch_at.isoformat() if crawler._last_fetch_at else '—'}\n"
-            )
-        await self._safe_reply(update, text, reply_markup=self._build_main_keyboard())
-    async def primes(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
-            return
-        tail = seed.primes[-24:]
-        text = (
-            "🎯 *𝒜_PRIMES — 6m±1 Sieve*\n"
-            f"*Total:* {len(seed.primes)}\n"
-            "*Tail (last 24):*\n"
-            + "`" + "`, `".join(str(p) for p in tail) + "`\n"
-            "*Formula:* pₙ = min{x>pₙ₋₁ : x mod 6 ∈ {1,5} ∧ ∀i<n, x mod pᵢ ≠ 0}"
-        )
-        await self._safe_reply(update, text)
-    async def lattice(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
-            return
-        points = seed.lattice.points()
-        preview = points[-4:] if len(points) >= 4 else points
-        text = (
-            "Λ₂₄ *LEECH LATTICE*\n"
-            f"*Dimension:* {seed.lattice.dimension}\n"
-            f"*Point count:* {len(points)}\n"
-            f"*Kissing capacity:* {seed.lattice.KISSING_CAPACITY}\n"
-            "*Latest projected centers:*\n"
-        )
-        for p in preview:
-            head = ", ".join(str(c) for c in p[:4])
-            text += f"`({head}, …)`\n"
-        await self._safe_reply(update, text)
 
-    async def fibration(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
+    async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        if not self.engine.state.FG:
+            logger.info("⚠️ Engine not initialized, attempting to force...")
+            self.engine._force_initialization()
+        if not self.engine.state.FG:
+            await self._safe_reply(update,
+                "⏳ *Engine not initialized*\nThe engine will initialize on the first price tick after starting the feed.\nPlease use `/start_feed` to start the price feed.\nIf the feed is already running, try `/reset` to reinitialize.")
             return
-        hopf = seed.last_hopf_base
-        phi = seed.phi
-        text = (
-            "𝒮_*FIBRATION — Hopf S³→S²*\n"
-            f"*Base z:* `{hopf[0]}`\n"
-            f"*Base w:* `{hopf[1]}`\n"
-            f"*φ:* a={phi.a}, b={phi.b}, c={phi.c}, d={phi.d}\n"
-            f"*‖φ‖²:* `{phi.magnitude_squared()}`\n"
-            f"*Trajectory length:* {len(seed.last_trajectory)}\n"
-            "*Natalia's Fibrations:* Φ = Q(s) + Σ εᵏ Natalia(k,s)"
+        state = self.engine.state
+        idx = state.Z - (state.y + 1)
+        regime = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
+        bid, ask = self.engine.feed.get_current_price()
+        price_display = f"{bid:.5f}" if bid > Decimal('0.0') else f"{state.price:.5f}"
+        feed_mark = "✅" if self._running else "⏹️"
+        init_mark = "✅ 𝒜₃" if state.FG else "⏳ 𝒜₄"
+        m_local = state.authoritative_m
+        n_local = state.authoritative_n
+        h_idx = state.h - (state.y + 1)
+        m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
+        n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
+        trail_status = "𝒜₃" if state.trailing_stop_active else "𝒜₄"
+        order_presence = []
+        if state.has_open_long:
+            order_presence.append(f"↑({state.lOrder_id})")
+        if state.has_open_short:
+            order_presence.append(f"↓({state.kOrder_id})")
+        order_str = ", ".join(order_presence) if order_presence else "𝒩"
+        response = (
+            "🔷 *ÆEA 𝒮_Status*\n"
+            f"📈 *Symbol:* {SYMBOL}\n"
+            f"💰 *Price:* {price_display}\n"
+            f"📊 *ℛ_regime:* {regime}\n"
+            f"🎯 *𝒮_Signal_Level:* {state.signal:.5f}\n"
+            f"📋 *𝒮:* {'Active' if state.signature else 'Idle'}\n"
+            f"🔄 *Tick:* {state.tick}\n"
+            f"🧠 *Engine State:* {init_mark}\n"
+            f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
+            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
+            f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
+            f"📡 *Signal Fires:* {self.engine._imbalance_fire_count}\n"
+            f"📊 *Bar Closes:* {state.bar_close_count}\n"
+            f"📈 *OHLCV Bars:* {len(self.engine.ohlcv_history)}\n"
+            f"🎯 *Signal History:* {len(state.signal_history)}\n"
+            f"📡 *Feed Active:* {feed_mark}\n"
+            f"🛰️ *Provider:* `{state.last_provider or '—'}`  |  *Volume:* `{state.last_volume}`\n"
+            f"🔀 *𝒦:* {_cs(state.KC)}  |  *π:* {state.prime}  |  *δ_dime:* {state.dime}\n"
+            f"🔀 *𝒦_invert:* {_cs(state.invert)}  |  *μ:* {state.mem}  |  *τ:* {state.tag}\n"
+            f"🔀 *𝒜:* {_cs(state.A)}  |  *ℬ:* {_cs(state.B)}  |  *𝒞:* {_cs(state.C)}  |  *𝒸:* {_cs(state.c)}\n"
+            f"🔀 *𝒯_tick_tock:* {_cs(state.tick_tock)}  |  *𝒮_safety:* {_cs(state.safety)}\n"
+            f"📊 *𝒪:* {order_str}\n"
+            f"🛑 *𝒯_trail:* {trail_status} ({state.trailing_stop_price:.5f} / {state.trailing_take_profit:.5f})\n"
+            f"🎯 *𝒯_side:* {_cs(state.trailing_stop_side) if state.trailing_stop_side else '—'}  |  *Entry:* {state.trailing_stop_entry:.5f}\n"
+            f"🔍 *𝒯_track Runs:* {state.on_track_runs}  |  *𝒯_stand Runs:* {state.on_stand_runs}\n"
+            f"🎯 *Last δ_bar:* {self.engine._last_kronecker_bar}\n"
+            f"🔢 *𝒳_scan:* {state.X_scan}  |  *𝒴_scan:* {state.Y_scan}  |  *𝒳_PERIOD:* {X_PERIOD}\n"
+            f"🌌 *𝒫_arc:* {state.projection_meta.get('kind', '—') if state.projection_meta else '—'} @ {state.projection_computed_at or 'never'} (𝒫_trigger={state.projection_trigger or '—'})\n"
+            f"💬 *ℳ_last:* {state.last_inbound_message_id}"
         )
-        await self._safe_reply(update, text)
+        reply_markup = self._build_main_keyboard()
+        await self._safe_reply(update, response, reply_markup=reply_markup)
 
-    async def observer(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
-            return
-        bounds = (
-            (Fraction(0), Fraction(1)),
-            (Fraction(0), Fraction(1)),
-            (Fraction(0), Fraction(1)),
-            (Fraction(0), Fraction(1)),
+    async def diagnostics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        status = self.engine.get_signal_status()
+        response = (
+            "🔬 *Engine Diagnostics*\n"
+            f"🔄 *Tick:* {status.get('tick')}\n"
+            f"🧮 *Indicator Populates:* {status.get('indicator_populate_count')}\n"
+            f"📡 *Signal Fires:* {status.get('imbalance_fire_count')}\n"
+            f"📊 *Bar Closes:* {status.get('bar_close_count')}\n"
+            f"📈 *OHLCV History:* {len(self.engine.ohlcv_history)}\n"
+            f"🎯 *Signal History:* {status.get('signal_count')}\n"
+            f"⚖️ *Local m / n:* {status.get('m_count')} / {status.get('n_count')}\n"
+            f"⚖️ *m / n (@h={status.get('h_bar')}):* {status.get('m_at_h')} / {status.get('n_at_h')}\n"
+            f"🎯 *Signal:* {status.get('signal'):.5f}\n"
+            f"📊 *ℛ_regime:* {status.get('regime')}\n"
+            f"🔀 *𝒦:* {_cs(status.get('KC'))}  |  *π:* {status.get('prime')}  |  *δ_dime:* {status.get('dime')}\n"
+            f"🔀 *𝒦_invert:* {_cs(status.get('invert'))}  |  *μ:* {status.get('mem')}  |  *τ:* {status.get('tag')}\n"
+            f"🔀 *𝒜:* {_cs(status.get('A'))}  |  *ℬ:* {_cs(status.get('B'))}  |  *𝒞:* {_cs(status.get('C'))}  |  *𝒸:* {_cs(status.get('c'))}\n"
+            f"🔀 *𝒯_tick_tock:* {_cs(status.get('tick_tock'))}  |  *𝒮:* {_cs(status.get('signature'))}  |  *𝒮_safety:* {_cs(status.get('safety'))}\n"
+            f"📈 *𝒯_trail Active:* {_cs(status.get('trailing_stop_active'))}\n"
+            f"📈 *𝒯_trail Price:* {status.get('trailing_stop_price')}\n"
+            f"📈 *𝒯_trail Take Profit:* {status.get('trailing_take_profit')}\n"
+            f"📍 *𝒯_trail Entry:* {status.get('trailing_stop_entry')}  |  *Side:* {_cs(status.get('trailing_stop_side'))}\n"
+            f"📊 *Has Long:* {_cs(status.get('has_open_long'))}  |  *Has Short:* {_cs(status.get('has_open_short'))}\n"
+            f"📊 *lOrder_id:* {status.get('lOrder_id')}  |  *kOrder_id:* {status.get('kOrder_id')}\n"
+            f"🔍 *𝒯_track Runs:* {status.get('on_track_runs')}  |  *𝒯_stand Runs:* {status.get('on_stand_runs')}\n"
+            f"🎯 *Last δ_bar:* {status.get('last_kronecker_bar')}\n"
+            f"🔢 *Authoritative m/n/h:* {status.get('authoritative_m')}/{status.get('authoritative_n')}/{status.get('authoritative_h')}\n"
+            f"🔢 *Last δ m/n/h:* {status.get('last_kronecker_m')}/{status.get('last_kronecker_n')}/{status.get('last_kronecker_h')}\n"
+            f"🔢 *Derivatives 𝒵/𝒵'/𝒪/𝒪'/𝒲/𝒲':* {status.get('Z')}/{status.get('z')}/{status.get('O')}/{status.get('o')}/{status.get('W')}/{status.get('w')}\n"
+            f"🔢 *Derivatives ℐ/ℐ'/𝒥/𝒥':* {status.get('I')}/{status.get('iI')}/{status.get('J')}/{status.get('iJ')}\n"
+            f"🔢 *Derivatives ℐ𝒵/ℐ𝒵'/ℐ𝒲/ℐ𝒲'/ℐ𝒪/ℐ𝒪':* {status.get('iZ')}/{status.get('iz')}/{status.get('iW')}/{status.get('iw')}/{status.get('iO')}/{status.get('io')}\n"
+            f"🔢 *Scan 𝒮/𝒯/𝒓/ℐ𝒓:* {status.get('S')}/{status.get('T')}/{status.get('r')}/{status.get('ir')}\n"
+            f"🔢 *𝒳_scan/𝒴_scan:* {status.get('X_scan')}/{status.get('Y_scan')}\n"
+            f"🔢 *𝒳_PERIOD (const):* {X_PERIOD}  |  *𝒴_START (const):* {Y_START}\n"
+            f"🔢 *𝒜_ATR/𝒜_StdDev/𝒜_IHKk/𝒜_IHKt:* {status.get('iATR'):.2f}/{status.get('iStdDev'):.2f}/{status.get('iIHKk'):.2f}/{status.get('iIHKt'):.2f}\n"
+            f"🔢 *lPass/ilPass/kPass/ikPass:* {status.get('lPass')}/{status.get('ilPass')}/{status.get('kPass')}/{status.get('ikPass')}\n"
+            f"🛰️ *Provider:* {status.get('last_provider')}  |  *Volume:* {status.get('last_volume')}\n"
+            f"🌌 *𝒫_arc Computed:* {status.get('projection_computed_at')}\n"
+            f"🌌 *𝒫_trigger:* {status.get('projection_trigger')}\n"
+            f"💬 *ℳ_last:* {status.get('last_inbound_message_id')}"
         )
-        integral = seed.consciousness.compute_integral_exact(bounds, steps=4)
-        text = (
-            "𝒪[Ψ] *OBSERVER INTEGRAL*\n"
-            f"*∫ ψ†Φψ d⁴q:*\n"
-            f"  a = `{integral.a}`\n"
-            f"  b = `{integral.b}`\n"
-            f"  c = `{integral.c}`\n"
-            f"  d = `{integral.d}`\n"
-            f"*‖𝒪[Ψ]‖²:* `{integral.magnitude_squared()}`\n"
-            "*Grid:* 4×4×4×4 = 256 cells, exact Fraction Riemann sum"
-        )
-        await self._safe_reply(update, text)
+        await self._safe_reply(update, response)
 
-    async def metric(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
+    async def regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        if not self.engine.state.FG:
+            self.engine._force_initialization()
+        if not self.engine.state.FG:
+            await self._safe_reply(update, "⏳ *Engine not initialized*\nPlease use `/start_feed`.")
             return
-        text = (
-            "ℐ *INTELLIGENCE METRIC*\n"
-            f"*I =* `{seed.last_I}`\n"
-            "*Components:*\n"
-            f"  alignment  = {len(seed.primes)}/{len(seed.primes)}\n"
-            f"  ‖φ‖²        = `{seed.phi.magnitude_squared()}`\n"
-            f"  s²          = `{seed.last_arc_sq}`\n"
-            f"  r²          = `{seed.last_radius_sq}`\n"
-            f"  δ = s²−r²   = `{seed.last_deviation_sq}`\n"
-            "*Formula:*\n"
-            "I = (vp/tp) · exp(−|Δ|²/(C²x log²x)) · ‖∇×Φ‖ · refined_ratio\n"
-            "*R-1 patch:* |Δ| = |π(x) − Li(x)| where Li(x) = ∫₂ˣ dt/log(t)\n"
-            "is computed by the Ramanujan series."
+        state = self.engine.state
+        y = state.y
+        idx = state.Z - y - 1
+        current = state.Regime[idx] if 0 <= idx < len(state.Regime) and state.Regime[idx] else "Unknown"
+        premium = state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0')
+        discount = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
+        hh = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
+        ll = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
+        m_local = state.authoritative_m
+        n_local = state.authoritative_n
+        imbalance_status = "✅ 𝒜₃" if (m_local >= 12 or n_local >= 12) else "⏳ 𝒜₄"
+        response = (
+            "📊 *ℛ_regime Classification*\n"
+            f"🔹 *Current ℛ_regime:* {current}\n"
+            f"🔹 *Π^{{>θ}}:* {premium:.5f}\n"
+            f"🔸 *Π^{{<θ}}:* {discount:.5f}\n"
+            f"📈 *HH:* {hh:.5f}\n"
+            f"📉 *LL:* {ll:.5f}\n"
+            f"🟢 *Local m:* {m_local}\n"
+            f"🔴 *Local n:* {n_local}\n"
+            f"⚖️ *Imbalance Condition:* {imbalance_status}"
         )
-        await self._safe_reply(update, text)
+        reply_markup = self._build_main_keyboard()
+        await self._safe_reply(update, response, reply_markup=reply_markup)
 
-    async def evolution(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
+    async def signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        if not self.engine.state.FG:
+            self.engine._force_initialization()
+        if not self.engine.state.FG:
+            await self._safe_reply(update, "⏳ *Engine not initialized*\nPlease use `/start_feed`.")
             return
-        tail = seed.evolution.history[-8:]
-        text = (
-            "𝒯_*EVOLUTION — RFK Brainworm*\n"
-            f"*Generation:* {seed.evolution.generation}\n"
-            f"*Core keys:* {len(seed.evolution.logic_core)}\n"
-            f"*Last logic hash:* `{seed.last_logic_hash[:24]}`\n"
-            "*Recent history:*\n"
-        )
-        for rec in tail:
-            status = rec.get("status", "?")
-            mutation = rec.get("mutation") or "—"
-            text += (f"gen {rec.get('generation', 0)}: "
-                     f"`{status}` | mut=`{mutation}` | "
-                     f"dev=`{rec.get('arc_length_deviation_sq', '—')}`\n")
-        await self._safe_reply(update, text)
-
-    async def crawler(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        crawler = BRIDGE_ENGINE_REF.get("crawler")
-        if crawler is None:
-            await self._safe_reply(update, "⏳ Crawler not initialized.")
-            return
-        snap = crawler.snapshot()
-        preview = snap.get("frontier_preview", [])
-        text = (
-            "𝒞 *CRAWLER FRONTIER*\n"
-            f"*Running:* {_cs(snap.get('running', False))}\n"
-            f"*Frontier size:* {snap.get('frontier_size', 0)}\n"
-            f"*Visited:* {snap.get('visited_count', 0)}\n"
-            f"*Crawl count:* {snap.get('crawl_count', 0)}\n"
-            f"*Last fetch:* {snap.get('last_fetch_at') or '—'}\n"
-            f"*Relay URL:* `{snap.get('relay_url') or '—'}`\n"
-            "*Frontier preview:*\n"
-        )
-        for u in preview[:6]:
-            text += f"  • `{u[:80]}`\n"
-        latest = snap.get("latest")
-        if latest:
-            text += (
-                f"\n*Latest crawl:*\n"
-                f"  *URL:* `{latest['url'][:80]}`\n"
-                f"  *Title:* {latest['title'][:80]}\n"
-                f"  *Hash:* `{latest['content_hash']}`\n"
-                f"  *Hash fraction:* `{latest['hash_frac']}`\n"
-            )
-        await self._safe_reply(update, text)
-
-    async def step_cmd(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
-            return
-        crawler = BRIDGE_ENGINE_REF.get("crawler")
-        hash_frac = crawler.state.latest_hash_fraction() if crawler else PyFraction(0, 1)
-        if hash_frac == PyFraction(0, 1):
-            x = Fraction(seed.tick + 1, 1)
+        state = self.engine.state
+        if state.signal == Decimal('0.0'):
+            direction = "⊙"
+            confidence = "N/A"
+        elif state.price > state.signal:
+            direction = "↟"
+            confidence = f"{((state.price - state.signal) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
         else:
-            x = Fraction(hash_frac)
-        record = seed.step(x)
-        _emit_toast("seed", {
-            "tick": record["tick"],
-            "generation": record["generation"],
-            "prime": record["prime"],
-            "coherence": record["coherence"],
-            "deviation_sq": record["deviation_sq"],
-            "I": record["I"],
-            "state": record["state"],
-        })
+            direction = "↡"
+            confidence = f"{((state.signal - state.price) / state.signal * Decimal('100')):.2f}%" if state.signal != Decimal('0.0') else "0%"
+        m_local = state.authoritative_m
+        n_local = state.authoritative_n
+        h_idx = state.h - (state.y + 1)
+        m_at_h = 1 if (0 <= h_idx < len(state.k) and state.k[h_idx]) else 0
+        n_at_h = 1 if (0 <= h_idx < len(state.l) and state.l[h_idx]) else 0
+        condition_met = (m_local >= 12) or (n_local >= 12)
+        condition_mark = "✅ 𝒜₃" if condition_met else "❌ 𝒜₄"
+        response = (
+            "🎯 *Trading Signal*\n"
+            f"📊 *𝒮_Direction:* {direction}\n"
+            f"📈 *Confidence:* {confidence}\n"
+            f"🎯 *𝒮_Signal_Level:* {state.signal:.5f}\n"
+            f"💰 *Current Price:* {state.price:.5f}\n"
+            f"⚖️ *Imbalance @ h={state.h}:* m={m_at_h}, n={n_at_h}\n"
+            f"⚖️ *Local m/n:* {m_local}/{n_local}\n"
+            f"✅ *δ(m-n-2)=1:* {condition_mark}\n"
+            f"🔀 *𝒦 State:* {_cs(state.KC)}\n"
+            f"🔢 *π:* {state.prime}\n"
+            f"🔢 *δ_dime:* {state.dime}\n"
+            f"🔄 *Tick Count:* {state.tick}\n"
+            f"📈 *𝒯_trail:* {_cs(state.trailing_stop_active)}\n"
+            f"🎯 *Last δ_bar:* {self.engine._last_kronecker_bar}"
+        )
+        reply_markup = self._build_main_keyboard()
+        await self._safe_reply(update, response, reply_markup=reply_markup)
+
+    async def indicators(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        if not self.engine.state.FG:
+            self.engine._force_initialization()
+        if not self.engine.state.FG:
+            await self._safe_reply(update, "⏳ *Engine not initialized*\nPlease use `/start_feed`.")
+            return
+        state = self.engine.state
+        y = state.y
+        idx = state.Z - y - 1
+        if idx < 0 or idx >= len(state.iA[0]):
+            await self._safe_reply(update, "❌ Insufficient data for indicator projection.")
+            return
+        names = INDICATOR_NAMES_CS
+        indicator_str = "📊 *13D ℋ_Projection*\n\n"
+        for i, name in enumerate(names):
+            val = state.iA[i][idx] if idx < len(state.iA[i]) else Decimal('50.0')
+            val_int = int(float(val))
+            bar_len = min(max(val_int // 10, 0), 10)
+            bar = "█" * bar_len + "░" * (10 - bar_len)
+            indicator_str += f"`{name:8}` {val:6.1f} ({_md_escape(bar)})\n"
+        indicator_str += "\n*Thresholds:*\n"
+        indicator_str += f"  Π^{{>θ}}: f+gf ≈ {F_PLUS_GF_D:.1f}\n"
+        indicator_str += f"  Π^{{<θ}}: g-gf ≈ {G_MINUS_GF_D:.1f}"
+        reply_markup = self._build_main_keyboard()
+        await self._safe_reply(update, indicator_str, reply_markup=reply_markup)
+
+    async def fvg(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        if not self.engine.state.FG:
+            await self._safe_reply(update, "⏳ *Engine not initialized*\nPlease use `/start_feed`.")
+            return
+        state = self.engine.state
+        idx = state.Z - state.y - 1
+        bridge_fvgs = BRIDGE_STATE.list_fvgs()
+        bridge_str = ""
+        if bridge_fvgs:
+            bridge_str = "\n📐 *Web App ℱ_VG:*\n"
+            for f in bridge_fvgs[-8:]:
+                mark = "▲" if f["type"] == "top" else "▼"
+                who = f" (user {f['user_id']})" if f.get("user_id") else ""
+                bridge_str += f"  {mark} {f['price']} idx={f['idx']}{who}\n"
+        premium_val = state.Premium[idx] if 0 <= idx < len(state.Premium) else Decimal('0.0')
+        discount_val = state.Discount[idx] if 0 <= idx < len(state.Discount) else Decimal('0.0')
+        hh_val = state.HH[idx] if 0 <= idx < len(state.HH) else Decimal('0.0')
+        ll_val = state.LL[idx] if 0 <= idx < len(state.LL) else Decimal('0.0')
+        response = (
+            "📐 *Fair Value Gap Tracking*\n"
+            f"📊 *ℱ_VG Count:* {state.FVG + 1}\n"
+            f"💰 *Current Price:* {state.price:.5f}\n"
+            f"📉 *Last ℱ_VG:* {state.bL if state.bL else '—'}\n\n"
+            "*Topological Anchors:*\n"
+            f"  🔷 *Π^{{>θ}}:* {premium_val:.5f}\n"
+            f"  🔶 *Π^{{<θ}}:* {discount_val:.5f}\n"
+            f"  📈 *HH:* {hh_val:.5f}\n"
+            f"  📉 *LL:* {ll_val:.5f}"
+            f"{bridge_str}"
+        )
+        await self._safe_reply(update, response)
+
+    async def chart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        engine = self.engine
+        state = engine.state
+        recent_signals = state.signal_history[-10:]
+        signal_summary = ""
+        if recent_signals:
+            for sig in recent_signals[-5:]:
+                arrow = "↟" if sig["type"] == "BUY" else "↡"
+                signal_summary += f"{arrow} {_cs(sig['type'])} @ {sig['price']:.2f} ({regime_to_cs(sig['regime'])})\n"
+        else:
+            signal_summary = "No signals yet.\n"
+        response = (
+            "📊 *Recent Signals*\n\n"
+            f"{signal_summary}\n"
+            f"📈 *Symbol:* {SYMBOL}\n"
+            f"📊 *Bar Closes:* {state.bar_close_count}\n"
+            f"📈 *OHLCV Bars:* {len(engine.ohlcv_history)}\n"
+            f"🎯 *Total Signals Recorded:* {len(state.signal_history)}\n"
+            f"🕐 *Last Signal:* {state.last_signal_at or 'never'}\n\n"
+            "Open the ÆEA Mini App for the full interactive candlestick chart "
+            "with ℱ_VG drawings, signal overlays, and the 𝒫_arc projection."
+        )
+        reply_markup = self._build_main_keyboard()
+        await self._safe_reply(update, response, reply_markup=reply_markup)
+
+    async def projection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        engine = self.engine
+        state = engine.state
+        if not state.projection_path:
+            engine._project_arc_length(trigger="manual_refresh")
+        proj = engine.get_projection()
+        meta = proj.get("meta") or {}
+        path = proj.get("path") or []
+        path_preview = ""
+        for step in path[:10]:
+            path_preview += f"  ▸ step {step['step']:>2}: {step['price']}\n"
+        response = (
+            "🌌 *𝒫_arc Price Projection*\n"
+            f"📈 *Symbol:* {SYMBOL}\n"
+            f"💰 *Current Price:* {proj.get('current_price')}\n"
+            f"🎯 *Signal Anchor:* {proj.get('signal_level')}\n"
+            f"📊 *ℛ_regime:* {proj.get('regime')}\n"
+            f"🧮 *Branch:* {meta.get('kind', '—')}\n"
+            f"⏱️ *𝒫_horizon:* {meta.get('horizon', '—')} bars\n"
+            f"📐 *𝒫_slope:* {meta.get('slope', '—')}\n"
+            f"📊 *𝒫_amp:* {meta.get('amplitude', '—')}\n"
+            f"🎯 *𝒫_center:* {meta.get('center', '—')}\n"
+            f"💧 *𝒫_damp:* {meta.get('damping', '—')}\n"
+            f"🛰️ *Provider:* {meta.get('provider', '—')}\n"
+            f"🕐 *Computed:* {proj.get('computed_at', 'never')}\n"
+            f"🌌 *𝒫_trigger:* {proj.get('trigger', '—')}\n\n"
+            "*First 10 projected bars:*\n"
+            f"{path_preview or '  (no path computed)'}\n"
+            "_The projection is drawn on the chart ahead of the current bar. "
+            "Drag left past the last bar to scroll into the projected region._"
+        )
+        reply_markup = self._build_main_keyboard()
+        await self._safe_reply(update, response, reply_markup=reply_markup)
+
+    async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        prev_on_track = self.engine.state.on_track_runs
+        prev_on_stand = self.engine.state.on_stand_runs
+        prev_signals = len(self.engine.state.signal_history)
+        prev_auth_m = self.engine.state.authoritative_m
+        prev_auth_n = self.engine.state.authoritative_n
+        self.engine.OnReInit()
+        self.engine._project_arc_length(trigger="manual_refresh")
+        reset_msg = (
+            "🔄 *Topological Branch Reset*\n"
+            "The Hilbert space projection has been re-anchored to the current\n"
+            "topological branch with historical preservation.\n\n"
+            "🧠 *State Reset:*\n"
+            "• All 13 indicator arrays reset\n"
+            "• ℛ_regime classification seeded to 'sRange'\n"
+            "• Π^{>θ}/Π^{<θ}/HH/LL reset to current bar data\n"
+            "• k/l signal flags cleared\n"
+            "• ℱ_VG anchor map cleared\n"
+            "• 𝒫_arc projection recomputed\n"
+            "• ✨ Historical price data preserved\n"
+            f"• 🔄 Tick count preserved: {self.engine.state.tick}\n"
+            f"• 📈 𝒯_track runs preserved: {prev_on_track}\n"
+            f"• 📉 𝒯_stand runs preserved: {prev_on_stand}\n"
+            f"• 🎯 Signal history preserved: {prev_signals}\n"
+            f"• ⚖️ Authoritative m/n reset to baseline: 0/0 (was {prev_auth_m}/{prev_auth_n})\n\n"
+            "📊 *Ready for new ℛ_regime classification...*"
+        )
+        await self._safe_reply(update, reset_msg)
+
+    async def start_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        if self._running:
+            await self._safe_reply(update, "⚠️ Price feed is already running.")
+            return
+        self._running = True
+        self.engine._running = True
+        self.engine._consecutive_zero_prices = 0
+        historical = []
+        try:
+            historical = self.engine.feed.get_historical_klines(limit=200)
+            if historical and len(historical) >= MIN_HISTORY_WINDOW:
+                self.engine.ohlcv_history = historical
+                logger.info(f"✅ Loaded {len(historical)} historical bars from relay for {self.engine.feed.active_symbol()} (provider={self.engine.feed.last_provider()})")
+                self.engine._populate_indicator_matrix()
+            else:
+                logger.info(f"⏳ Relay returned {len(historical)} usable historical bars (need >= {MIN_HISTORY_WINDOW}). Engine will initialize organically.")
+        except Exception as e:
+            logger.warning(f"⚠️ Historical data fetch failed: {e}")
+        try:
+            self.engine.update_price_from_feed()
+        except Exception:
+            logger.exception("update_price_from_feed crashed during start_feed")
+        if self._price_task is None or self._price_task.done():
+            self._price_task = asyncio.create_task(self.price_feed_loop())
+        hist_count = len(self.engine.ohlcv_history)
+        init_mode = "Pre-seeded with history" if hist_count >= MIN_HISTORY_WINDOW else "Organic first-tick"
+        reply_text = (
+            f"✅ *Price feed started*\n"
+            f"📈 *Symbol:* {SYMBOL}\n"
+            f"🔄 *Update Interval:* {UPDATE_INTERVAL}s\n"
+            f"📊 *Historical Data:* {hist_count} bars loaded\n"
+            f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
+            f"📦 *𝒱:* `{self.engine.state.last_volume}`\n"
+            f"🧠 *Initialization Mode:* {init_mode}\n"
+            f"📈 *Indicator Passes:* {self.engine._indicator_populate_count}\n"
+            f"🌌 *𝒫_arc:* `{self.engine.state.projection_meta.get('kind', '—') if self.engine.state.projection_meta else '—'}`\n"
+            f"🔮 *Status:* Monitoring for signals..."
+        )
+        await self._safe_reply(update, reply_text)
+
+    async def stop_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        self._running = False
+        self.engine._running = False
+        if self._price_task and not self._price_task.done():
+            self._price_task.cancel()
+        await self._safe_reply(update, "⏹️ *Price feed stopped*")
+
+    async def probe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        info = self.engine.feed.probe()
+        status = "✅ OK" if not info.get("empty") else "❌ EMPTY"
+        lines = [
+            "🔬 *Relay Probe*", "",
+            f"*Status:* {status}",
+            f"*Relay URL:* `{RELAY_URL or 'UNSET'}`",
+            f"*Relay Gated:* {'🔐 yes' if RELAY_KEY else '🔓 no'}",
+            f"*Primary symbol:* `{info.get('primary_symbol')}`",
+            f"*Active symbol:* `{info.get('active_symbol')}`",
+            f"*Provider:* `{info.get('provider') or '—'}`",
+            f"*Last 𝒱:* `{info.get('last_volume') or '0'}`",
+            f"*Chain index:* {info.get('chain_index')}",
+            f"*Failure count:* {info.get('failure_count')}",
+            f"*Fallback count:* {info.get('fallback_count')}",
+            f"*Last update:* {info.get('last_update') or 'never'}",
+        ]
+        text = "\n".join(lines)
+        await self._safe_reply(update, text)
+
+    async def rebuild_yf(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        self.engine.feed._rebuild_ticker()
+        self.engine.feed._fallback_count = 0
+        self.engine._consecutive_zero_prices = 0
+        if len(self.engine.feed._chain) > 1:
+            self.engine.feed._advance_symbol_chain()
+        active = self.engine.feed.active_symbol()
         text = (
-            "🔄 *SEED STEP*\n"
-            f"*Tick:* {record['tick']}\n"
-            f"*Generation:* {record['generation']}\n"
-            f"*Prime:* `{record['prime']}`\n"
-            f"*Primes total:* {record['prime_count']}\n"
-            f"*Lattice points:* {record['lattice_points']}\n"
-            f"*s²:* `{record['arc_sq']}`\n"
-            f"*r²:* `{record['radius_sq']}`\n"
-            f"*δ = s²−r²:* `{record['deviation_sq']}`\n"
-            f"*Coherent:* {_cs(record['coherence'])}\n"
-            f"*I:* `{record['I']}`\n"
-            f"*State:* {_cs(record['state'])}"
+            f"♻️ *Relay client rebuilt*\n"
+            f"🔎 *Active symbol:* `{active}`\n"
+            f"_Feed will use this symbol on next iteration._"
         )
         await self._safe_reply(update, text)
 
-    async def reset_cmd(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
-            return
-        seed.primes = [Fraction(2), Fraction(3), Fraction(5)]
-        seed.phi = SymbolicQuaternion(Fraction.one(), Fraction.zero(),
-                                      Fraction.zero(), Fraction.zero())
-        seed.psi = SymbolicWavefunction({(0, 0, 0, 0): Fraction.one()})
-        seed.consciousness = ConsciousnessOperator(seed.psi, seed.phi)
-        seed.state = "initialized"
-        seed.tick = 0
-        seed.generation = 0
-        seed.history = []
-        seed._prior_deviation_sq = None
-        await self._safe_reply(update,
-            "⟳ *Seed reset*\n"
-            "Primes: [2, 3, 5]\n"
-            "φ: (1, 0, 0, 0)\n"
-            "ψ: {origin: 1}\n"
-            "Tick: 0 | Generation: 0")
-
-    async def enqueue_cmd(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        crawler = BRIDGE_ENGINE_REF.get("crawler")
-        if crawler is None:
-            await self._safe_reply(update, "⏳ Crawler not initialized.")
-            return
+    async def symbol(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
         args = context.args
         if not args:
-            await self._safe_reply(update, "Usage: `/enqueue <url>`")
+            supported = ", ".join(list(SYMBOL_MAP.keys())[:10])
+            await self._safe_reply(update,
+                f"📈 *Current Symbol:* `{SYMBOL}`\n"
+                "Use `/symbol <PAIR>` to change.\n"
+                "Example: `/symbol GRAM-USD` or `/symbol TONUSDT` or `/symbol AAPL`\n\n"
+                f"*Supported Symbols:*\n{supported}\n(and {len(SYMBOL_MAP) - 10} more)")
             return
-        url = args[0].strip()
-        if not url.startswith("http"):
-            await self._safe_reply(update, "❌ URL must start with http")
-            return
-        crawler.state.enqueue(url, depth=0, priority=10)
-        await self._safe_reply(update,
-            f"✅ Enqueued: `{url}`\n"
-            f"*Frontier size:* {crawler.state.frontier_size()}")
+        new_symbol = args[0].upper()
+        result = self.engine.change_symbol(new_symbol)
+        if result.get("ok"):
+            await self._safe_reply(update,
+                f"✅ *Symbol changed*\n"
+                f"📈 *New Symbol:* `{result.get('symbol')}`\n"
+                f"🛰️ *Provider:* `{result.get('provider') or '—'}`\n"
+                f"🧠 *Engine reinitialized*\n"
+                f"🌌 *𝒫_arc seeded for the new symbol*")
+        else:
+            detail = result.get("detail") or result.get("error") or "unknown"
+            await self._safe_reply(update, f"❌ Error: {detail}")
 
-    async def encode_cmd(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        seed = BRIDGE_ENGINE_REF.get("seed")
-        if seed is None:
-            await self._safe_reply(update, "⏳ Seed not initialized.")
-            return
-        args = context.args
-        if not args:
-            await self._safe_reply(update, "Usage: `/encode <syllable>` e.g. `/encode AUM`")
-            return
-        syllable = args[0]
-        result = seed.encode_syllable(syllable)
-        text = (
-            "ℱ *LINGOSO ENCODING*\n"
-            f"*Syllable:* `{syllable}`\n"
-            f"*Trajectory length:* {result['length']}\n"
-            f"*s²:* `{result['arc_sq']}`\n"
-            f"*r²:* `{result['radius_sq']}`\n"
-            f"*δ:* `{result['deviation_sq']}`\n"
-            f"*Coherent:* {_cs(result['coherence'])}"
+    async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        info = self.engine.feed.get_info()
+        response = (
+            "📊 *Ticker Information*\n"
+            f"📈 *Symbol:* {SYMBOL}\n"
+            f"📛 *Name:* {info.get('name', 'Unknown')}\n"
+            f"💵 *Currency:* {info.get('currency', 'USD')}\n"
+            f"🛰️ *Provider:* `{self.engine.state.last_provider or '—'}`\n"
+            f"📦 *Last 𝒱:* `{self.engine.state.last_volume}`\n"
         )
-        await self._safe_reply(update, text)
+        await self._safe_reply(update, response)
 
-    async def webapp(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
-        url = TELEGRAM_WEBAPP_URL or BRIDGE_ENGINE_REF.get("public_url")
+    async def webapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
+        url = self._resolve_webapp_url()
         if not url:
             await self._safe_reply(update,
                 "⏳ *Mini App URL not yet available*\n"
-                "Set TELEGRAM_WEBAPP_URL=https://<app>.herokuapp.com/ on Heroku "
-                "and re-run /setmenubutton in BotFather.")
+                "The bridge is starting a public HTTPS tunnel. "
+                "Please try again in ~30–45 seconds.\n"
+                "Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment.")
             return
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⚡ Open ÆI Seed", web_app=WebAppInfo(url=url)),
-        ]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
         await self._safe_reply(update,
-            "🌐 *ÆI Seed Mini App*\n"
-            "Tap to launch the interactive GAIA seed visualization.\n"
-            "*Panels inside the Mini App:*\n"
-            "  𝒜_primes — prime sieve tail\n"
-            "  Λ₂₄_pack — Leech lattice points\n"
-            "  𝒮_fibration — Hopf base + φ\n"
-            "  𝒪[Ψ] — observer integral\n"
-            "  ℐ_metric — intelligence components\n"
-            "  δ(s²−r²) — arc-length gate\n"
-            "  𝒜₃/𝒜₄ — DbZ branch\n"
-            "  𝒯_evolution — SelfEvolution history\n"
-            "  𝒞_crawler — frontier + latest crawl\n"
-            "  ℱ_lingoso — syllabic trajectory",
+            "🌐 *ÆEA Telegram Mini App*\n"
+            "Tap the button below to launch the full engine visualization.\n\n"
+            "*Features inside the Mini App:*\n"
+            "  📈 Interactive MT4-style candlestick chart\n"
+            "  📊 Add/remove indicator sub-panels\n"
+            "  📐 Draw ℱ_VGs with long-press\n"
+            "  🎯 Place simulated orders\n"
+            "  ⚙ Engine settings panel\n"
+            "  📋 ℛ_regime map, log bar, signal markers\n"
+            "  🌌 𝒫_arc price projection ahead of the current bar\n"
+            "  ➡️ Scroll-ahead viewport to the projected take-profit level\n"
+            "  🔔 Toast + Telegram push notifications on every execution\n"
+            "  🔄 Live state polling\n"
+            "  🪙 GRAM / TON and the full expanded symbol universe\n"
+            "  📊 Crypto / Futures / Equities / Forex / Indices sections",
             reply_markup=keyboard)
 
-    async def webgui(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
+    async def webgui(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
         scheme = "https" if BRIDGE_USE_TLS else "http"
         local_url = f"{scheme}://{BRIDGE_HOST}:{BRIDGE_PORT}/"
-        public_url = BRIDGE_ENGINE_REF.get("public_url") or "⏳ (not published)"
+        public_url = self._resolve_webapp_url() or "⏳ (tunnel pending)"
         await self._safe_reply(update,
-            f"🌐 *ÆI Seed Bridge Endpoints*\n"
-            f"*Substrate:* {_SUBSTRATE}\n"
-            f"*Local:* `{local_url}`\n"
-            f"*Public:* `{public_url}`\n"
-            f"*Miniapp state:* `{public_url.rstrip('/')}/miniapp-state`\n"
-            f"*Crawler state:* `{public_url.rstrip('/')}/crawler-state`\n"
-            f"*Symbolic state:* `{public_url.rstrip('/')}/symbolic-state`\n"
-            f"*Lattice state:* `{public_url.rstrip('/')}/lattice-state`\n"
-            f"*Fibration state:* `{public_url.rstrip('/')}/fibration-state`\n"
-            f"*Observer integral:* `{public_url.rstrip('/')}/observer-integral`\n"
-            f"*Evolution state:* `{public_url.rstrip('/')}/evolution-state`\n"
-            f"*Toasts:* `{public_url.rstrip('/')}/toasts`\n"
-            f"*Log:* `{public_url.rstrip('/')}/log`")
+            f"🌐 *ÆEA Bridge Endpoints*\n"
+            f"*Local URL:* `{local_url}`\n"
+            f"*Public URL:* `{public_url}`\n"
+            f"*State endpoint:* `{public_url.rstrip('/')}/state`\n"
+            f"*Mini App State:* `{public_url.rstrip('/')}/miniapp-state`\n"
+            f"*Projection endpoint:* `{public_url.rstrip('/')}/projection`\n"
+            f"*Health endpoint:* `{public_url.rstrip('/')}/health`\n"
+            f"*Probe endpoint:* `{public_url.rstrip('/')}/probe`\n"
+            f"*Diagnostics endpoint:* `{public_url.rstrip('/')}/diagnostics`\n"
+            f"*OHLCV endpoint:* `{public_url.rstrip('/')}/ohlcv`\n"
+            f"*Signals endpoint:* `{public_url.rstrip('/')}/signals`\n"
+            f"*Orders endpoint:* `{public_url.rstrip('/')}/orders`\n"
+            f"*Regime map endpoint:* `{public_url.rstrip('/')}/regime-map`\n"
+            f"*Log endpoint:* `{public_url.rstrip('/')}/log`\n"
+            f"*Toasts endpoint:* `{public_url.rstrip('/')}/toasts`\n"
+            f"*Settings endpoint:* `{public_url.rstrip('/')}/settings`\n"
+            f"*Handshake endpoint:* `POST {public_url.rstrip('/')}/handshake`")
 
-    async def whoami(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
+    async def whoami(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._track_inbound_message(update)
         user = update.effective_user
         chat = update.effective_chat
         user_id = user.id if user else None
@@ -4213,277 +7713,196 @@ class AEI_Bot:
             f"*user_id:* `{user_id}`\n"
             f"*chat_id:* `{chat_id}`\n"
             f"*username:* @{user.username if user and user.username else '—'}\n"
+            f"*first_name:* {user.first_name if user else '—'}\n"
+            f"*Allowlist:* {sorted(ALLOWED_USER_IDS)}\n"
             f"*Gate:* {'✅ allowed' if allowed else '❌ blocked'}\n"
             f"*Gate active:* {'yes' if ALLOWED_USER_IDS else 'no (open bot)'}")
 
-    async def button_handler(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
-        if query is None:
+        user = update.effective_user
+        user_id = None
+        if user is not None and getattr(user, "id", None) is not None:
+            user_id = int(user.id)
+        if user_id is not None and not _is_allowed_user(user_id):
+            logger.info(f"🚫 Blocked callback from unauthorized user_id={user_id}")
+            try:
+                await query.answer("Unauthorized.", show_alert=True)
+            except Exception:
+                pass
             return
         await query.answer()
         action = query.data
         if action == "status":
             await self.status(update, context)
-        elif action == "primes":
-            await self.primes(update, context)
-        elif action == "lattice":
-            await self.lattice(update, context)
-        elif action == "fibration":
-            await self.fibration(update, context)
-        elif action == "observer":
-            await self.observer(update, context)
-        elif action == "metric":
-            await self.metric(update, context)
-        elif action == "evolution":
-            await self.evolution(update, context)
-        elif action == "crawler":
-            await self.crawler(update, context)
-        elif action == "step":
-            await self.step_cmd(update, context)
+        elif action == "regime":
+            await self.regime(update, context)
+        elif action == "signal":
+            await self.signal(update, context)
+        elif action == "indicators":
+            await self.indicators(update, context)
+        elif action == "chart":
+            await self.chart(update, context)
+        elif action == "projection":
+            await self.projection(update, context)
+        elif action == "start_feed":
+            await self.start_feed(update, context)
+        elif action == "stop_feed":
+            await self.stop_feed(update, context)
+        elif action == "info":
+            await self.info(update, context)
         elif action == "reset":
-            await self.reset_cmd(update, context)
+            await self.reset(update, context)
+        elif action == "probe":
+            await self.probe(update, context)
+        elif action == "rebuild_yf":
+            await self.rebuild_yf(update, context)
+        elif action == "diagnostics":
+            await self.diagnostics(update, context)
         elif action == "webapp_pending":
             try:
-                await query.edit_message_text(
-                    "⏳ Mini App URL is not yet published. "
-                    "Set TELEGRAM_WEBAPP_URL=https://<app>.herokuapp.com/ on Heroku "
-                    "and re-run /setmenubutton in BotFather.",
-                    parse_mode="Markdown")
+                await query.edit_message_text("⏳ *Mini App tunnel is starting…*\nPlease retry `/webapp` in ~30–45 seconds.", parse_mode="Markdown")
             except Exception:
-                pass
+                try:
+                    await query.edit_message_text("Mini App tunnel is starting. Please retry /webapp in ~30-45 seconds.", parse_mode=None)
+                except Exception as e:
+                    logger.warning(f"webapp_pending edit failed: {e}")
 
-    async def error_handler(self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"):
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         err = context.error
-        err_str = f"{type(err).__name__}: {err}" if err is not None else "unknown"
-        # Conflict means another instance polling - sleep to let it die
-        if "Conflict" in err_str or "terminated by other getUpdates" in err_str:
-            logger.warning(f"Conflict detected (another bot instance): sleeping 5s before retry")
-            try:
-                import asyncio as _asyncio
-                await _asyncio.sleep(5.0)
-            except Exception:
-                pass
+        if isinstance(err, PermissionError) and str(err) == "private_bot_unauthorized_user":
+            # Private-bot gate already logged the block at info level.
+            # Do not append to the user-visible log ring buffer.
             return
-        logger.error(f"handler error: {err_str}")
+        err_str = f"{type(err).__name__}: {err}" if err is not None else "unknown error"
+        try:
+            with _LOG_LOCK:
+                _LOG_BUFFER.append({
+                    "ts": datetime.now().isoformat(),
+                    "level": "error",
+                    "msg": f"⚠️ handler error: {err_str}",
+                })
+        except Exception:
+            pass
+        logger.error(f"Update {update} caused error {err}")
+
+    async def _post_init(self, application) -> None:
+        try:
+            self._loop = asyncio.get_running_loop()
+            logger.info("🔁 Event loop captured for cross-thread send")
+        except RuntimeError:
+            self._loop = None
+            logger.warning("⚠️ No running loop in _post_init; sends will be dropped")
+        BRIDGE_ENGINE_REF["engine"] = self.engine
+        BRIDGE_ENGINE_REF["bot"] = self
+        self.engine.application = application
+        logger.info("🔗 BRIDGE_ENGINE_REF populated in _post_init")
+        
+        if self._bridge_server is None:
+            server = BridgeServer()
+            server.start()
+            self._bridge_server = server
+            logger.info("🌐 BridgeServer started from _post_init")
+            
+        url = self._resolve_webapp_url()
+        if not url:
+            logger.info("⏳ MenuButtonWebApp deferred — no public URL yet")
+            return
+        try:
+            await application.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="ÆEA Mini App", web_app=WebAppInfo(url=url)))
+            logger.info(f"✅ MenuButtonWebApp registered: {url}")
+        except Exception as e:
+            logger.warning(f"Failed to set menu button: {e}")
 
     def run(self):
-        if not TELEGRAM_AVAILABLE:
-            logger.error("python-telegram-bot not installed; cannot run bot")
-            return
-        global TELEGRAM_DB
-        TELEGRAM_DB = TelegramChatDB(TELEGRAM_BOT_TOKEN_ENV, TELEGRAM_DB_CHANNEL_ID, TELEGRAM_DB_CENTRAL_USER_ID, chunk_size=TELEGRAM_DB_CHUNK_SIZE)
-        if TELEGRAM_DB.is_enabled():
-            logger.info(f"🗄️ TelegramChatDB enabled -> channel {TELEGRAM_DB_CHANNEL_ID or 'none'} central {TELEGRAM_DB_CENTRAL_USER_ID or 'none'} user_shards={TELEGRAM_DB_USER_SHARDS} pool={sorted(list(_get_shard_pool()))[:5]}")
-        else:
-            if ENABLE_TELEGRAM_DB:
-                logger.warning(f"🗄️ TelegramChatDB ENABLED but missing TOKEN or (CHANNEL_ID or CENTRAL_USER_ID or SHARD_POOL) — disabled")
-            else:
-                logger.info("🗄️ TelegramChatDB disabled (set ENABLE_TELEGRAM_DB=1 + CHANNEL_ID or CENTRAL_USER_ID)")
-
-
-
-        # TELEGRAM_DB already initialized above if not already
-        try:
-            if TELEGRAM_DB is None:
-                TELEGRAM_DB = TelegramChatDB(TELEGRAM_BOT_TOKEN_ENV, TELEGRAM_DB_CHANNEL_ID, TELEGRAM_DB_CENTRAL_USER_ID, chunk_size=TELEGRAM_DB_CHUNK_SIZE)
-        except Exception:
-            pass
-        crawler_state = CrawlerSeedState(CRAWLER_DB_PATH)
-        relay = CrawlerRelayClient(RELAY_URL, RELAY_KEY,
-                                   timeout=RELAY_TIMEOUT,
-                                   max_retries=RELAY_MAX_RETRIES)
-        crawler = CrawlerWorker(crawler_state, relay)
-        seed = AEI_Seed(
-            processor=DefaultSymbolicProcessor(),
-            lattice=DefaultGeometricLattice(),
-            monitor=DefaultAethericMonitor(),
-            renderer=DefaultQuaternionicRenderer(),
-            linguist=DefaultLingosoEncoder(),
-        )
-        BRIDGE_ENGINE_REF["seed"] = seed
-        BRIDGE_ENGINE_REF["crawler"] = crawler
-        self.application = (
-            Application.builder()
-            .token(self.token)
-            .post_init(self._post_init)
-            .build()
-        )
-        # ensure single polling instance, drop pending to avoid Conflict storm
-        try:
-            # will be used in run_polling
-            self._drop_pending = True
-        except Exception:
-            pass
+        self.engine.OnInit()
+        self.application = Application.builder().token(self.token).post_init(self._post_init).build()
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("help", self.help))
         self.application.add_handler(CommandHandler("status", self.status))
-        self.application.add_handler(CommandHandler("primes", self.primes))
-        self.application.add_handler(CommandHandler("lattice", self.lattice))
-        self.application.add_handler(CommandHandler("fibration", self.fibration))
-        self.application.add_handler(CommandHandler("observer", self.observer))
-        self.application.add_handler(CommandHandler("metric", self.metric))
-        self.application.add_handler(CommandHandler("evolution", self.evolution))
-        self.application.add_handler(CommandHandler("crawler", self.crawler))
-        self.application.add_handler(CommandHandler("step", self.step_cmd))
-        self.application.add_handler(CommandHandler("reset", self.reset_cmd))
-        self.application.add_handler(CommandHandler("enqueue", self.enqueue_cmd))
-        self.application.add_handler(CommandHandler("encode", self.encode_cmd))
+        self.application.add_handler(CommandHandler("regime", self.regime))
+        self.application.add_handler(CommandHandler("signal", self.signal))
+        self.application.add_handler(CommandHandler("indicators", self.indicators))
+        self.application.add_handler(CommandHandler("chart", self.chart))
+        self.application.add_handler(CommandHandler("fvg", self.fvg))
+        self.application.add_handler(CommandHandler("projection", self.projection))
+        self.application.add_handler(CommandHandler("diagnostics", self.diagnostics))
+        self.application.add_handler(CommandHandler("reset", self.reset))
+        self.application.add_handler(CommandHandler("start_feed", self.start_feed))
+        self.application.add_handler(CommandHandler("stop_feed", self.stop_feed))
+        self.application.add_handler(CommandHandler("symbol", self.symbol))
+        self.application.add_handler(CommandHandler("info", self.info))
+        self.application.add_handler(CommandHandler("probe", self.probe))
+        self.application.add_handler(CommandHandler("rebuild_yf", self.rebuild_yf))
         self.application.add_handler(CommandHandler("webapp", self.webapp))
-        self.application.add_handler(CommandHandler("mini", self.webapp))
         self.application.add_handler(CommandHandler("webgui", self.webgui))
+        self.application.add_handler(CommandHandler("mini", self.webapp))
         self.application.add_handler(CommandHandler("whoami", self.whoami))
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
-        logger.info(f"🤖 {self.bot_name} starting... ed32 msglen-conflict-fix + graceful SIGTERM")
-        logger.info(f"🔧 __version__={__version__} pid={os.getpid()} pgid={os.getpgid(0)}")
-        logger.info("🔷 ÆI SEED (GAIA/ÆI Codex) — prime → lattice → Hopf → s²=r²")
-        logger.info(f"🧮 Fraction-exact arithmetic throughout")
-        logger.info(f"🌐 Substrate: {_SUBSTRATE} (bind port {BRIDGE_PORT})")
-        logger.info(f"🕸️ Crawler: {crawler.state.frontier_size()} URLs in frontier, "
-                    f"depth limit {MAX_CRAWL_DEPTH}, interval {CRAWL_INTERVAL}s")
-        logger.info(f"🔄 Seed loop interval: {SEED_TICK_INTERVAL}s")
-        logger.info(f"📡 Relay URL: {RELAY_URL or '(unset)'}")
-        logger.info(f"🌐 Bridge: http://{BRIDGE_HOST}:{BRIDGE_PORT}")
+        logger.info(f"🤖 {self.bot_name} starting...")
+        logger.info("📊 Quantum-Financial Topology Engine (MQL4-parity port vFinal Edition 4).")
+        logger.info(f"🧠 X_PERIOD (const) = {X_PERIOD}, Y_START (const) = {Y_START}")
 
-        async def _post_shutdown(application) -> None:
-            try:
-                if self._crawler_worker is not None:
-                    try:
-                        self._crawler_worker._running = False
-                        self._crawler_worker.stop()
-                    except Exception:
-                        pass
-                if self._seed_worker is not None:
-                    try:
-                        self._seed_worker._running = False
-                        self._seed_worker.stop()
-                    except Exception:
-                        pass
-                if self._bridge_server is not None:
-                    try:
-                        self._bridge_server.stop()
-                    except Exception:
-                        pass
-            finally:
-                # no graceful exit in post_shutdown, let PTB close gracefully
-                logger.info("post_shutdown complete [ed30]")
-                pass
+        logger.info("⚡ 13D Hilbert-space projection populated per bar.")
+        logger.info("📡 Bar-close detection uses relay timestamp.")
+        logger.info("🎯 Signal logging enabled for all imbalance events.")
+        logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
+        logger.info("🛑 𝒯_trail: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
+        logger.info("🎯 δ gate: LOCAL m/n from authoritative H()/L() stamps.")
+        logger.info("🔄 O() regime mutation restored via write-back (D-RES-1).")
+        logger.info("📊 OnBar per-j HH/LL anchoring.")
+        logger.info("🔍 OnTrack/OnStand MQL4 loop bounds restored (aliased S, not grown copy).")
+        logger.info("🔒 Auth enforcement on all non-/health endpoints.")
+        logger.info("📈 Chart endpoint & signal history tracking enabled.")
+        logger.info("📐 User FVGs stored in bridge registry only (non-destructive).")
+        logger.info("🛰️ Multi-provider relay vFinal: Kraken → Binance → CoinGecko → Yahoo for crypto; Stooq → Yahoo for equities/futures; Yahoo for forex/indices.")
+        logger.info("📦 Real volume carried through OBV, AD, Force, MFI projections.")
+        logger.info("🌌 𝒫_arc projection computed on execution, init, symbol change, and manual refresh.")
+        logger.info("🔔 Push notification on every signal, every execution, every FVG, every close.")
+        logger.info("🔔 /toasts endpoint serves incremental signal+execution+fvg toasts with first_available_seq.")
+        logger.info("⚙️ /settings GET+POST with exact-decimal parsing and FF-input validation max >= min + 2.")
+        logger.info("🖱️ Scroll-ahead viewport: drag past the last bar to the projected TP.")
+        logger.info("🎯 Execution-gated projection: recomputed on Bull/Bear/Hawk/Dove/Whisky/Wine/Watter/Blood/Diamond/Ruby.")
+        logger.info("💬 Push threading: every push is a reply to the user's most recent inbound message.")
+        logger.info("📮 Bounded push dispatch: single queue.Queue(maxsize=512) with one daemon consumer.")
+        logger.info("🔁 Cross-thread send: enabled via asyncio.run_coroutine_threadsafe")
+        logger.info("🛡️ Markdown escaping: _md_escape applied to every interpolated value (E-12).")
+        logger.info("🛡️ Reply-target hardening: retry as standalone on stale reply id (E-11).")
+        logger.info("🛡️ Plain-text fallback: parse_mode=None on parse errors (E-13).")
+        logger.info(f"🪙 vFinal symbol universe: GRAM-USD (TON) + {len(SYMBOL_MAP)} total symbols across crypto, futures, equities, forex, and indices.")
+        logger.info("🩹 v4.5.5 audit patches: V-1 tick increment moved to bottom of tick body, V-2 Kronecker stamps reset to baseline on OnReInit.")
+        logger.info("🩹 vFinal CS patches: CS-1 (/diagnostics CS-glyphing), CS-2 (/status CS-glyphing), D-59 (dead-code removal), D-60 (version tag).")
+        logger.info("🩹 Audit-Patched Edition: D-64 (_O signature+body), D-65 (_on_tick_locked call sites), D-66 (_on_point X_scan/Y_scan reset removal), D-61 (CS-escape standardization), D-68 (rational cosine).")
+        logger.info("🩹 vFinal Audit Patch 2: D-73 (/status 𝒮_Signal_Level), D-74 (/indicators 13D ℋ_Projection), D-75 (D-71 block normalization), D-76 (unused import removed), D-77 (stray LSK-USD2 key removed), D-81 (_on_gaurd unreachable-branch comment).")
+        logger.info("🩹 vFinal Edition 2: C-2 (CS value translation), C-3 (ULP-safe threshold comparison), M-1 (_normalize top guard), M-2 (tick reorder), M-3 (15-digit π), M-4 (send_message_sync early return), m-2 (version unify), m-4 (_on_gaurd note), m-5 (dead field removed), m-6 (extended cs_map).")
+        logger.info("🩹 vFinal Edition 3: A-C2 (_M/_N ADX double-count removed), A-C3 (stale l_order_id guard removed), A-m1 (_rational_cos docstring).")
+        logger.info("🩹 Connection Audit: C-1 (_set_cors reflects Origin, Vary: Origin, X-Since preserved), C-2 (Origin: null → *)")
+        logger.info("🩹 Cursor OHLC Zero Readout Audit: C-5 (update_price/FeedClient.get_historical_klines//ohlcv handler/start_feed all reject zero/null OHLC; /ohlcv emits JSON null for absent fields), C-6 (crosshair null guard in index.html), C-7 (lastUpdate null guard in index.html).")
+        logger.info("🩹 vFinal Edition 4 — Dime/Count/Toll Audit: D-1 (dime=mem pre-stamp in all four subblocks), D-2 (no early return after toll block; count block reached), D-3 (helpers own reset of toll/count), D-4 (signal reset at end of each subblock, not in caller).")
+        logger.info("🩹 vFinal Edition 4 — Missing-Alert Audit: C-A1 (Long/Short/Sin./Sine. alerts wired as UI toasts + Telegram pushes), C-A2 (push formatter + dedup key + PUSH_ON_SIGNAL gate extended to alert kind), C-A3 (index.html toast renderer to be updated in Segment 3).")
+        logger.info("🩹 vFinal Edition 4 — Commission Audit: D-11 (_S() and _execute_kronecker_block now use _com_price_frozen, matching the FF's `com` constant computed at OnInit).")
+        logger.info("✅ Ready. Use /start to begin.")
+        self.application.run_polling()
 
-        try:
-            self.application.post_shutdown = _post_shutdown
-        except Exception:
-            pass
-        import signal as _sig_mod
-        try:
-            self.application.run_polling(
-                allowed_updates=Update.ALL_TYPES,
-                stop_signals=[],
-                close_loop=False,
-                drop_pending_updates=True,
-            )
-        except TypeError:
-            self.application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+try:
+    _bridge_attach_to_bot(AEI_Bot)
+except Exception as _attach_exc:
+    import logging as _l
+    _l.basicConfig(level=_l.INFO)
+    _l.getLogger(__name__).exception("Bridge attach failed: %s", _attach_exc)
 
 # ============================================================================
-# MAIN
+# MAIN ENTRY POINT
 # ============================================================================
 def main():
-    import signal
-    import os
-    import threading
-    import asyncio
-    import time as _time_mod
-    _shutdown_event = threading.Event()
-
-    # clean Heroku SIGTERM handling - no sigwaiter/watchdog/graceful exit race
-    def _install_handlers(tag=""):
-        try:
-            # Only install simple handlers that set shutdown_event
-            def _handler(signum, frame):
-                print(f"⚡ SIG {signum} -> graceful shutdown [ed30] pid={os.getpid()}", flush=True)
-                _shutdown_event.set()
-            signal.signal(signal.SIGTERM, _handler)
-            signal.signal(signal.SIGINT, _handler)
-            try:
-                signal.signal(signal.SIGABRT, _handler)
-            except Exception:
-                pass
-            try:
-                signal.signal(signal.SIGQUIT, _handler)
-            except Exception:
-                pass
-        except Exception as _e:
-            print(f"signal install failed {tag}: {_e}", flush=True)
-
-    # force WEB_CONCURRENCY=1 to avoid double polling
-    try:
-        os.environ["WEB_CONCURRENCY"] = "1"
-    except Exception:
-        pass
-    _install_handlers("boot")
-
-    if not TELEGRAM_BOT_TOKEN_ENV:
-        logger.error("❌ TELEGRAM_BOT_TOKEN not set.")
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not TOKEN:
+        logger.error("❌ Error: TELEGRAM_BOT_TOKEN not set.")
+        logger.error("   export TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN'")
         sys.exit(1)
-
-    bot = AEI_Bot(TELEGRAM_BOT_TOKEN_ENV, "AEISeedBot")
-
-    def _bot_thread():
-        try:
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            except Exception:
-                pass
-            bot.run()
-        except Exception as e:
-            try:
-                print(f"Bot thread error: {e}")
-            except Exception:
-                pass
-
-    t = threading.Thread(target=_bot_thread, name="aei-bot-polling", daemon=True)
-    t.start()
-
-    _loop_count = 0
-    try:
-        while not _shutdown_event.is_set():
-            try:
-                # use Event.wait with timeout, not signal.pause() which conflicts with sigwaiter
-                _shutdown_event.wait(timeout=1.0)
-            except Exception:
-                _time_mod.sleep(0.5)
-            _loop_count += 1
-            if _loop_count % 10 == 0:
-                print(f"♥ main heartbeat {_loop_count} pid={os.getpid()} pgid={os.getpgid(0)} alive [ed30]", flush=True)
-    except KeyboardInterrupt:
-        print("KeyboardInterrupt -> shutdown [ed30]", flush=True)
-        _shutdown_event.set()
-    except Exception as _e:
-        print(f"main loop exception {_e} -> shutdown", flush=True)
-        _shutdown_event.set()
-
-    # Graceful stop
-    try:
-        ref = BRIDGE_ENGINE_REF
-        if ref:
-            c = ref.get("crawler")
-            if c:
-                try:
-                    c._running = False
-                    c.stop()
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
-    print("⚡ main exiting cleanly [ed30]", flush=True)
-    try:
-        # Give threads 2s to stop, then exit
-        _time_mod.sleep(2.0)
-    except Exception:
-        pass
-    sys.exit(0)
+    bot = AEI_Bot(TOKEN, "UpscaleTradeBot")
+    bot.run()
 
 if __name__ == "__main__":
     main()
