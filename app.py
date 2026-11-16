@@ -74,6 +74,12 @@ replies in that message's topic (message_thread_id) with the same
 Web App button as /webapp. The mention does not rebind the engine's
 private push target (engine.state.chat_id / last_inbound_message_id).
 
+Ban list: user IDs in BANNED_IDS are blocked everywhere (Telegram
+commands, callback buttons, group mentions, Mini App initData, and
+every non-/health bridge endpoint). A ban wins over the allowlist:
+a user in both lists is still banned. Telegram messages from a
+banned user are silently dropped; callback buttons answer "Banned."
+
 Every FF-invariant line, every Print() string, every Alert() emoji,
 every state transition, every send-path retry, every projection/
 execution gating rule, and every CS translation already present in
@@ -801,6 +807,76 @@ def _is_allowed_user(user_id) -> bool:
         return True
     try:
         return int(user_id) in ALLOWED_USER_IDS
+    except (TypeError, ValueError):
+        return False
+
+# ============================================================================
+# BAN LIST — ENV-CONTROLLED DENYLIST (Heroku var: BANNED_IDS)
+# ============================================================================
+# User IDs in BANNED_IDS are blocked everywhere, even if they are also
+# in ALLOWED_IDS. Ban wins over allowlist.
+#
+# Heroku control:
+#   heroku config:set BANNED_IDS="111111111,222222222" -a your-app-name  -> ban those users
+#   heroku config:set BANNED_IDS="" -a your-app-name                      -> no bans
+#   heroku config:unset BANNED_IDS -a your-app-name                       -> no bans (same as blank)
+#
+# Format: comma, space, or semicolon separated ints. Blank/unset = no bans.
+# Legacy env var BANNED_USER_IDS is still read as fallback.
+#
+# This gate is enforced in four places (ban checked before allowlist):
+#   1. _track_inbound_message() — every Telegram update (commands,
+#      group mentions, private chats). A banned user is silently
+#      dropped (no reply, no log line visible to them).
+#   2. button_handler() — callback buttons. A banned user gets a
+#      "Banned." alert (the same shape as the existing "Unauthorized."
+#      alert, needed to dismiss the button spinner).
+#   3. _require_auth() — every non-/health HTTP bridge endpoint.
+#      A banned initData user receives HTTP 401.
+#   4. _require_auth() on the /handshake path — a banned user
+#      receives HTTP 403 instead of a session binding.
+# A restart / redeploy is required for a BANNED_IDS change to take effect.
+# ============================================================================
+def _load_banned_ids_from_env() -> set:
+    # Primary var: BANNED_IDS
+    raw = os.getenv("BANNED_IDS", "")
+    # Fallback: support BANNED_USER_IDS as env var for legacy deploys
+    if not raw.strip():
+        raw = os.getenv("BANNED_USER_IDS", "")
+    raw = raw.strip()
+    if not raw:
+        # Blank / unset = no bans
+        return set()
+    ids: set = set()
+    # Split on comma, semicolon, or whitespace (same format as ALLOWED_IDS)
+    for part in _re_bridge.split(r'[\s,;]+', raw):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.add(int(part))
+        except ValueError:
+            # Ignore non-numeric junk
+            continue
+    return ids
+
+BANNED_USER_IDS: set = _load_banned_ids_from_env()
+
+# Log what mode we are in at startup (count only, not the IDs themselves).
+try:
+    if BANNED_USER_IDS:
+        logging.getLogger(__name__).info(f"🚫 Ban list ACTIVE — {len(BANNED_USER_IDS)} ID(s) banned (from BANNED_IDS env) — ban wins over allowlist")
+    else:
+        logging.getLogger(__name__).info("🚫 Ban list EMPTY — BANNED_IDS blank/unset, no users banned")
+except Exception:
+    pass
+
+def _is_banned_user(user_id) -> bool:
+    """Return True if user_id is on the BANNED_IDS denylist."""
+    if not BANNED_USER_IDS:
+        return False
+    try:
+        return int(user_id) in BANNED_USER_IDS
     except (TypeError, ValueError):
         return False
 
@@ -5973,6 +6049,9 @@ def _require_auth(handler: "BridgeHandler") -> bool:
         return False
     user = verified.get("user") or {}
     user_id = user.get("id")
+    if _is_banned_user(user_id):
+        logger.warning(f"🚫 Bridge auth rejected: banned user_id={user_id}")
+        return False
     if not _is_allowed_user(user_id):
         logger.warning(f"🚫 Bridge auth rejected: unauthorized user_id={user_id}")
         return False
@@ -6697,6 +6776,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 u = verified["user"] or {}
                 user_id = u.get("id")
                 username = u.get("username")
+                if _is_banned_user(user_id):
+                    logger.warning(f"🚫 Handshake rejected: banned user_id={user_id}")
+                    self._send_json(403, {"error": "banned_user", "detail": "This Telegram user ID is banned."})
+                    return
                 if not _is_allowed_user(user_id):
                     logger.warning(f"🚫 Handshake rejected: unauthorized user_id={user_id}")
                     self._send_json(403, {"error": "unauthorized_user", "detail": "This Mini App is private. Your Telegram user ID is not on the allowlist."})
@@ -6996,6 +7079,9 @@ class AEI_Bot:
             user_id = None
             if user is not None and getattr(user, "id", None) is not None:
                 user_id = int(user.id)
+            if user_id is not None and _is_banned_user(user_id):
+                logger.info(f"🚫 Blocked Telegram update from banned user_id={user_id}")
+                raise PermissionError("banned_user")
             if user_id is not None and not _is_allowed_user(user_id):
                 logger.info(f"🚫 Blocked Telegram update from unauthorized user_id={user_id}")
                 raise PermissionError("private_bot_unauthorized_user")
@@ -7117,7 +7203,7 @@ class AEI_Bot:
             try:
                 self.engine.update_price_from_feed()
                 st = self.engine.state
-                if st.chat_id is not None and not _is_allowed_user(st.chat_id):
+                if st.chat_id is not None and (_is_banned_user(st.chat_id) or not _is_allowed_user(st.chat_id)):
                     # The bound chat is not on the allowlist. This should
                     # never happen if the gate is enforced everywhere, but
                     # defend against a stale chat_id left over from a
@@ -7808,6 +7894,7 @@ class AEI_Bot:
         user_id = user.id if user else None
         chat_id = chat.id if chat else None
         allowed = _is_allowed_user(user_id)
+        banned = _is_banned_user(user_id)
         await self._safe_reply(update,
             f"🪪 *Identity*\n"
             f"*user_id:* `{user_id}`\n"
@@ -7815,6 +7902,8 @@ class AEI_Bot:
             f"*username:* @{user.username if user and user.username else '—'}\n"
             f"*first_name:* {user.first_name if user else '—'}\n"
             f"*Allowlist:* {sorted(ALLOWED_USER_IDS)}\n"
+            f"*Banlist:* {sorted(BANNED_USER_IDS)}\n"
+            f"*Ban:* {'🚫 banned' if banned else '✅ not banned'}\n"
             f"*Gate:* {'✅ allowed' if allowed else '❌ blocked'}\n"
             f"*Gate active:* {'yes' if ALLOWED_USER_IDS else 'no (open bot)'}")
 
@@ -7824,6 +7913,13 @@ class AEI_Bot:
         user_id = None
         if user is not None and getattr(user, "id", None) is not None:
             user_id = int(user.id)
+        if user_id is not None and _is_banned_user(user_id):
+            logger.info(f"🚫 Blocked callback from banned user_id={user_id}")
+            try:
+                await query.answer("Banned.", show_alert=True)
+            except Exception:
+                pass
+            return
         if user_id is not None and not _is_allowed_user(user_id):
             logger.info(f"🚫 Blocked callback from unauthorized user_id={user_id}")
             try:
@@ -7870,8 +7966,8 @@ class AEI_Bot:
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         err = context.error
-        if isinstance(err, PermissionError) and str(err) == "private_bot_unauthorized_user":
-            # Private-bot gate already logged the block at info level.
+        if isinstance(err, PermissionError) and str(err) in ("private_bot_unauthorized_user", "banned_user"):
+            # Private-bot gate / ban list already logged the block at info level.
             # Do not append to the user-visible log ring buffer.
             return
         err_str = f"{type(err).__name__}: {err}" if err is not None else "unknown error"
@@ -7952,6 +8048,7 @@ class AEI_Bot:
         logger.info("🎯 Signal logging enabled for all imbalance events.")
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
         logger.info("💬 Group-topic mention enabled: @mention in a group topic replies in that topic with the Web App button.")
+        logger.info(f"🚫 Ban list: {len(BANNED_USER_IDS)} ID(s) banned (BANNED_IDS) — ban wins over allowlist.")
         logger.info("🛑 𝒯_trail: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
         logger.info("🎯 δ gate: LOCAL m/n from authoritative H()/L() stamps.")
         logger.info("🔄 O() regime mutation restored via write-back (D-RES-1).")
