@@ -69,6 +69,11 @@ frozen value in _S() and in _execute_kronecker_block, and re-freezes
 on settings apply. _com_price() is preserved for the probe/diagnostic
 path (informational only).
 
+Group-topic mention: an @mention of the bot in a group / supergroup
+replies in that message's topic (message_thread_id) with the same
+Web App button as /webapp. The mention does not rebind the engine's
+private push target (engine.state.chat_id / last_inbound_message_id).
+
 Every FF-invariant line, every Print() string, every Alert() emoji,
 every state transition, every send-path retry, every projection/
 execution gating rule, and every CS translation already present in
@@ -7713,6 +7718,65 @@ class AEI_Bot:
             "  📊 Crypto / Futures / Equities / Forex / Indices sections",
             reply_markup=keyboard)
 
+    async def handle_group_mention(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        msg = update.effective_message
+        if msg is None or not msg.text:
+            return
+        chat = update.effective_chat
+        if chat is None or getattr(chat, "type", None) not in ("group", "supergroup"):
+            return
+        bot_username = (getattr(context.bot, "username", None) or self.bot_name or "").lstrip("@")
+        if not bot_username:
+            return
+        handles = _re_bridge.findall(r"@([A-Za-z0-9_]+)", msg.text)
+        if bot_username.lower() not in [h.lower() for h in handles]:
+            return
+        prev_chat_id = self.engine.state.chat_id
+        prev_last_inbound = self.engine.state.last_inbound_message_id
+        try:
+            self._track_inbound_message(update)
+        finally:
+            self.engine.state.chat_id = prev_chat_id
+            self.engine.state.last_inbound_message_id = prev_last_inbound
+        url = self._resolve_webapp_url()
+        thread_id = getattr(msg, "message_thread_id", None)
+        if not url:
+            text = (
+                "⏳ Mini App URL not yet available\n"
+                "The bridge is starting a public HTTPS tunnel. "
+                "Please try again in ~30–45 seconds.\n"
+                "Alternatively, set `TELEGRAM_WEBAPP_URL` in the environment."
+            )
+            try:
+                await context.bot.send_message(chat_id=chat.id, text=text, message_thread_id=thread_id)
+            except Exception as e1:
+                logger.info(f"Group mention threaded reply failed: {e1}")
+                if thread_id is not None:
+                    try:
+                        await context.bot.send_message(chat_id=chat.id, text=text)
+                    except Exception as e2:
+                        logger.warning(f"Group mention reply failed: {e2}")
+            return
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ Open ÆEA Mini App", web_app=WebAppInfo(url=url))]])
+        text = "Click below to open the ÆEA Engine:"
+        try:
+            await context.bot.send_message(
+                chat_id=chat.id, text=text, reply_markup=keyboard, message_thread_id=thread_id
+            )
+            return
+        except Exception as e1:
+            logger.info(f"Group mention threaded reply failed: {e1}")
+        if thread_id is not None:
+            try:
+                await context.bot.send_message(chat_id=chat.id, text=text, reply_markup=keyboard)
+                return
+            except Exception as e2:
+                logger.info(f"Group mention unthreaded reply failed: {e2}")
+        try:
+            await msg.reply_text(text, reply_markup=keyboard)
+        except Exception as e3:
+            logger.warning(f"Group mention reply failed: {e3}")
+
     async def webgui(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self._track_inbound_message(update)
         scheme = "https" if BRIDGE_USE_TLS else "http"
@@ -7874,6 +7938,9 @@ class AEI_Bot:
         self.application.add_handler(CommandHandler("webgui", self.webgui))
         self.application.add_handler(CommandHandler("mini", self.webapp))
         self.application.add_handler(CommandHandler("whoami", self.whoami))
+        self.application.add_handler(
+            MessageHandler(filters.ChatType.GROUPS & filters.Entity("mention"), self.handle_group_mention)
+        )
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
         self.application.add_error_handler(self.error_handler)
         logger.info(f"🤖 {self.bot_name} starting...")
@@ -7884,6 +7951,7 @@ class AEI_Bot:
         logger.info("📡 Bar-close detection uses relay timestamp.")
         logger.info("🎯 Signal logging enabled for all imbalance events.")
         logger.info("⚡ Telegram Mini App enabled (MT4/TradingView-style).")
+        logger.info("💬 Group-topic mention enabled: @mention in a group topic replies in that topic with the Web App button.")
         logger.info("🛑 𝒯_trail: real Ask−Bid spread + symbol-adaptive point size + STOP_LOSS minimum.")
         logger.info("🎯 δ gate: LOCAL m/n from authoritative H()/L() stamps.")
         logger.info("🔄 O() regime mutation restored via write-back (D-RES-1).")
